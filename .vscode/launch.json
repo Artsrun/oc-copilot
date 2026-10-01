@@ -1,0 +1,35 @@
+// A launch configuration that compiles the extension and then opens it inside
+// the Extension Development Host, plus a Node config to debug the verify harness.
+// Use IntelliSense to learn about possible attributes.
+// Hover to view descriptions of existing attributes.
+// For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+{
+	"version": "0.2.0",
+	"configurations": [
+		{
+			"name": "OpenCode: Dev Host",
+			"type": "extensionHost",
+			"request": "launch",
+			"args": [
+				"--extensionDevelopmentPath=${workspaceFolder}"
+			],
+			"outFiles": [
+				"${workspaceFolder}/out/**/*.js"
+			],
+			"preLaunchTask": "${defaultBuildTask}",
+			"stopOnEntry": false
+		},
+		{
+			"name": "OpenCode: Debug verify harness",
+			"type": "node",
+			"request": "launch",
+			"program": "${workspaceFolder}/scripts/verify-chat-output.js",
+			"cwd": "${workspaceFolder}",
+			"console": "integratedTerminal",
+			"outFiles": [
+				"${workspaceFolder}/out/**/*.js"
+			],
+			"preLaunchTask": "npm: compile"
+		}
+	]
+}

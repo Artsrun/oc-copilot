@@ -1,0 +1,8 @@
+node_modules/
+.opencode/
+.opencode-bridge/
+*.vsix
+*.tgz
+*.log
+dist/
+out/*.map

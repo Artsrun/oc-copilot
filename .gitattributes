@@ -1,0 +1,7 @@
+* text=auto
+
+# A trailing \r is part of an ignore pattern and silently stops it matching.
+.vscodeignore  text eol=lf
+.gitignore     text eol=lf
+.gitattributes text eol=lf
+*.sh           text eol=lf

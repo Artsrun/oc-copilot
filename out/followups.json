@@ -1,0 +1,56 @@
+{
+    "tail": "Be short.",
+    "prompts": {
+        "CONTINUE": "Continue from where you stopped, and finish. {tail}",
+        "RETRY": "Try that again. {tail}",
+        "READ_ONLY": "Not allowed: this chat turn is read-only. Continue without it and answer with what you have. {tail}",
+        "NO_QUESTIONS": "No one can answer tool questions in this chat. Ask in your reply text instead. {tail}"
+    },
+    "chips": {
+        "RETRY": { "kao": "ᕦ(ò‸ó)ᕤ", "label": "Retry", "prompt": "RETRY", "command": "@kind" },
+        "CONTINUE": { "kao": "(•̀ᴗ•́)و", "label": "Continue", "prompt": "CONTINUE", "command": "@kind" },
+        "RUN_ANYWAY": { "kao": "ᕕ(ᐛ)ᕗ", "label": "Run it", "prompt": "", "command": "@kind" },
+        "NEW": { "kao": "(ノ^o^)ノ", "label": "New session", "prompt": "", "command": "new" },
+        "PING": { "kao": "(・ω・)?", "label": "Ping", "prompt": "", "command": "ping" }
+    },
+    "cases": {
+        "silent": [],
+        "parallel": [],
+        "done": [],
+        "clarify": ["RUN_ANYWAY"],
+        "failed": ["RETRY", "CONTINUE"],
+        "failedLong": ["RETRY", "CONTINUE", "NEW"],
+        "failedNet": ["RETRY", "PING"],
+        "cancelled": ["CONTINUE"]
+    },
+    "natural": {
+        "maxLabel": 56,
+        "offer": { "kao": "", "label": "{action}", "prompt": "{action}. {tail}" },
+        "choice": { "kao": "", "label": "{choice}", "prompt": "Go with {choice}. {tail}" },
+        "applyNow": { "kao": "(ﾉ≧∀≦)ﾉ", "label": "Apply now", "prompt": "You are the editing agent and edits are allowed. Apply the plan now." },
+        "step1": { "kao": "(｀・ω・´)ゞ", "label": "#1: {item}", "prompt": "Do only #1: {item}. Then stop and report what changed." },
+        "fix1": { "kao": "(｀・ω・´)ゞ", "label": "Fix #1: {item}", "prompt": "Fix only #1: {item}. Then stop and report what changed." },
+        "fixAll": { "kao": "(ﾉ◕ヮ◕)ﾉ", "label": "Fix all", "prompt": "Fix all the issues you listed. Report what changed. {tail}" },
+        "recommend": { "kao": "(b ᵔ▽ᵔ)b", "label": "Your call", "prompt": "Go with your recommendation and proceed. {tail}" },
+        "apply": { "kao": "(ﾉ◕ヮ◕)ﾉ", "label": "Ship it", "prompt": "Apply what you just proposed. Report what changed. {tail}" },
+        "review1": { "kao": "(¬‿¬)", "label": "Review {file}", "prompt": "Review the change you just made to {file} for bugs and regressions. {tail}" },
+        "reviewN": { "kao": "(¬‿¬)", "label": "Review {n} files", "prompt": "Review the changes you just made for bugs and regressions. {tail}" },
+        "tests": { "kao": "(⌐■‿■)", "label": "Test it", "prompt": "Run the tests relevant to what you changed and fix any failures." },
+        "resume": { "kao": "(•̀ᴗ•́)و", "label": "Continue", "prompt": "@CONTINUE" }
+    },
+    "marks": {
+        "ok": "(•‿•)",
+        "fail": "(×﹏×)",
+        "warn": "(°ロ°)",
+        "quiet": "(-ω-)zZ",
+        "stop": "(・ω・)ノ",
+        "folder": "(・∀・)",
+        "thread": "(◕‿◕)",
+        "thought": "(´-ω-)",
+        "worktree": "(っ•ω•)っ",
+        "restart": "(⌒▽⌒)ゞ",
+        "tool": "ᕙ(⇀‸↼)ᕗ",
+        "text": "(・o・)",
+        "step": "(•ᴗ•)"
+    }
+}

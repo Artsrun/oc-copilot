@@ -1,0 +1,470 @@
+{
+  "name": "opencode-copilot-bridge",
+  "displayName": "OpenCode Copilot Bridge",
+  "description": "Delegate research, planning, and development to OpenCode from GitHub Copilot Chat.",
+  "version": "0.0.191",
+  "publisher": "local",
+  "license": "MIT",
+  "icon": "media/icon.png",
+  "galleryBanner": {
+    "color": "#1e1e1e",
+    "theme": "dark"
+  },
+  "engines": {
+    "vscode": "^1.104.0"
+  },
+  "enabledApiProposals": [
+    "chatParticipantAdditions"
+  ],
+  "categories": [
+    "Other"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "A chat turn spawns the configured OpenCode executable and reaches the configured server, so a workspace that is not trusted must not be able to choose either.",
+      "restrictedConfigurations": [
+        "opencodeCopilotBridge.executable",
+        "opencodeCopilotBridge.serverHostname",
+        "opencodeCopilotBridge.serverPort"
+      ]
+    },
+    "virtualWorkspaces": {
+      "supported": false,
+      "description": "A chat turn spawns a local OpenCode executable, which a virtual file system does not provide."
+    }
+  },
+  "activationEvents": [
+    "onChatParticipant:opencodeCopilotBridge.chat",
+    "onChatParticipant:opencodeCopilotBridge.inline"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "chatParticipants": [
+      {
+        "id": "opencodeCopilotBridge.chat",
+        "name": "opencode",
+        "fullName": "OpenCode Copilot Bridge",
+        "description": "One ongoing OpenCode session. Just describe the task (plan, the default agent)– or /dev /parallel /session /new /model /help, or dev:, model:id inline.",
+        "isSticky": true,
+        "commands": [
+          {
+            "name": "ping",
+            "description": "Connectivity check — no model call, no cost"
+          },
+          {
+            "name": "env",
+            "description": "Config, plugins, hooks, MCP servers, commands and skills OpenCode has loaded"
+          },
+          {
+            "name": "plan",
+            "description": "Read-only planning agent (the default) — use it to leave a sticky /dev"
+          },
+          {
+            "name": "dev",
+            "description": "Editing agent — may write files"
+          },
+          {
+            "name": "parallel",
+            "description": "Run independent lanes at once — separate them with |"
+          },
+          {
+            "name": "session",
+            "description": "Session id, turns, totals"
+          },
+          {
+            "name": "stop",
+            "description": "Stop a run still going on the server"
+          },
+          {
+            "name": "worktree",
+            "description": "Editing agent in a new git worktree + branch — your checkout is untouched"
+          },
+          {
+            "name": "new",
+            "description": "Start a fresh OpenCode session"
+          },
+          {
+            "name": "model",
+            "description": "Show or change the model chain"
+          },
+          {
+            "name": "sessions",
+            "description": "This folder's OpenCode sessions — continue, fork, close or delete one"
+          },
+          {
+            "name": "flow",
+            "description": "Diagram of what the last turn did — folder, session, agent, model, steps. No model call"
+          },
+          {
+            "name": "help",
+            "description": "Show every command and prefix"
+          }
+        ]
+      },
+      {
+        "id": "opencodeCopilotBridge.inline",
+        "name": "opencode",
+        "fullName": "OpenCode Copilot Bridge",
+        "description": "Ask OpenCode about this file — the selection (or cursor line) goes with the prompt.",
+        "locations": [
+          "editor"
+        ],
+        "commands": [
+          {
+            "name": "plan",
+            "description": "Read-only planning agent (the default) — use it to leave a sticky /dev"
+          },
+          {
+            "name": "dev",
+            "description": "Editing agent — may write files"
+          },
+          {
+            "name": "session",
+            "description": "Session id, turns, totals"
+          },
+          {
+            "name": "stop",
+            "description": "Stop a run still going on the server"
+          },
+          {
+            "name": "new",
+            "description": "Start a fresh OpenCode session"
+          },
+          {
+            "name": "help",
+            "description": "Show every command and prefix"
+          }
+        ]
+      }
+    ],
+    "commands": [
+      {
+        "command": "opencodeCopilotBridge.setModel",
+        "title": "OpenCode: Set Default Model"
+      },
+      {
+        "command": "opencodeCopilotBridge.showLog",
+        "title": "OpenCode: Show Debug Log"
+      },
+      {
+        "command": "opencodeCopilotBridge.newSession",
+        "title": "OpenCode: New Session"
+      },
+      {
+        "command": "opencodeCopilotBridge.newChat",
+        "title": "OpenCode: New Chat"
+      },
+      {
+        "command": "opencodeCopilotBridge.diagnose",
+        "title": "OpenCode: Diagnose"
+      },
+      {
+        "command": "opencodeCopilotBridge.quickActions",
+        "title": "OpenCode: Quick Actions",
+        "icon": "$(code)"
+      },
+      {
+        "command": "opencodeCopilotBridge.retryLast",
+        "title": "OpenCode: Ask in Chat"
+      },
+      {
+        "command": "opencodeCopilotBridge.sessions",
+        "title": "OpenCode: Sessions"
+      },
+      {
+        "command": "opencodeCopilotBridge.composeParallel",
+        "title": "OpenCode: Compose Parallel Lanes"
+      },
+      {
+        "command": "opencodeCopilotBridge.refreshModels",
+        "title": "OpenCode: Refresh Model Catalog"
+      },
+      {
+        "command": "opencodeCopilotBridge.worktreeDiff",
+        "title": "OpenCode: Show Worktree Diff"
+      },
+      {
+        "command": "opencodeCopilotBridge.worktreeOpen",
+        "title": "OpenCode: Open Worktree in New Window"
+      },
+      {
+        "command": "opencodeCopilotBridge.worktreeRemove",
+        "title": "OpenCode: Remove Worktree"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "workbench.action.chat.open",
+        "key": "ctrl+alt+o",
+        "mac": "cmd+alt+o",
+        "args": { "query": "@opencode ", "isPartialQuery": true }
+      },
+      {
+        "command": "workbench.action.chat.open",
+        "key": "ctrl+alt+shift+o",
+        "mac": "cmd+alt+shift+o",
+        "args": { "query": "@opencode /dev ", "isPartialQuery": true }
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        { "command": "opencodeCopilotBridge.worktreeDiff", "when": "false" },
+        { "command": "opencodeCopilotBridge.worktreeOpen", "when": "false" },
+        { "command": "opencodeCopilotBridge.worktreeRemove", "when": "false" },
+        { "command": "opencodeCopilotBridge.retryLast", "when": "false" },
+        { "command": "opencodeCopilotBridge.newChat", "when": "false" }
+      ],
+      "editor/title": [
+        {
+          "command": "opencodeCopilotBridge.quickActions",
+          "group": "navigation@1",
+          "when": "config.opencodeCopilotBridge.editorTitleButton"
+        }
+      ]
+    },
+    "configuration": [
+      {
+        "title": "Connection",
+        "properties": {
+          "opencodeCopilotBridge.executable": {
+            "type": "string",
+            "default": "opencode",
+            "description": "OpenCode executable name or absolute path."
+          },
+          "opencodeCopilotBridge.pure": {
+            "type": "boolean",
+            "default": false,
+            "description": "Run OpenCode with --pure (skip external MCP plugins) for a faster cold start. Enable when planning does not need Jira/Figma/GitHub MCP tools."
+          },
+          "opencodeCopilotBridge.devAgent": {
+            "type": "string",
+            "default": "build",
+            "description": "OpenCode agent that /dev runs, always passed explicitly as --agent. Without it OpenCode runs your config's default_agent, so a config with default_agent 'plan' answered /dev in plan mode."
+          },
+          "opencodeCopilotBridge.planAgent": {
+            "type": "string",
+            "default": "plan",
+            "markdownDescription": "OpenCode agent for read-only turns: plan (the default kind) and `/parallel` lanes. Set it to a read-only agent of your own, such as `look` (README: *Read-only turns*). The bridge uses it only once OpenCode lists it for the folder, and otherwise runs `plan` and says so: an unknown `--agent` makes `opencode run` fall back to its default agent, which edits. `/dev` keeps `devAgent`."
+          },
+          "opencodeCopilotBridge.attachDevToServer": {
+            "type": "boolean",
+            "default": true,
+            "description": "With transport 'auto', run /dev as `opencode run --attach <server> --auto` so it reuses the warm managed server (config, plugins and MCP servers already loaded) instead of booting OpenCode every turn. Falls back to a cold run if the server cannot be reached."
+          },
+          "opencodeCopilotBridge.toolQuietMs": {
+            "type": "number",
+            "default": 600000,
+            "description": "While the server reports a tool as RUNNING (a Jira/MCP call, a long build), the run may stay silent this long before it counts as hung. Without it, idleTimeoutMs killed slow MCP calls that were working. 0 uses idleTimeoutMs for everything."
+          },
+          "opencodeCopilotBridge.busySessionPolicy": {
+            "type": "string",
+            "enum": ["abort", "queue"],
+            "default": "abort",
+            "description": "What to do when a message is sent to a session that is still busy with an earlier run nobody is watching. 'abort' stops that run first (and says so). 'queue' sends anyway: the message waits behind the old run, which is what made chat turns crawl in v176."
+          },
+          "opencodeCopilotBridge.transport": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "cli",
+              "server"
+            ],
+            "default": "auto",
+            "description": "How chat runs reach OpenCode. 'auto' uses warm HTTP for plan and `opencode run --auto` attached to the same warm server for dev (see attachDevToServer). 'cli' always spawns a run. 'server' always uses the managed serve; OpenCode's permission asks are answered as `--auto` would for /dev, and refused for read-only turns."
+          },
+          "opencodeCopilotBridge.serverStartupPollMs": {
+            "type": "number",
+            "default": 350,
+            "description": "Longest gap (ms) between health polls while the managed `opencode serve` starts up. Polling starts at 50ms and doubles up to this cap; the bridge also bails out early if the server process exits."
+          },
+          "opencodeCopilotBridge.serverHostname": {
+            "type": "string",
+            "default": "127.0.0.1",
+            "description": "Hostname for the managed `opencode serve` instance."
+          },
+          "opencodeCopilotBridge.serverPort": {
+            "type": "number",
+            "default": 4096,
+            "description": "Port for the managed `opencode serve` instance. An already-running healthy server on this port is reused."
+          },
+          "opencodeCopilotBridge.timeoutMs": {
+            "type": "number",
+            "default": 0,
+            "description": "Wall-clock cap for one OpenCode run, in milliseconds. 0 (the default) means no wall-clock cap: a long dev or read-only run runs to completion. idleTimeoutMs is what stops a hung run. Set a positive value only if you want a hard ceiling on turn length and cost."
+          },
+          "opencodeCopilotBridge.idleTimeoutMs": {
+            "type": "number",
+            "default": 300000,
+            "description": "Stop a run if NOTHING arrives on its output stream for this long, in milliseconds. This is the cap that matters: a streaming ten-minute build is never killed, and a hung process is never waited on forever. The default (5 minutes) is generous so a legitimately long run that goes quiet for a few minutes is not cut off, and a vanished process is still eventually stopped. Set to 0 to disable — with timeoutMs also 0, a hung run would then never be stopped."
+          }
+        }
+      },
+      {
+        "title": "Model",
+        "properties": {
+          "opencodeCopilotBridge.model": {
+            "type": "string",
+            "default": "",
+            "description": "Model passed to OpenCode as provider/id. Empty: OpenCode picks — a new session starts on its default, and a session keeps the model it last ran on."
+          },
+          "opencodeCopilotBridge.fallbackModels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": [],
+            "description": "Ordered list of models (provider/id) to hand off to when a run times out. The session is continued with the next model so context is preserved. Example: [\"<provider>/<fast-model>\", \"<provider>/<strong-model>\"]."
+          },
+          "opencodeCopilotBridge.modelCatalogTtlMinutes": {
+            "type": "number",
+            "default": 360,
+            "description": "How long a fetched `opencode models` list stays fresh before it is re-fetched. Within the TTL the cached list is used, so the model picker and autocompaction never wait on a process spawn. Set to 0 to always fetch live."
+          },
+          "opencodeCopilotBridge.maxHandoffAttempts": {
+            "type": "number",
+            "default": 3,
+            "description": "Maximum number of models tried in one turn when a run times out (the configured model plus fallbacks). Each attempt is a full run at the full timeout and is billed separately, so this bounds both the worst-case turn length and its cost."
+          }
+        }
+      },
+      {
+        "title": "Chat output",
+        "properties": {
+          "opencodeCopilotBridge.includeChatReferences": {
+            "type": "boolean",
+            "default": true,
+            "description": "Pass files attached to the chat request (#file:, drag-drop, \"Add context\") to OpenCode as a context block, and show them as clickable references under the reply."
+          },
+          "opencodeCopilotBridge.includeEditorSelection": {
+            "type": "boolean",
+            "default": false,
+            "description": "Also send the active editor's current selection as context. Off by default so nothing is sent that you did not explicitly attach."
+          },
+          "opencodeCopilotBridge.progressHeartbeatMs": {
+            "type": "number",
+            "default": 1000,
+            "description": "How often (ms) to re-render the chat progress line with the elapsed time and current phase, so a slow model does not look frozen. Set to 0 to update only when an event arrives."
+          },
+          "opencodeCopilotBridge.groupProgress": {
+            "type": "boolean",
+            "default": true,
+            "description": "Keep a finished thought and the tool steps that ran under it as a collapsed accordion above the answer. Live lines (the running tool, the latest thought, elapsed time) are the same either way and fade when the answer arrives. An accordion is only sent once its steps are done, so Stop never strands a spinner. Hosts without the task-progress overload always use lines."
+          },
+          "opencodeCopilotBridge.kaomojiBadges": {
+            "type": "boolean",
+            "default": true,
+            "description": "Show kaomoji marks in the reply as inline-code pills, on the theme's code background — wherever they appear, except inside code. Progress lines, chips and the log stay plain text."
+          },
+          "opencodeCopilotBridge.commandAliases": {
+            "type": "object",
+            "default": {},
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Your own short aliases for / commands, on top of the built-in ones (p parallel, d dev, pl plan, n new, s session, x stop, m model, w worktree, e env, h and ? help). Example: { \"zg\": \"parallel\" }. A real command always wins; an alias to something that is not a command is refused."
+          },
+          "opencodeCopilotBridge.statusBar": {
+            "type": "boolean",
+            "default": true,
+            "description": "Show an OpenCode status bar item with the active session and turn count. Click it for quick actions."
+          },
+          "opencodeCopilotBridge.showThoughtProcess": {
+            "type": "boolean",
+            "default": true,
+            "description": "Capture OpenCode's reasoning (via --thinking) and stream it live on the chat progress line. Copilot Chat cannot render collapsible blocks, so the reasoning is never dumped into the chat body."
+          },
+          "opencodeCopilotBridge.clarifyVaguePrompts": {
+            "type": "boolean",
+            "default": true,
+            "description": "Ask for detail instead of spending a run when a prompt is a single bare word with nothing to act on (\"ping\", \"test\"). Only the first message of a session is checked, and never when a file or selection is attached. A \"Run it anyway\" chip is always offered, and sending the same prompt again always runs it."
+          },
+          "opencodeCopilotBridge.autoCompact": {
+            "type": "boolean",
+            "default": true,
+            "description": "Automatically compact (summarize) the ongoing session after every autoCompactEveryTurns messages so long conversations stay in context."
+          },
+          "opencodeCopilotBridge.autoCompactEveryTurns": {
+            "type": "number",
+            "default": 8,
+            "description": "Number of @opencode turns between automatic compactions. Set to 0 to disable and rely only on OpenCode's native autocompaction."
+          },
+          "opencodeCopilotBridge.editorTitleButton": {
+            "type": "boolean",
+            "default": true,
+            "description": "Show the OpenCode Quick Actions button in every editor title bar. Turn it off to declutter the title bar and use the command palette instead."
+          }
+        }
+      },
+      {
+        "title": "Sessions",
+        "properties": {
+          "opencodeCopilotBridge.sessionScope": {
+            "type": "string",
+            "enum": [
+              "thread",
+              "workspace"
+            ],
+            "enumDescriptions": [
+              "Each Copilot chat keeps its own OpenCode session. Opening a new chat starts a new conversation, and two chats open side by side never interleave.",
+              "Every chat in a folder shares one OpenCode session, so a new chat continues wherever the last one stopped. This was the behaviour before v0.16.0."
+            ],
+            "default": "thread",
+            "description": "Which conversation a chat message continues. \"thread\" scopes the OpenCode session to the Copilot chat it was started in; \"workspace\" shares one session across every chat in the folder."
+          }
+        }
+      },
+      {
+        "title": "Parallel",
+        "properties": {
+          "opencodeCopilotBridge.parallelAllowWrite": {
+            "type": "boolean",
+            "default": false,
+            "description": "Let /parallel lanes use the editing agent. Off by default: concurrent writers in one checkout can overwrite each other. Use scripts/start-parallel-agents.* with git worktrees for parallel edits instead."
+          },
+          "opencodeCopilotBridge.worktreeDiffMaxMB": {
+            "type": "number",
+            "default": 16,
+            "description": "Largest git diff, in megabytes, that /worktree reads for its change summary and the Show full diff document. A larger diff is cut short."
+          }
+        }
+      },
+      {
+        "title": "Diagnostics",
+        "properties": {
+          "opencodeCopilotBridge.debugLog": {
+            "type": "boolean",
+            "default": false,
+            "description": "Write every reasoning and text delta to the OpenCode output channel. The channel keeps everything it is given for the lifetime of the window, so this accumulates the entire token stream of every run. Off by default; tool steps, errors and per-run metrics are always logged regardless."
+          },
+          "opencodeCopilotBridge.notifyOnCompletion": {
+            "type": "boolean",
+            "default": true,
+            "description": "Show a notification when a slow OpenCode run finishes and the VS Code window is not focused. Mirrors chat.notifyWindowOnResponseReceived, which VS Code 1.136 added for agent sessions."
+          },
+          "opencodeCopilotBridge.notifyAfterMs": {
+            "type": "number",
+            "default": 30000,
+            "description": "Only notify for runs that took at least this long, in milliseconds. Set to 0 to never notify. Cancelled runs are never announced."
+          }
+        }
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -p ./ --watch",
+    "verify": "node scripts/verify-chat-output.js",
+    "vscode:prepublish": "npm run compile",
+    "ship": "node scripts/ship-gate.js",
+    "probe:windows": "node scripts/probe-windows-shim.js",
+    "probe:pwd": "node scripts/probe-opencode-pwd.js"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.104.0",
+    "@vscode/vsce": "^4.0.0",
+    "typescript": "^5.0.0"
+  },
+  "private": true
+}

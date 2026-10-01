@@ -1,0 +1,60 @@
+# LF only — a trailing \r becomes part of the pattern and stops it matching.
+# This is a DENYLIST: a new file at the repo root ships unless named here.
+# The real control is ALLOWED in scripts/ship-gate.js. Keep both in sync.
+
+# sources and build inputs
+src/**
+**/*.ts
+**/*.map
+**/*.tsbuildinfo
+tsconfig.json
+dist/**
+node_modules/**
+package-lock.json
+
+# dev tooling, editor, CI
+.vscode/**
+.vscode-test/**
+.github/**
+docs/**
+.editorconfig
+.eslintrc*
+.gitattributes
+.gitignore
+.vscodeignore
+AGENTS.md
+REFS.md
+# The release history lives here, not in the readme. The readme ships inside
+# the .vsix and is installed on every machine; the history is ~29 KB of it and
+# nobody reads 0.0.13's notes from an installed extension. Keep BOTH out of the
+# package and keep the readme's changelog section to the last five releases.
+CHANGELOG.md
+V162-TASK.md
+v164-task-instructions.md
+
+# the extension's own session output, written when this repo is a workspace
+.opencode-bridge/**
+# the opencode CLI's own node_modules, installed into the workspace when a
+# plugin/SDK is fetched here — never part of the shipped extension
+.opencode/**
+
+# Named individually, never scripts/** — the README documents
+# start-parallel-agents.* and it must ship.
+scripts/ship-gate.js
+scripts/probe-windows-shim.js
+scripts/probe-progress-inflation.js
+scripts/probe-sse-crosstalk.js
+scripts/probe-opencode-pwd.js
+scripts/probe-mermaid-flow.js
+scripts/verify-chat-output.js
+# macOS helper for repo users (install/doctor); not needed inside the .vsix
+scripts/mac-setup.sh
+
+# build artifacts (the gate also hard-fails on these at the repo root)
+*.vsix
+*.tgz
+*.log
+
+# OS junk
+**/.DS_Store
+**/Thumbs.db
