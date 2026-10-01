@@ -11,11 +11,15 @@
         "CONTINUE": { "kao": "(•̀ᴗ•́)و", "label": "Continue", "prompt": "CONTINUE", "command": "@kind" },
         "RUN_ANYWAY": { "kao": "ᕕ(ᐛ)ᕗ", "label": "Run it", "prompt": "", "command": "@kind" },
         "NEW": { "kao": "(ノ^o^)ノ", "label": "New session", "prompt": "", "command": "new" },
-        "PING": { "kao": "(・ω・)?", "label": "Ping", "prompt": "", "command": "ping" }
+        "PING": { "kao": "(・ω・)?", "label": "Ping", "prompt": "", "command": "ping" },
+        "RUN_LANES": { "kao": "ヽ(•‿•)ノ", "label": "Run lanes", "prompt": "", "command": "parallel" },
+        "COMPOSE": { "kao": "(・ω・)ノ", "label": "Compose…", "prompt": "", "command": "parallel" }
     },
     "cases": {
         "silent": [],
         "parallel": [],
+        "composed": ["RUN_LANES"],
+        "lanesMissing": ["COMPOSE"],
         "done": [],
         "clarify": ["RUN_ANYWAY"],
         "failed": ["RETRY", "CONTINUE"],

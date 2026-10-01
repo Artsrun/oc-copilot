@@ -150,8 +150,11 @@ export interface ParsedChat {
 
 /** A lane's own `m:<model>` / `model:<model>` prefix, and the rest. */
 export function splitModelPrefix(raw: string): { model?: string; task: string } {
-    const m = raw.trim().match(/^(?:model|m)\s*[:=]\s*([^\s,:]+)[,:]?\s*([\s\S]*)$/i);
-    return m ? { model: m[1], task: m[2].trim() } : { task: raw.trim() };
+    // An id may hold colons (`openrouter/…/deepseek-r1:free`, `ollama/qwen2.5-coder:7b`):
+    // only a trailing one is punctuation, as in `m:tundra: review`.
+    const m = raw.trim().match(/^(?:model|m)\s*[:=]\s*([^\s,]+)(?:,|\s|$)\s*([\s\S]*)$/i);
+    const model = m?.[1].replace(/:$/, "");
+    return m && model ? { model, task: m[2].trim() } : { task: raw.trim() };
 }
 
 /** `/parallel models:a,b,c <task>`: one task, one lane per model (claim:parallel-models). */

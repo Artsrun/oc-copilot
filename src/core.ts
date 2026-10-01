@@ -203,3 +203,30 @@ export function rememberFolder(cwd: string): void {
 export function isMultiRoot(): boolean {
     return (vscode.workspace.workspaceFolders?.length ?? 0) > 1;
 }
+
+// Resolves with the work's value, or undefined as soon as Stop is pressed —
+// the work itself carries on (a listing still lands in its cache).
+export function untilStop<T>(work: Promise<T>, token: vscode.CancellationToken): Promise<T | undefined> {
+    if (token.isCancellationRequested) {
+        return Promise.resolve(undefined);
+    }
+    return new Promise((resolve) => {
+        const sub = token.onCancellationRequested(() => {
+            sub.dispose();
+            resolve(undefined);
+        });
+        work.then(
+            (value) => {
+                sub.dispose();
+                resolve(value);
+            },
+            () => {
+                sub.dispose();
+                resolve(undefined);
+            }
+        );
+    });
+}
+
+/** Plain text in markdown: `my_file.ts` is not italic, a backtick opens nothing. */
+export const mdText = (s: string): string => s.replace(/[\\`*_{}[\]<>#|~]/g, "\\$&");

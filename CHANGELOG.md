@@ -3,6 +3,26 @@
 Full release history, newest first; releases before the last one are condensed
 to their summary and headlines. The README ships the last five.
 
+### 0.0.192
+
+Fixes from a review of `/sessions` and the `/parallel` composer.
+
+- **Keep in this chat** on the chat's own session no longer resets its turn
+  count and spend.
+- **Fork** deletes the copy when the bridge's headless rules cannot be put back
+  on it, instead of leaving a fork that could ask questions nobody can answer.
+- **Close / Delete** clear the folder's session pointer only when it holds the
+  session that is gone, whichever chat owns it.
+- A server error listing sessions is reported as one, not as "no sessions".
+- Session titles show as plain text; an excerpt cut inside a code fence is
+  closed.
+- The composer: a model id with a colon (`ollama/qwen2.5-coder:7b`,
+  `…:free`) is kept whole; a typed task no longer reorders the list, so Enter
+  keeps the model you chose; Stop ends the turn while the model list loads; it
+  lists the models of the chat's folder.
+- **Run lanes** and **Compose…** are chips now, not buttons: a chip
+  owns the next message.
+
 ### 0.0.191
 
 Public-repository hygiene; no behaviour change.

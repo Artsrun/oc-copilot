@@ -109,11 +109,10 @@ export function registerCommands(context: vscode.ExtensionContext): void {
                 "OpenCode: this VS Code build has no \"new chat\" command — use the + button in the Chat view."
             );
         }),
-        // v190: New Session = a new chat with `@opencode ` typed. A new thread
-        // has no history, so its first message starts a fresh OpenCode session;
-        // the chat you left keeps its own. It replaces "Ask OpenCode" (same
-        // chat, `@opencode ` typed) and the old submit of `/new` into the
-        // current chat. Under workspace scope the folder pointer is reset too.
+        // New Session = a new chat with `@opencode ` typed. A new thread has no
+        // history, so its first message starts a fresh OpenCode session; the
+        // chat you left keeps its own. Under workspace scope the folder pointer
+        // is reset too.
         vscode.commands.registerCommand("opencodeCopilotBridge.newSession", async () => {
             const cwd = resolveFolder()?.folder.uri.fsPath;
             if (cwd && config().get<string>("sessionScope", "thread") === "workspace") {

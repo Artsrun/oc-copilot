@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { config, formatBytes, truncate } from "./core";
+import { config, formatBytes, mdText, truncate } from "./core";
 import { mark } from "./followups";
 import { resolveExecutable } from "./proc";
 import { ensureServer, httpGetJson, withDirectory } from "./net";
@@ -21,9 +21,6 @@ import { runCapture } from "./commands";
 import { helpMarkdown } from "./chat-boot";
 import { handleSessions } from "./chat-sessions";
 import { flowById, flowSummary, toMermaid } from "./flow";
-
-/** Plain text in markdown: `my_file.ts` is not italic, a backtick opens nothing. */
-const mdText = (s: string): string => s.replace(/[\\`*_{}[\]<>#|~]/g, "\\$&");
 
 // The "/help", "/new", "/model", "/ping", "/env", and "/session" control
 // commands. Each answers from local state and never touches the model, so they

@@ -35,7 +35,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.followupsProblems = exports.badgeMarks = exports.createBadger = exports.badge = exports.naturalText = exports.chipOf = exports.chipLabel = exports.prompt = exports.mark = exports.NATURAL_MAX_LABEL = exports.CASES = exports.MARKS = exports.PROMPTS = exports.TAIL = exports.CHIP_COMMANDS = void 0;
 const data = __importStar(require("./followups.json"));
-exports.CHIP_COMMANDS = ["dev", "plan", "new", "ping"];
+exports.CHIP_COMMANDS = ["dev", "plan", "new", "ping", "parallel"];
 exports.TAIL = data.tail;
 const fill = (template, vars = {}) => template.replace(/\{(\w+)\}/g, (all, key) => (key === "tail" ? exports.TAIL : vars[key] ?? all)).trim();
 exports.PROMPTS = Object.fromEntries(Object.entries(data.prompts).map(([k, v]) => [k, fill(v)]));

@@ -50,7 +50,18 @@ const ago = (ms, now = Date.now()) => {
 };
 exports.ago = ago;
 const titleOf = (s) => (0, core_1.truncate)(s.title?.trim() || "(untitled)", 80);
-const quote = (text, max) => (0, core_1.truncate)(text, max).replace(/^/gm, "> ");
+const titleMd = (s) => (0, core_1.mdText)(titleOf(s));
+const quote = (text, max) => {
+    const cut = (0, core_1.truncate)(text, max);
+    let open;
+    for (const line of cut.split("\n")) {
+        const fence = line.match(/^\s*(`{3,}|~{3,})/)?.[1];
+        if (fence) {
+            open = open ? undefined : fence;
+        }
+    }
+    return (open ? `${cut}\n${open}` : cut).replace(/^/gm, "> ");
+};
 async function handleSessions(p) {
     const done = (extra = {}) => ({ metadata: { kind: "sessions", ...extra } });
     let base;
@@ -61,7 +72,7 @@ async function handleSessions(p) {
     }
     catch (error) {
         core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] /sessions: ${error}`);
-        p.response.markdown(`${(0, followups_1.mark)("fail")} Could not list sessions: OpenCode's server did not answer. \`/ping\` checks the connection.`);
+        p.response.markdown(`${(0, followups_1.mark)("fail")} Could not list sessions: \`${(0, core_1.truncate)(String(error instanceof Error ? error.message : error), 120).replace(/`/g, "'")}\`. \`/ping\` checks the connection.`);
         return done();
     }
     if (!sessions.length) {
@@ -94,6 +105,10 @@ async function handleSessions(p) {
     }
     const bind = async (id) => {
         session_1.liveSessions.mark(p.cwd, id);
+        if (id === p.state.id) {
+            (0, session_1.refreshStatus)(p.cwd);
+            return done();
+        }
         if ((0, core_1.config)().get("sessionScope", "thread") === "workspace") {
             await (0, session_1.setActiveSession)(p.cwd, { id, turns: 0 });
         }
@@ -101,12 +116,11 @@ async function handleSessions(p) {
         return done({ sessionId: id, turns: 0, cwd: p.cwd });
     };
     const unbind = async () => {
-        if (!mine) {
-            return done();
+        if ((0, session_1.getActiveSession)(p.cwd).id === s.id) {
+            await (0, session_1.setActiveSession)(p.cwd, { turns: 0 });
         }
-        await (0, session_1.setActiveSession)(p.cwd, { turns: 0 });
         (0, session_1.refreshStatus)(p.cwd);
-        return { metadata: { kind: "new", cwd: p.cwd } };
+        return mine ? { metadata: { kind: "new", cwd: p.cwd } } : done();
     };
     try {
         switch (act.action) {
@@ -115,8 +129,8 @@ async function handleSessions(p) {
                 const target = act.action === "fork" ? await (0, sessions_1.forkSession)(base, p.cwd, s.id) : s;
                 const excerpt = await (0, sessions_1.sessionExcerpt)(base, p.cwd, target.id).catch(() => ({ ask: undefined, answer: undefined }));
                 p.response.markdown((act.action === "fork"
-                    ? `${(0, followups_1.mark)("ok")} Forked **${titleOf(s)}** into \`${target.id}\` — this chat continues the copy; \`${s.id}\` is untouched.`
-                    : `${(0, followups_1.mark)("ok")} This chat continues **${titleOf(s)}** (\`${s.id}\`, ${(0, exports.ago)(s.time?.updated) || "no activity yet"}).`) +
+                    ? `${(0, followups_1.mark)("ok")} Forked **${titleMd(s)}** into \`${target.id}\` — this chat continues the copy; \`${s.id}\` is untouched.`
+                    : `${(0, followups_1.mark)("ok")} This chat continues **${titleMd(s)}** (\`${s.id}\`, ${(0, exports.ago)(s.time?.updated) || "no activity yet"}).`) +
                     (act.action === "continue" && running.has(s.id)
                         ? `\n\n${(0, followups_1.mark)("warn")} It is running now (another chat?). Your next message here follows \`busySessionPolicy\`: \`abort\` stops that run first.`
                         : "") +
@@ -127,17 +141,17 @@ async function handleSessions(p) {
             case "close":
                 await (0, sessions_1.archiveSession)(base, p.cwd, s.id);
                 session_1.liveSessions.drop(p.cwd, s.id);
-                p.response.markdown(`${(0, followups_1.mark)("ok")} Closed **${titleOf(s)}** (\`${s.id}\`): archived, messages kept.` + (mine ? " This chat starts a fresh session with its next message." : ""));
+                p.response.markdown(`${(0, followups_1.mark)("ok")} Closed **${titleMd(s)}** (\`${s.id}\`): archived, messages kept.` + (mine ? " This chat starts a fresh session with its next message." : ""));
                 return await unbind();
             case "delete": {
                 const sure = await vscode.window.showWarningMessage(`Delete "${titleOf(s)}" and all its messages? This cannot be undone.`, { modal: true }, "Delete");
                 if (sure !== "Delete") {
-                    p.response.markdown(`Kept **${titleOf(s)}**.`);
+                    p.response.markdown(`Kept **${titleMd(s)}**.`);
                     return done();
                 }
                 await (0, sessions_1.deleteSession)(base, p.cwd, s.id);
                 session_1.liveSessions.drop(p.cwd, s.id);
-                p.response.markdown(`${(0, followups_1.mark)("ok")} Deleted **${titleOf(s)}** (\`${s.id}\`).` + (mine ? " This chat starts a fresh session with its next message." : ""));
+                p.response.markdown(`${(0, followups_1.mark)("ok")} Deleted **${titleMd(s)}** (\`${s.id}\`).` + (mine ? " This chat starts a fresh session with its next message." : ""));
                 return await unbind();
             }
         }

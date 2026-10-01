@@ -115,11 +115,11 @@ async function chatTurn(request, context, rawResponse, token, turn, flow) {
         .filter(Boolean);
     flow.title = kind === "parallel" ? "parallel" : `${agentLabel} · ${task}`;
     note("folder", folder.name + ((0, core_1.isMultiRoot)() ? ` (${choice.reason})` : ""));
-    const resolveModel = (0, models_1.modelResolver)(executable, cwd, (work) => untilStop(work, token));
+    const resolveModel = (0, models_1.modelResolver)(executable, cwd, (work) => (0, core_1.untilStop)(work, token));
     if (kind === "parallel") {
         const laneText = parsed.model ? `m:${parsed.model} ${parsed.task}` : parsed.task;
         if (!laneText.trim()) {
-            const composed = await (0, compose_1.composeParallel)(token);
+            const composed = await (0, compose_1.composeParallel)(token, cwd);
             if (!composed) {
                 response.markdown("No lanes composed. `/parallel` alone opens the composer; or type lanes separated by `|`, `;;` or a `---` line.");
                 return { metadata: { kind: "idle" } };
@@ -127,8 +127,7 @@ async function chatTurn(request, context, rawResponse, token, turn, flow) {
             const query = (0, compose_1.chatQuery)(composed);
             const inserted = await (0, compose_1.insertIntoChat)(query);
             response.markdown(`${inserted ? "Inserted into the chat input — press Enter to run" : "Copy this into the chat to run"} **${composed.length} lanes**:\n\n\`\`\`text\n${query}\n\`\`\``);
-            response.button({ command: "workbench.action.chat.open", arguments: [{ query, isPartialQuery: true }], title: "Insert again" });
-            return { metadata: { kind: "idle" } };
+            return { metadata: { kind: "composed", lanes: (0, compose_1.composeLanes)(composed) } };
         }
         const fan = (0, context_1.splitModelsFanout)(laneText);
         if (fan && ((0, chat_boot_1.splitLanes)(fan.task).length > 1 || fan.models.length < 2 || !fan.task)) {
@@ -148,8 +147,7 @@ async function chatTurn(request, context, rawResponse, token, turn, flow) {
             response.markdown("Give me at least two lanes separated by `|`, `;;` or a `---` line (not inside backticks).\n\n" +
                 "Example: `@opencode /parallel audit error handling | list unused deps | " +
                 "review the auth flow`");
-            response.button({ command: "opencodeCopilotBridge.composeParallel", title: "Compose lanes…" });
-            return { metadata: { kind: "parallel" } };
+            return { metadata: { kind: "parallel", lanesMissing: true } };
         }
         const lanes = [];
         for (const { task: laneTask, ref } of specsRaw) {
@@ -169,7 +167,7 @@ async function chatTurn(request, context, rawResponse, token, turn, flow) {
                 "overwrite each other — prefer the git-worktree scripts for parallel edits.\n");
         }
         const laneUrl = attachDev ? await warmServer(cwd) : undefined;
-        const lanePlan = write ? undefined : await untilStop((0, agents_1.resolvePlanAgent)(cwd, laneUrl), token);
+        const lanePlan = write ? undefined : await (0, core_1.untilStop)((0, agents_1.resolvePlanAgent)(cwd, laneUrl), token);
         if (token.isCancellationRequested) {
             return { metadata: { kind: "parallel", lanes: lanes.length, cancelled: true } };
         }
@@ -305,7 +303,7 @@ async function chatTurn(request, context, rawResponse, token, turn, flow) {
         const guardBase = attachUrl ?? (useServer ? await timed("server", () => warmServer(cwd)) : undefined);
         const planChoice = isBuild || (0, agents_1.planAgentSetting)() === "plan"
             ? undefined
-            : await timed("agent", () => untilStop((0, agents_1.resolvePlanAgent)(cwd, guardBase), token));
+            : await timed("agent", () => (0, core_1.untilStop)((0, agents_1.resolvePlanAgent)(cwd, guardBase), token));
         let agent = isBuild ? devAgent : planChoice?.agent ?? "plan";
         const agentNote = (0, agents_1.planAgentNotice)(planChoice, cwd);
         if (agentNote) {
@@ -577,24 +575,6 @@ async function chatTurn(request, context, rawResponse, token, turn, flow) {
         }
         return { metadata: { kind, agent: agentLabel, error: String(err?.message ?? error), prompt: replay } };
     }
-}
-function untilStop(work, token) {
-    if (token.isCancellationRequested) {
-        return Promise.resolve(undefined);
-    }
-    return new Promise((resolve) => {
-        const sub = token.onCancellationRequested(() => {
-            sub.dispose();
-            resolve(undefined);
-        });
-        work.then((value) => {
-            sub.dispose();
-            resolve(value);
-        }, () => {
-            sub.dispose();
-            resolve(undefined);
-        });
-    });
 }
 async function warmServer(cwd) {
     try {

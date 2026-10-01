@@ -31,7 +31,8 @@ export const busySessions = async (base: string, cwd: string): Promise<Set<strin
 
 /** This folder's top-level sessions (no subagent children), newest first. */
 export const listSessions = async (base: string, cwd: string, limit = 50): Promise<ServerSession[]> => {
-    const all = await httpGetJson<ServerSession[]>(withDirectory(`${base}/session?roots=true&limit=${limit}`, cwd), TIMEOUT_MS);
+    // httpRequestJson rejects a non-2xx: an error body is not "no sessions".
+    const all = await httpRequestJson<ServerSession[]>("GET", withDirectory(`${base}/session?roots=true&limit=${limit}`, cwd), undefined, TIMEOUT_MS);
     return (Array.isArray(all) ? all : []).filter((s) => s && typeof s.id === "string" && !s.time?.archived);
 };
 
@@ -55,7 +56,14 @@ export const sessionExcerpt = async (base: string, cwd: string, id: string): Pro
  */
 export const forkSession = async (base: string, cwd: string, id: string): Promise<ServerSession> => {
     const fork = await httpRequestJson<ServerSession>("POST", withDirectory(`${base}${sessionPath(id, "fork")}`, cwd), undefined, TIMEOUT_MS);
-    await httpRequestJson("PATCH", withDirectory(`${base}${sessionRoot(fork.id)}`, cwd), { permission: HEADLESS_PERMISSION }, TIMEOUT_MS);
+    try {
+        await httpRequestJson("PATCH", withDirectory(`${base}${sessionRoot(fork.id)}`, cwd), { permission: HEADLESS_PERMISSION }, TIMEOUT_MS);
+    } catch (error) {
+        // A copy without the headless rules would offer the question tool to a
+        // chat that cannot answer it: it must not outlive a failed fork.
+        await httpRequestJson("DELETE", withDirectory(`${base}${sessionRoot(fork.id)}`, cwd), undefined, TIMEOUT_MS).catch(() => undefined);
+        throw error;
+    }
     return fork;
 };
 

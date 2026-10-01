@@ -9,7 +9,8 @@ import {
     secs,
     setStatus,
     stamp,
-    truncate
+    truncate,
+    untilStop
 } from "./core";
 import { mark, prompt as promptText } from "./followups";
 import { RunMetrics, RunOptions, StepRecord, finalizeStepStatuses, toolOutputBytes } from "./metrics";
@@ -61,7 +62,7 @@ import {
     typedSlash
 } from "./chat-boot";
 import { handleControlCommand } from "./chat-commands";
-import { chatQuery, composeParallel, insertIntoChat } from "./compose";
+import { chatQuery, composeLanes, composeParallel, insertIntoChat } from "./compose";
 import { handleWorktree } from "./chat-worktree";
 
 export interface TurnOrigin {
@@ -226,7 +227,7 @@ async function chatTurn(
         // A bare `/parallel`: compose the lanes step by step, then put the
         // command in the chat input — nothing runs until it is sent.
         if (!laneText.trim()) {
-            const composed = await composeParallel(token);
+            const composed = await composeParallel(token, cwd);
             if (!composed) {
                 response.markdown("No lanes composed. `/parallel` alone opens the composer; or type lanes separated by `|`, `;;` or a `---` line.");
                 return { metadata: { kind: "idle" } };
@@ -236,8 +237,7 @@ async function chatTurn(
             response.markdown(
                 `${inserted ? "Inserted into the chat input — press Enter to run" : "Copy this into the chat to run"} **${composed.length} lanes**:\n\n\`\`\`text\n${query}\n\`\`\``
             );
-            response.button({ command: "workbench.action.chat.open", arguments: [{ query, isPartialQuery: true }], title: "Insert again" });
-            return { metadata: { kind: "idle" } };
+            return { metadata: { kind: "composed", lanes: composeLanes(composed) } };
         }
         const fan = splitModelsFanout(laneText);
         if (fan && (splitLanes(fan.task).length > 1 || fan.models.length < 2 || !fan.task)) {
@@ -261,8 +261,7 @@ async function chatTurn(
                 "Example: `@opencode /parallel audit error handling | list unused deps | " +
                 "review the auth flow`"
             );
-            response.button({ command: "opencodeCopilotBridge.composeParallel", title: "Compose lanes…" });
-            return { metadata: { kind: "parallel" } };
+            return { metadata: { kind: "parallel", lanesMissing: true } };
         }
         const lanes: LaneSpec[] = [];
         for (const { task: laneTask, ref } of specsRaw) {
@@ -802,30 +801,6 @@ async function chatTurn(
         return { metadata: { kind, agent: agentLabel, error: String(err?.message ?? error), prompt: replay } };
     }
 }
-// Resolves with the work's value, or undefined as soon as Stop is pressed —
-// the work itself carries on (a listing still lands in its cache).
-function untilStop<T>(work: Promise<T>, token: vscode.CancellationToken): Promise<T | undefined> {
-    if (token.isCancellationRequested) {
-        return Promise.resolve(undefined);
-    }
-    return new Promise((resolve) => {
-        const sub = token.onCancellationRequested(() => {
-            sub.dispose();
-            resolve(undefined);
-        });
-        work.then(
-            (value) => {
-                sub.dispose();
-                resolve(value);
-            },
-            () => {
-                sub.dispose();
-                resolve(undefined);
-            }
-        );
-    });
-}
-
 // Start or adopt the managed `opencode serve` for an attached CLI run. Never
 // throws: a server that cannot start just means this turn runs cold.
 async function warmServer(cwd: string): Promise<string | undefined> {

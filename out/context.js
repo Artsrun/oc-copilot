@@ -153,8 +153,9 @@ function stepUris(cwd, steps) {
     return out;
 }
 function splitModelPrefix(raw) {
-    const m = raw.trim().match(/^(?:model|m)\s*[:=]\s*([^\s,:]+)[,:]?\s*([\s\S]*)$/i);
-    return m ? { model: m[1], task: m[2].trim() } : { task: raw.trim() };
+    const m = raw.trim().match(/^(?:model|m)\s*[:=]\s*([^\s,]+)(?:,|\s|$)\s*([\s\S]*)$/i);
+    const model = m?.[1].replace(/:$/, "");
+    return m && model ? { model, task: m[2].trim() } : { task: raw.trim() };
 }
 function splitModelsFanout(raw) {
     const m = raw.trim().match(/^models\s*[:=]\s*(\S+)\s*([\s\S]*)$/i);

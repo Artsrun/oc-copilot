@@ -769,8 +769,11 @@ export function outcomeOf(metadata: Record<string, unknown>): Outcome {
         case "clarify":
             return "clarify";
         case "parallel":
-            // Lanes ran in isolated sessions that are already closed.
-            return "parallel";
+            // Lanes ran in isolated sessions that are already closed; a turn
+            // that ran none offers the composer.
+            return metadata.lanesMissing ? "lanesMissing" : "parallel";
+        case "composed":
+            return "composed";
     }
     const turns = typeof metadata.turns === "number" ? metadata.turns : 0;
     const error = typeof metadata.error === "string" ? metadata.error : "";
@@ -822,6 +825,9 @@ function chipsFor(metadata: Record<string, unknown>): vscode.ChatFollowup[] {
             const again = own ? stripKind(own) : "";
             return chips(CASES[outcome], again ? { RETRY: again } : {});
         }
+        case "composed":
+            // The composed lanes are the next message: a chip, not a button.
+            return typeof metadata.lanes === "string" && metadata.lanes ? chips(CASES.composed, { RUN_LANES: metadata.lanes }) : [];
         case "done": {
             // Only what this answer points at (./natural), else nothing.
             const sessionId = typeof metadata.sessionId === "string" ? metadata.sessionId : undefined;

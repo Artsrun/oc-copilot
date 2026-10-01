@@ -4,11 +4,11 @@
 // Continue and Fork return that metadata; Close and Delete of this chat's own
 // session return a `/new` barrier.
 import * as vscode from "vscode";
-import { config, logChannel, stamp, truncate } from "./core";
+import { config, logChannel, mdText, stamp, truncate } from "./core";
 import { mark } from "./followups";
 import { ensureServer } from "./net";
 import { ServerSession, archiveSession, busySessions, deleteSession, forkSession, listSessions, sessionExcerpt } from "./sessions";
-import { SessionState, liveSessions, refreshStatus, setActiveSession } from "./session";
+import { SessionState, getActiveSession, liveSessions, refreshStatus, setActiveSession } from "./session";
 
 export interface SessionsProps {
     cwd: string;
@@ -29,7 +29,21 @@ export const ago = (ms?: number, now = Date.now()): string => {
 };
 
 const titleOf = (s: ServerSession): string => truncate(s.title?.trim() || "(untitled)", 80);
-const quote = (text: string, max: number): string => truncate(text, max).replace(/^/gm, "> ");
+// Titles come from user prompts: plain text inside the bold.
+const titleMd = (s: ServerSession): string => mdText(titleOf(s));
+// An excerpt stays markdown, but a cut inside a code fence would swallow
+// everything after it: close an unbalanced fence.
+const quote = (text: string, max: number): string => {
+    const cut = truncate(text, max);
+    let open: string | undefined;
+    for (const line of cut.split("\n")) {
+        const fence = line.match(/^\s*(`{3,}|~{3,})/)?.[1];
+        if (fence) {
+            open = open ? undefined : fence;
+        }
+    }
+    return (open ? `${cut}\n${open}` : cut).replace(/^/gm, "> ");
+};
 
 export async function handleSessions(p: SessionsProps): Promise<vscode.ChatResult> {
     const done = (extra: Record<string, unknown> = {}): vscode.ChatResult => ({ metadata: { kind: "sessions", ...extra } });
@@ -40,7 +54,7 @@ export async function handleSessions(p: SessionsProps): Promise<vscode.ChatResul
         sessions = await listSessions(base, p.cwd);
     } catch (error) {
         logChannel.appendLine(`[${stamp()}] /sessions: ${error}`);
-        p.response.markdown(`${mark("fail")} Could not list sessions: OpenCode's server did not answer. \`/ping\` checks the connection.`);
+        p.response.markdown(`${mark("fail")} Could not list sessions: \`${truncate(String(error instanceof Error ? error.message : error), 120).replace(/`/g, "'")}\`. \`/ping\` checks the connection.`);
         return done();
     }
     if (!sessions.length) {
@@ -81,22 +95,28 @@ export async function handleSessions(p: SessionsProps): Promise<vscode.ChatResul
         return done();
     }
     // Binding a thread = returning the metadata threadSession() reads.
+    // This chat's own session is already bound with its counters: re-binding
+    // with `turns: 0` would zero its turns and spend (see threadSession).
     const bind = async (id: string): Promise<vscode.ChatResult> => {
         liveSessions.mark(p.cwd, id);
+        if (id === p.state.id) {
+            refreshStatus(p.cwd);
+            return done();
+        }
         if (config().get<string>("sessionScope", "thread") === "workspace") {
             await setActiveSession(p.cwd, { id, turns: 0 });
         }
         refreshStatus(p.cwd);
         return done({ sessionId: id, turns: 0, cwd: p.cwd });
     };
-    // Closing or deleting this chat's own session: the next message starts fresh.
+    // The folder pointer is cleared only when it holds the session that is
+    // gone, whichever chat owns it; this chat starts fresh only if it was its own.
     const unbind = async (): Promise<vscode.ChatResult> => {
-        if (!mine) {
-            return done();
+        if (getActiveSession(p.cwd).id === s.id) {
+            await setActiveSession(p.cwd, { turns: 0 });
         }
-        await setActiveSession(p.cwd, { turns: 0 });
         refreshStatus(p.cwd);
-        return { metadata: { kind: "new", cwd: p.cwd } };
+        return mine ? { metadata: { kind: "new", cwd: p.cwd } } : done();
     };
     try {
         switch (act.action) {
@@ -106,8 +126,8 @@ export async function handleSessions(p: SessionsProps): Promise<vscode.ChatResul
                 const excerpt = await sessionExcerpt(base, p.cwd, target.id).catch(() => ({ ask: undefined, answer: undefined }));
                 p.response.markdown(
                     (act.action === "fork"
-                        ? `${mark("ok")} Forked **${titleOf(s)}** into \`${target.id}\` — this chat continues the copy; \`${s.id}\` is untouched.`
-                        : `${mark("ok")} This chat continues **${titleOf(s)}** (\`${s.id}\`, ${ago(s.time?.updated) || "no activity yet"}).`) +
+                        ? `${mark("ok")} Forked **${titleMd(s)}** into \`${target.id}\` — this chat continues the copy; \`${s.id}\` is untouched.`
+                        : `${mark("ok")} This chat continues **${titleMd(s)}** (\`${s.id}\`, ${ago(s.time?.updated) || "no activity yet"}).`) +
                     (act.action === "continue" && running.has(s.id)
                         ? `\n\n${mark("warn")} It is running now (another chat?). Your next message here follows \`busySessionPolicy\`: \`abort\` stops that run first.`
                         : "") +
@@ -119,7 +139,7 @@ export async function handleSessions(p: SessionsProps): Promise<vscode.ChatResul
             case "close":
                 await archiveSession(base, p.cwd, s.id);
                 liveSessions.drop(p.cwd, s.id);
-                p.response.markdown(`${mark("ok")} Closed **${titleOf(s)}** (\`${s.id}\`): archived, messages kept.` + (mine ? " This chat starts a fresh session with its next message." : ""));
+                p.response.markdown(`${mark("ok")} Closed **${titleMd(s)}** (\`${s.id}\`): archived, messages kept.` + (mine ? " This chat starts a fresh session with its next message." : ""));
                 return await unbind();
             case "delete": {
                 const sure = await vscode.window.showWarningMessage(
@@ -128,12 +148,12 @@ export async function handleSessions(p: SessionsProps): Promise<vscode.ChatResul
                     "Delete"
                 );
                 if (sure !== "Delete") {
-                    p.response.markdown(`Kept **${titleOf(s)}**.`);
+                    p.response.markdown(`Kept **${titleMd(s)}**.`);
                     return done();
                 }
                 await deleteSession(base, p.cwd, s.id);
                 liveSessions.drop(p.cwd, s.id);
-                p.response.markdown(`${mark("ok")} Deleted **${titleOf(s)}** (\`${s.id}\`).` + (mine ? " This chat starts a fresh session with its next message." : ""));
+                p.response.markdown(`${mark("ok")} Deleted **${titleMd(s)}** (\`${s.id}\`).` + (mine ? " This chat starts a fresh session with its next message." : ""));
                 return await unbind();
             }
         }

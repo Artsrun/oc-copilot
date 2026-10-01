@@ -65,14 +65,20 @@ const insertIntoChat = async (query) => {
     }
 };
 exports.insertIntoChat = insertIntoChat;
-async function composeParallel(token) {
-    const cwd = (0, core_1.resolveFolder)()?.folder.uri.fsPath;
+const plainLabel = (id, info) => (0, models_1.modelLabel)(id, info).replace(/`/g, "");
+async function composeParallel(token, folder) {
+    const cwd = folder ?? (0, core_1.resolveFolder)()?.folder.uri.fsPath;
     const settings = (0, core_1.config)();
-    const catalog = cwd ? await (0, models_1.getModelCatalog)(settings.get("executable", "opencode"), cwd) : { models: [], info: {} };
+    const empty = { models: [], info: {} };
+    const fetching = cwd ? (0, models_1.getModelCatalog)(settings.get("executable", "opencode"), cwd) : Promise.resolve(empty);
+    const catalog = token ? await (0, core_1.untilStop)(fetching, token) : await fetching.catch(() => empty);
+    if (!catalog || token?.isCancellationRequested) {
+        return undefined;
+    }
     const pin = settings.get("model", "").trim();
     const models = [
-        { label: "$(star) Default model", description: pin ? (0, models_1.modelLabel)(pin, catalog.info) : "OpenCode picks", alwaysShow: true },
-        ...catalog.models.map((id) => ({ label: (0, models_1.modelLabel)(id, catalog.info), description: id, model: id, alwaysShow: true }))
+        { label: "$(star)", description: `Default model · ${pin ? plainLabel(pin, catalog.info) : "OpenCode picks"}`, alwaysShow: true },
+        ...catalog.models.map((id) => ({ label: "$(chip)", description: plainLabel(id, catalog.info), model: id, alwaysShow: true }))
     ];
     const submitButton = { iconPath: new vscode.ThemeIcon("check"), tooltip: "Submit — insert the lanes into the chat input" };
     const qp = vscode.window.createQuickPick();
@@ -85,7 +91,7 @@ async function composeParallel(token) {
         qp.totalSteps = Math.max(2, n);
         qp.placeholder = `Lane ${n}: type the task, then Enter (default model) or pick a model`;
         const submit = lanes.length >= 2
-            ? [{ label: `$(check) Submit — insert ${lanes.length} lanes`, detail: "Adds the lane typed above, if any. Nothing is sent until you press Enter in chat.", alwaysShow: true, submit: true }]
+            ? [{ label: "$(check)", description: `Submit — insert ${lanes.length} lanes`, detail: "Adds the lane typed above, if any. Nothing is sent until you press Enter in chat.", alwaysShow: true, submit: true }]
             : [];
         qp.items = [...models, ...submit];
         qp.activeItems = [models[0]];

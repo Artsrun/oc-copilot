@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.extensionContext = exports.logChannel = void 0;
+exports.mdText = exports.extensionContext = exports.logChannel = void 0;
 exports.setLogChannel = setLogChannel;
 exports.setExtensionContext = setExtensionContext;
 exports.config = config;
@@ -53,6 +53,7 @@ exports.resolveFolder = resolveFolder;
 exports.activeCwd = activeCwd;
 exports.rememberFolder = rememberFolder;
 exports.isMultiRoot = isMultiRoot;
+exports.untilStop = untilStop;
 const vscode = __importStar(require("vscode"));
 const path = __importStar(require("node:path"));
 function setLogChannel(channel) {
@@ -201,4 +202,24 @@ function rememberFolder(cwd) {
 function isMultiRoot() {
     return (vscode.workspace.workspaceFolders?.length ?? 0) > 1;
 }
+function untilStop(work, token) {
+    if (token.isCancellationRequested) {
+        return Promise.resolve(undefined);
+    }
+    return new Promise((resolve) => {
+        const sub = token.onCancellationRequested(() => {
+            sub.dispose();
+            resolve(undefined);
+        });
+        work.then((value) => {
+            sub.dispose();
+            resolve(value);
+        }, () => {
+            sub.dispose();
+            resolve(undefined);
+        });
+    });
+}
+const mdText = (s) => s.replace(/[\\`*_{}[\]<>#|~]/g, "\\$&");
+exports.mdText = mdText;
 //# sourceMappingURL=core.js.map

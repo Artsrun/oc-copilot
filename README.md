@@ -98,8 +98,9 @@ opens per lane: type the task in its box, press Enter for the default model or
 pick one from the list, and the next lane's page follows. From two lanes on, a
 **Submit** button (and a last item) appears; it inserts the finished
 `@opencode /parallel …` command into the chat input — nothing runs until you
-press Enter. A task that `|` or `;;` would split is refused on its page; put
-code in backticks. Esc discards the lanes.
+press Enter; the reply's **Run lanes** chip sends it as composed. A task
+that `|` or `;;` would split is refused on its page; put code in backticks.
+Esc discards the lanes.
 
 ### `/sessions` — this folder's sessions  <!-- claim:sessions -->
 
@@ -343,6 +344,12 @@ All under `opencodeCopilotBridge.`.
 
 The last five releases; the full history is `CHANGELOG.md` in the repository.
 
+### 0.0.192
+
+Review fixes: `/sessions` keeps a chat's counters, cleans up a failed fork,
+and reports server errors; the composer keeps model ids with a colon and the
+model you chose. Run lanes and Compose… are chips.
+
 ### 0.0.191
 
 Repository hygiene: neutral model names in examples and tests; the leak
@@ -373,8 +380,3 @@ scan covers every committed file. No behaviour change.
   next to a backtick is now kept apart.
 - **Fixed: every unknown lane model cost a catalog fetch**: one per turn now,
   and Stop cuts it short.
-
-### 0.0.187
-
-Kaomoji marks as inline-code pills, models by name, a model per `/parallel`
-lane, aliases for every command. Removed: `parallelMaxLanes`.

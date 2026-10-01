@@ -15,7 +15,6 @@ const commands_1 = require("./commands");
 const chat_boot_1 = require("./chat-boot");
 const chat_sessions_1 = require("./chat-sessions");
 const flow_1 = require("./flow");
-const mdText = (s) => s.replace(/[\\`*_{}[\]<>#|~]/g, "\\$&");
 async function handleControlCommand(p) {
     switch (p.control) {
         case "help":
@@ -188,7 +187,7 @@ async function handleControlCommand(p) {
                 return { metadata: { kind: "flow" } };
             }
             p.response.markdown(traces
-                .map((t) => `**${mdText((0, core_1.truncate)(t.title, 80))}** — ${mdText((0, flow_1.flowSummary)(t))}\n\n\`\`\`mermaid\n${(0, flow_1.toMermaid)(t)}\n\`\`\``)
+                .map((t) => `**${(0, core_1.mdText)((0, core_1.truncate)(t.title, 80))}** — ${(0, core_1.mdText)((0, flow_1.flowSummary)(t))}\n\n\`\`\`mermaid\n${(0, flow_1.toMermaid)(t)}\n\`\`\``)
                 .join("\n\n"));
             return { metadata: { kind: "flow" } };
         }

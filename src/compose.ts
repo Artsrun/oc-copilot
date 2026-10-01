@@ -3,7 +3,7 @@
 // input, not sent. A chat participant cannot draw a form inside the chat on
 // stable VS Code; quick picks and input boxes are the native step UI.
 import * as vscode from "vscode";
-import { config, resolveFolder } from "./core";
+import { config, resolveFolder, untilStop } from "./core";
 import { getModelCatalog, modelLabel } from "./models";
 import { splitLanes } from "./chat-boot";
 
@@ -41,21 +41,35 @@ export const insertIntoChat = async (query: string): Promise<boolean> => {
     }
 };
 
+/** A model label as plain text: a quick pick renders no markdown. */
+const plainLabel = (id: string, info: Parameters<typeof modelLabel>[1]): string => modelLabel(id, info).replace(/`/g, "");
+
 /**
  * One quick pick, one page per lane: its input is the task, its list the
  * models (all `alwaysShow`, so typing never hides them; the default is
  * active). Enter = next lane. From two lanes on, Submit appears as a title
  * button and as the last item; it also takes the lane typed on that page.
+ *
+ * Every label is an icon alone and the words are its description: the input
+ * is a task, not a filter, and a label that matched it was sorted first and
+ * made active, so Enter picked a model nobody chose. Stable VS Code filters on
+ * the label only (matchOnLabel and sortByLabel are proposed API).
  */
-export async function composeParallel(token?: vscode.CancellationToken): Promise<ComposedLane[] | undefined> {
-    const cwd = resolveFolder()?.folder.uri.fsPath;
+export async function composeParallel(token?: vscode.CancellationToken, folder?: string): Promise<ComposedLane[] | undefined> {
+    const cwd = folder ?? resolveFolder()?.folder.uri.fsPath;
     const settings = config();
-    const catalog = cwd ? await getModelCatalog(settings.get<string>("executable", "opencode"), cwd) : { models: [], info: {} };
+    const empty = { models: [] as string[], info: {} };
+    const fetching = cwd ? getModelCatalog(settings.get<string>("executable", "opencode"), cwd) : Promise.resolve(empty);
+    // A cold catalog is a CLI run of seconds; Stop must still end the turn.
+    const catalog = token ? await untilStop(fetching, token) : await fetching.catch(() => empty);
+    if (!catalog || token?.isCancellationRequested) {
+        return undefined;
+    }
     const pin = settings.get<string>("model", "").trim();
     type Item = vscode.QuickPickItem & { model?: string; submit?: boolean };
     const models: Item[] = [
-        { label: "$(star) Default model", description: pin ? modelLabel(pin, catalog.info) : "OpenCode picks", alwaysShow: true },
-        ...catalog.models.map((id) => ({ label: modelLabel(id, catalog.info), description: id, model: id, alwaysShow: true }))
+        { label: "$(star)", description: `Default model · ${pin ? plainLabel(pin, catalog.info) : "OpenCode picks"}`, alwaysShow: true },
+        ...catalog.models.map((id) => ({ label: "$(chip)", description: plainLabel(id, catalog.info), model: id, alwaysShow: true }))
     ];
     const submitButton: vscode.QuickInputButton = { iconPath: new vscode.ThemeIcon("check"), tooltip: "Submit — insert the lanes into the chat input" };
     const qp = vscode.window.createQuickPick<Item>();
@@ -68,7 +82,7 @@ export async function composeParallel(token?: vscode.CancellationToken): Promise
         qp.totalSteps = Math.max(2, n);
         qp.placeholder = `Lane ${n}: type the task, then Enter (default model) or pick a model`;
         const submit: Item[] = lanes.length >= 2
-            ? [{ label: `$(check) Submit — insert ${lanes.length} lanes`, detail: "Adds the lane typed above, if any. Nothing is sent until you press Enter in chat.", alwaysShow: true, submit: true }]
+            ? [{ label: "$(check)", description: `Submit — insert ${lanes.length} lanes`, detail: "Adds the lane typed above, if any. Nothing is sent until you press Enter in chat.", alwaysShow: true, submit: true }]
             : [];
         qp.items = [...models, ...submit];
         qp.activeItems = [models[0]];

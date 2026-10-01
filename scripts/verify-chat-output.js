@@ -981,8 +981,9 @@ function collectConfigProperties(configuration) {
     // v190: a bare /parallel opens the composer; dismissed, it says how to type lanes.
     add("X /parallel with no lanes opens the composer; dismissed, it explains itself", quickPicksShown.length === 1 && /No lanes composed/.test(x1.chatMarkdown.join("")) && /`\|`, `;;` or a `---` line/.test(x1.chatMarkdown.join("")));
     const x1b = stream();
-    await global.__handler({ prompt: "just one lane", command: "parallel" }, {}, x1b.response, x1b.token);
-    add("X one lane explains itself and offers the composer", /at least two lanes/.test(x1b.chatMarkdown.join("")) && x1b.buttons.some((b) => b.command === "opencodeCopilotBridge.composeParallel"));
+    const x1bResult = await global.__handler({ prompt: "just one lane", command: "parallel" }, {}, x1b.response, x1b.token);
+    const x1bChips = global.__participant.followupProvider.provideFollowups(x1bResult, {}, stream().token);
+    add("X one lane explains itself and offers the composer as a chip", /at least two lanes/.test(x1b.chatMarkdown.join("")) && x1b.buttons.length === 0 && x1bChips.some((c) => c.command === "parallel" && c.prompt === ""));
 
     memento.clear();
     const x2 = stream();
@@ -5443,6 +5444,10 @@ const lbProvider = (global.__participant || {}).followupProvider;
     {
         const slSeen = [];
         let slBusy = {};
+        // RV toggles: a failing list, a failing permission PATCH, a custom ask.
+        let slListFail = false;
+        let slPatchFail = false;
+        let slAsk;
         const slSessions = [
             { id: "ses_mine", title: "Fix the login loop", time: { created: 1, updated: Date.now() - 3 * 3600e3 } },
             { id: "ses_other", title: "Audit deps", time: { created: 1, updated: Date.now() - 60e3 } },
@@ -5457,13 +5462,14 @@ const lbProvider = (global.__participant || {}).followupProvider;
                 const send = (code, v) => { res.writeHead(code, { "content-type": "application/json" }); res.end(JSON.stringify(v)); };
                 if (u.pathname === "/global/health") return send(200, { healthy: true });
                 if (u.pathname === "/session/status") return send(200, slBusy);
-                if (req.method === "GET" && u.pathname === "/session") return send(200, slSessions);
+                if (req.method === "GET" && u.pathname === "/session") return slListFail ? send(500, { name: "UnknownError", data: {} }) : send(200, slSessions);
                 if (req.method === "GET" && /\/message$/.test(u.pathname)) return send(200, [
-                    { info: { role: "user" }, parts: [{ type: "text", text: "why does login loop?" }] },
+                    { info: { role: "user" }, parts: [{ type: "text", text: slAsk ?? "why does login loop?" }] },
                     { info: { role: "assistant" }, parts: [{ type: "text", text: "A stale cookie survives logout." }, { type: "text", text: "hidden", synthetic: true }] }
                 ]);
                 if (req.method === "POST" && /\/fork$/.test(u.pathname)) return send(200, { id: "ses_fork", title: "Fix the login loop (fork #1)" });
                 if (req.method === "POST" && /\/abort$/.test(u.pathname)) { slBusy = {}; return send(200, true); }
+                if (req.method === "PATCH" && slPatchFail && u.pathname === "/session/ses_fork") return send(500, { name: "UnknownError", data: {} });
                 if (req.method === "PATCH") return send(200, { id: u.pathname.split("/").pop() });
                 if (req.method === "DELETE") return send(200, true);
                 return send(404, {});
@@ -5521,6 +5527,44 @@ const lbProvider = (global.__participant || {}).followupProvider;
         const s5 = await slRun([by("ses_mine"), act("delete")], "Delete");
         const del = slSeen.find((x) => x.method === "DELETE");
         add("SL Delete of this chat's session deletes it, scoped, and starts this chat fresh", Boolean(del) && del.path === "/session/ses_mine" && scoped(del) && s5.r.metadata.kind === "new" && !ext.__test.threadSession([...s5.history, { participant: "opencodeCopilotBridge.chat", result: s5.r }], work));
+
+        // RV: review findings on /sessions, each reproduced against this server.
+        const own = "opencodeCopilotBridge.chat";
+        const rv1 = await slRun([by("ses_mine"), act("continue")]);
+        const rv1Bound = ext.__test.threadSession([...rv1.history, { participant: own, result: rv1.r }], work);
+        add("RV keeping this chat's own session keeps its turn count (no re-bind at 0)", !rv1.r.metadata.sessionId && rv1Bound?.id === "ses_mine" && rv1Bound.turns === 4);
+
+        slPatchFail = true;
+        const rv2 = await slRun([by("ses_mine"), act("fork")]);
+        slPatchFail = false;
+        const rv2Del = slSeen.find((x) => x.method === "DELETE" && x.path === "/session/ses_fork");
+        add("RV a fork whose headless rules cannot be restored is deleted, and nothing is bound", Boolean(rv2Del) && scoped(rv2Del) && !rv2.r.metadata.sessionId && /fork failed/.test(rv2.text));
+
+        const pointer = `opencode.session:${work}`;
+        memento.set(pointer, { id: "ses_other", turns: 2 });
+        await slRun([by("ses_other"), act("delete")], "Delete");
+        add("RV deleting another chat's session clears the folder pointer that held it", !(memento.get(pointer) || {}).id);
+        memento.set(pointer, { id: "ses_other", turns: 2 });
+        const rv3 = await slRun([by("ses_mine"), act("delete")], "Delete");
+        add("RV deleting this chat's session leaves a pointer to another session alone", (memento.get(pointer) || {}).id === "ses_other" && rv3.r.metadata.kind === "new");
+        memento.delete(pointer);
+
+        slListFail = true;
+        const rv4 = await slRun([() => undefined]);
+        slListFail = false;
+        add("RV a server error listing sessions is reported, not shown as no sessions", /Could not list sessions/.test(rv4.text) && /HTTP 500/.test(rv4.text) && !/No OpenCode sessions/.test(rv4.text) && !slPicks.length);
+
+        const rvTitle = slSessions[1].title;
+        slSessions[1].title = "fix *ptr | use `x` [here](y)";
+        slAsk = "```sh\n" + "echo step\n".repeat(60);
+        const rv5 = await slRun([by("ses_other"), act("continue")]);
+        slSessions[1].title = rvTitle;
+        slAsk = undefined;
+        const rv5Before = rv5.text.slice(0, rv5.text.indexOf("Last answer:"));
+        const rv5Fences = rv5Before.split("\n").filter((l) => /^>\s*```/.test(l)).length;
+        add("RV a session title is plain text inside the bold", rv5.text.includes("**fix \\*ptr \\| use \\`x\\` \\[here\\](y)**"));
+        add("RV an excerpt cut inside a code fence is closed before the next section", rv5Before.length > 0 && rv5Fences === 2);
+
         const slEvil = ext.__test.sessionRoot("../../config");
         add("SL a hostile session id cannot walk to another endpoint (one segment, never `..`)", slEvil.split("/").length === 3 && !slEvil.split("/").some((seg) => seg === ".." || seg === "."));
 
@@ -5541,7 +5585,7 @@ const lbProvider = (global.__participant || {}).followupProvider;
         const realExec = vscodeStub.commands.executeCommand;
         vscodeStub.commands.executeCommand = async (id, ...args) => (executed.push([id, ...args]), undefined);
         globalMemento.set("opencode.models.v2", {
-            models: ["acme-gateway/Tundra", "acme-gateway/Oasis"],
+            models: ["acme-gateway/Tundra", "acme-gateway/Oasis", "ollama/qwen2.5-coder:7b"],
             info: { "acme-gateway/Tundra": { id: "acme-gateway/Tundra", name: "Tundra (Model-1)", provider: "g", providerName: "G" } },
             fetchedAt: Date.now()
         });
@@ -5550,11 +5594,13 @@ const lbProvider = (global.__participant || {}).followupProvider;
             let i = 0;
             quickPickScript = (qp) => {
                 const next = () => {
-                    pages.push({ title: qp.title, step: qp.step, items: qp.items.map((it) => it.label), shown: qp.items.every((it) => it.alwaysShow === true), buttons: qp.buttons.length, active: qp.activeItems[0] && qp.activeItems[0].label });
+                    // The words live in the description; the label is an icon.
+                    const words = (it) => `${it.label} ${it.description ?? ""}`;
+                    pages.push({ title: qp.title, step: qp.step, items: qp.items.map(words), shown: qp.items.every((it) => it.alwaysShow === true), iconOnly: qp.items.every((it) => /^\$\([\w-]+\)$/.test(it.label)), buttons: qp.buttons.length, active: qp.activeItems[0] && words(qp.activeItems[0]) });
                     const s = steps[i++];
                     if (!s) return qp.hide();
                     qp.value = s.type ?? "";
-                    if (s.pick) qp.activeItems = [qp.items.find((it) => it.label.includes(s.pick))];
+                    if (s.pick) qp.activeItems = [qp.items.find((it) => words(it).includes(s.pick))];
                     if (s.button) qp.trigger();
                     else qp.accept();
                     if (!qp.disposed) queueMicrotask(next);
@@ -5580,15 +5626,18 @@ const lbProvider = (global.__participant || {}).followupProvider;
         add("PW every item is alwaysShow: typing a task never filters the models away", pages.length >= 3 && pages.every((p) => p.shown));
         add("PW pages count lanes (step 1, 2, 3)", pages.slice(0, 3).map((p) => p.step).join() === "1,2,3" && /lane 2/.test(pages[1].title));
         add("PW Submit appears from two lanes on, as a button and as the last item", pages[1].buttons === 0 && !pages[1].items.some((l) => /Submit/.test(l)) && pages[2].buttons === 1 && /Submit — insert 2 lanes/.test(pages[2].items[pages[2].items.length - 1]));
-        add("PW Submit inserts the command into the chat input and sends nothing", q1.length === 1 && q1[0].isPartialQuery === true && !fs.existsSync(path.join(work, "fake-ok.js.argv")) && w1.r.metadata.kind === "idle");
+        add("PW Submit inserts the command into the chat input and sends nothing", q1.length === 1 && q1[0].isPartialQuery === true && !fs.existsSync(path.join(work, "fake-ok.js.argv")) && w1.r.metadata.kind === "composed");
         const lanesBack = ext.__test.splitLanes(q1[0].query.replace(/^@opencode \/parallel /, "")).map((l) => ext.__test.splitModelPrefix(l));
         add("PW the inserted command splits back into exactly those lanes and models", q1[0].query.startsWith("@opencode /parallel ") && lanesBack.length === 2 && lanesBack[0].model === "acme-gateway/Tundra" && lanesBack[0].task === "review auth" && !lanesBack[1].model && lanesBack[1].task === "list deps");
-        add("PW the reply shows the command and an Insert again button", w1.text.includes(q1[0].query) && w1.buttons.some((b) => b.command === "workbench.action.chat.open" && b.arguments[0].isPartialQuery === true));
+        const chipsOf = (r) => global.__participant.followupProvider.provideFollowups(r, {}, stream().token);
+        const w1Chips = chipsOf(w1.r);
+        add("PW the reply shows the command; its one chip runs those lanes, and there is no button", w1.text.includes(q1[0].query) && w1.buttons.length === 0 && w1Chips.length === 1 && w1Chips[0].command === "parallel" && w1Chips[0].prompt === q1[0].query.replace(/^@opencode \/parallel /, ""));
+        add("RV every composer label is an icon alone, so a typed task never matches or reorders it", pages.length >= 3 && pages.every((p) => p.iconOnly) && !pages.some((p) => p.items.some((l) => l.includes("`"))));
 
         const w2 = await pwTurn([{ type: "grep a | wc -l" }, { type: "grep `a | wc -l`" }, { type: "list deps" }, { type: "and a third", pick: "Submit" }]);
         const lanes2 = ext.__test.splitLanes(insertedQuery()[0].query.replace(/^@opencode \/parallel /, ""));
         add("PW a task that would split is refused on its page, and the lane is not added", /would split this into 2 lanes/.test(pages[1].title) && pages[1].step === 1);
-        add("PW backticks make it one lane; the Submit item also takes the lane typed on its page", lanes2.length === 3 && lanes2[0] === "grep `a | wc -l`" && lanes2[2] === "and a third" && w2.r.metadata.kind === "idle");
+        add("PW backticks make it one lane; the Submit item also takes the lane typed on its page", lanes2.length === 3 && lanes2[0] === "grep `a | wc -l`" && lanes2[2] === "and a third" && w2.r.metadata.kind === "composed");
 
         const w3 = await pwTurn([{ type: "only one lane" }]);
         add("PW Esc before Submit inserts nothing", insertedQuery().length === 0 && /No lanes composed/.test(w3.text));
@@ -5598,6 +5647,42 @@ const lbProvider = (global.__participant || {}).followupProvider;
         quickPickScript = undefined;
         add("PW the palette command composes and inserts the same way", insertedQuery().length === 1 && /^@opencode \/parallel a\n---\nb$/.test(insertedQuery()[0].query));
         add("PW lane text that starts with a model prefix is refused", Boolean(ext.__test.laneProblem("m:tundra x")) && !ext.__test.laneProblem("review the models: list"));
+
+        // RV: a model id holding a colon survives the composer's round trip.
+        await pwTurn([{ type: "review auth", pick: "qwen2.5-coder:7b" }, { type: "list deps" }, { button: true }]);
+        const rvBack = ext.__test.splitLanes(insertedQuery()[0].query.replace(/^@opencode \/parallel /, "")).map((l) => ext.__test.splitModelPrefix(l));
+        const smp = ext.__test.splitModelPrefix;
+        add("RV a model id with a colon is kept whole, with its task", rvBack[0].model === "ollama/qwen2.5-coder:7b" && rvBack[0].task === "review auth" && smp("m:openrouter/x/deepseek-r1:free go").model === "openrouter/x/deepseek-r1:free");
+        add("RV a trailing colon or comma after the model is still punctuation", smp("m:tundra: review").model === "tundra" && smp("m:tundra: review").task === "review" && smp("m:tundra,review").model === "tundra" && smp("m:tundra,review").task === "review");
+
+        // RV: too few lanes offers the composer as a chip, not a button.
+        const rvSt = stream();
+        const rvOne = await global.__handler({ prompt: "just one lane", command: "parallel" }, {}, rvSt.response, rvSt.token);
+        const rvOneChips = chipsOf(rvOne);
+        add("RV too few lanes: a Compose chip (bare /parallel), no button", rvSt.buttons.length === 0 && rvOneChips.length === 1 && rvOneChips[0].command === "parallel" && rvOneChips[0].prompt === "" && /Compose/.test(rvOneChips[0].label));
+
+        // RV: Stop while the composer waits on a cold model list (a CLI run of
+        // seconds) ends the turn at once, and no quick pick opens afterwards.
+        globalMemento.clear();
+        const rvSlow = writeFake("fake-slow-models.js", [], "setTimeout(() => {}, 4000);\n");
+        const rvSaved = { exe: settings.executable, transport: settings.transport };
+        settings.executable = rvSlow;
+        settings.transport = "cli";
+        pages.length = 0;
+        plan([{ type: "x" }]);
+        const rvStop = stream();
+        const rvT0 = Date.now();
+        const rvTurn = global.__handler({ prompt: "", command: "parallel" }, {}, rvStop.response, rvStop.token);
+        setTimeout(() => rvStop.token.cancel(), 300);
+        await rvTurn;
+        const rvTook = Date.now() - rvT0;
+        await new Promise((r) => setTimeout(r, 4500));
+        quickPickScript = undefined;
+        settings.executable = rvSaved.exe;
+        settings.transport = rvSaved.transport;
+        add("RV Stop during the composer's cold model list ends the turn within the second", rvTook < 1300);
+        add("RV …and no quick pick opens once the list arrives", pages.length === 0);
+
         vscodeStub.commands.executeCommand = realExec;
         globalMemento.clear();
     }

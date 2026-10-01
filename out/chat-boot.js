@@ -593,7 +593,9 @@ function outcomeOf(metadata) {
         case "clarify":
             return "clarify";
         case "parallel":
-            return "parallel";
+            return metadata.lanesMissing ? "lanesMissing" : "parallel";
+        case "composed":
+            return "composed";
     }
     const turns = typeof metadata.turns === "number" ? metadata.turns : 0;
     const error = typeof metadata.error === "string" ? metadata.error : "";
@@ -635,6 +637,8 @@ function chipsFor(metadata) {
             const again = own ? stripKind(own) : "";
             return chips(followups_1.CASES[outcome], again ? { RETRY: again } : {});
         }
+        case "composed":
+            return typeof metadata.lanes === "string" && metadata.lanes ? chips(followups_1.CASES.composed, { RUN_LANES: metadata.lanes }) : [];
         case "done": {
             const sessionId = typeof metadata.sessionId === "string" ? metadata.sessionId : undefined;
             const turns = typeof metadata.turns === "number" ? metadata.turns : 0;

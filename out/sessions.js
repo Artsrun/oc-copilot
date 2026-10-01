@@ -15,7 +15,7 @@ const busySessions = async (base, cwd) => {
 };
 exports.busySessions = busySessions;
 const listSessions = async (base, cwd, limit = 50) => {
-    const all = await (0, net_1.httpGetJson)((0, net_1.withDirectory)(`${base}/session?roots=true&limit=${limit}`, cwd), TIMEOUT_MS);
+    const all = await (0, net_1.httpRequestJson)("GET", (0, net_1.withDirectory)(`${base}/session?roots=true&limit=${limit}`, cwd), undefined, TIMEOUT_MS);
     return (Array.isArray(all) ? all : []).filter((s) => s && typeof s.id === "string" && !s.time?.archived);
 };
 exports.listSessions = listSessions;
@@ -29,7 +29,13 @@ const sessionExcerpt = async (base, cwd, id) => {
 exports.sessionExcerpt = sessionExcerpt;
 const forkSession = async (base, cwd, id) => {
     const fork = await (0, net_1.httpRequestJson)("POST", (0, net_1.withDirectory)(`${base}${(0, runs_1.sessionPath)(id, "fork")}`, cwd), undefined, TIMEOUT_MS);
-    await (0, net_1.httpRequestJson)("PATCH", (0, net_1.withDirectory)(`${base}${(0, runs_1.sessionRoot)(fork.id)}`, cwd), { permission: runs_1.HEADLESS_PERMISSION }, TIMEOUT_MS);
+    try {
+        await (0, net_1.httpRequestJson)("PATCH", (0, net_1.withDirectory)(`${base}${(0, runs_1.sessionRoot)(fork.id)}`, cwd), { permission: runs_1.HEADLESS_PERMISSION }, TIMEOUT_MS);
+    }
+    catch (error) {
+        await (0, net_1.httpRequestJson)("DELETE", (0, net_1.withDirectory)(`${base}${(0, runs_1.sessionRoot)(fork.id)}`, cwd), undefined, TIMEOUT_MS).catch(() => undefined);
+        throw error;
+    }
     return fork;
 };
 exports.forkSession = forkSession;
