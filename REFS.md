@@ -391,3 +391,22 @@ so the gate used `simulatePackageList`. That listed 69 files, `dist/*.vsix` and
 `.vscode/*` among them: `toRe` turned `**` into `(.*/)?` and then rewrote that
 group's own `*` and `?`. With placeholders, the simulation matches `vsce ls`
 (Node 22) file for file: 34 = 34. Use Node 22 for the gate.
+
+## File links in chat: anchor parts, not empty-text links (VS Code 1.139.1)
+
+**Dated 2026-10-02. Read from the installed `workbench.desktop.main.js`
+(1.139.1, 04c0d99).** Three ways a participant can make a file clickable:
+
+- **A reference row** `{ variableName, value: uri | Location }`: the list
+  renders the file's basename with `#<variableName>` as its description and
+  opens `value` on click (with the Location's range). Without `value` the row
+  is a plain label. Used for accordion rows that name one file.
+- **An empty-text markdown link** `[](file:///…)`: becomes an inline file
+  pill, but its click passes `editorOptions.selection = undefined`, which is
+  spread over the selection the opener parsed from `#L42`: the line is lost.
+  A link with text stays an ordinary link.
+- **`response.anchor(Location)`** (an `inlineReference` part): merged into the
+  preceding markdown part as a link (`http://_vscodecontentref_`), so it sits in
+  the sentence; the pill reads `cart.ts:42` and opens at the line. The answer's
+  file pills use this. (0.0.184 removed anchors only because they were called
+  unbound; `chatStream` calls every method on the stream.)

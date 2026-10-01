@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import * as path from "node:path";
 import { config, logChannel, secs, stamp, truncate } from "./core";
 import { ChatKind, RunMetrics, StepRecord, emptyTokens, finalizeStepStatuses } from "./metrics";
 import { flowLine, scrubLeakedContext } from "./format";
@@ -56,18 +57,32 @@ export const supportsTaskProgress = (response: vscode.ChatResponseStream): boole
     typeof response.progress === "function" && response.progress.length >= 2;
 
 // One accordion row. `{ variableName }` with no value renders as a plain text
-// label in the collapsible list (chatReferencesContentPart.ts).
-const stepRow = (label: string): unknown => {
+// label; with a file as `value` it renders `cart.js  #read` and opens the file
+// on click (chatReferencesContentPart.ts, measured in VS Code 1.139).
+export interface RowFile {
+    uri: vscode.Uri;
+    tool: string;
+}
+const stepRow = (label: string, file?: RowFile): unknown => {
     const Ref = (vscode as unknown as { ChatResponseReferencePart?: new (v: unknown) => unknown }).ChatResponseReferencePart;
-    return Ref ? new Ref({ variableName: label }) : { value: { variableName: label } };
+    const value = file ? { variableName: file.tool, value: file.uri } : { variableName: label };
+    return Ref ? new Ref(value) : { value };
 };
+
+// The tools whose path is one file: their rows open it.
+const FILE_TOOLS = /^(?:read|edit|write|patch|multiedit|apply_patch)$/i;
 
 /** A collapsed accordion that is already done: header, rows and result leave
  * together, so there is no open spinner for Stop to strand. */
-export function finishedTask(response: vscode.ChatResponseStream, title: string, rows: readonly string[]): void {
+export function finishedTask(
+    response: vscode.ChatResponseStream,
+    title: string,
+    rows: readonly string[],
+    files?: ReadonlyMap<string, RowFile>
+): void {
     (response.progress as unknown as TaskProgress).call(response, title, (reporter) => {
         for (const row of rows) {
-            reporter.report(stepRow(row));
+            reporter.report(stepRow(row, files?.get(row)));
         }
         return Promise.resolve(title);
     });
@@ -113,6 +128,8 @@ interface Group {
     rows: string[];
     /** Rows whose tool has not reported done yet. */
     open: Set<string>;
+    /** Rows that name one file, by row label. */
+    files: Map<string, RowFile>;
     openedAt: number;
 }
 
@@ -185,7 +202,7 @@ export function startHeartbeat(response: vscode.ChatResponseStream, initial: str
             return false;
         }
         const n = g.rows.length;
-        finishedTask(response, `${g.title} · ${n} step${n === 1 ? "" : "s"} · ${secs(Date.now() - g.openedAt)}`, g.rows);
+        finishedTask(response, `${g.title} · ${n} step${n === 1 ? "" : "s"} · ${secs(Date.now() - g.openedAt)}`, g.rows, g.files);
         lastSentAt = Date.now();
         return true;
     };
@@ -198,6 +215,7 @@ export function startHeartbeat(response: vscode.ChatResponseStream, initial: str
                 title: pendingThought ? `${mark("thought")} ${pendingThought}` : `${mark("tool")} Working`,
                 rows: [],
                 open: new Set(),
+                files: new Map(),
                 openedAt: Date.now()
             };
             pendingThought = "";
@@ -209,6 +227,12 @@ export function startHeartbeat(response: vscode.ChatResponseStream, initial: str
         if (!accordion || !row) {
             return;
         }
+        const file = step.filePath && FILE_TOOLS.test(step.tool) ? path.resolve(cwd ?? "", step.filePath) : "";
+        const remember = (g: Group): void => {
+            if (file && !g.files.has(row)) {
+                g.files.set(row, { uri: vscode.Uri.file(file), tool: step.tool.toLowerCase() });
+            }
+        };
         if (step.status === "running") {
             // The running report and the done report of one call are one row.
             if (seen.has(row)) {
@@ -218,13 +242,19 @@ export function startHeartbeat(response: vscode.ChatResponseStream, initial: str
             const g = currentGroup();
             g.rows.push(row);
             g.open.add(row);
+            remember(g);
             return;
         }
         if (seen.delete(row)) {
             group?.open.delete(row);
+            if (group) {
+                remember(group);
+            }
             return;
         }
-        currentGroup().rows.push(row);
+        const g = currentGroup();
+        g.rows.push(row);
+        remember(g);
     };
 
     return {
@@ -724,8 +754,15 @@ export interface Followup {
     command: "dev" | "plan";
 }
 
+// Runs inside the turn's try: a throw here would report a finished answer as
+// "OpenCode failed to start". A bug costs the chips, never the turn.
 export function suggestFollowups(input: { agent: string; answer: string; steps: StepRecord[] }): Followup[] {
-    return naturalFollowups(input);
+    try {
+        return naturalFollowups(input);
+    } catch (error) {
+        logChannel.appendLine(`[${stamp()}] follow-up chips left out: ${error}`);
+        return [];
+    }
 }
 
 const followupStore = new Map<string, Followup[]>();

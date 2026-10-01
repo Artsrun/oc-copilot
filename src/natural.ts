@@ -77,14 +77,17 @@ const sentencesOf = (text: string): string[] =>
 
 const capitalize = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
 
-/** A chip label: natural cut at a word boundary, never mid-word. */
+/** A chip label: cut at a word, else after a path's `/`; only one token longer
+ * than the label is cut mid-word. */
 const labelOf = (text: string): string => {
     if (text.length <= NATURAL_MAX_LABEL) {
         return text;
     }
     const cut = text.slice(0, NATURAL_MAX_LABEL - 1);
     const at = cut.lastIndexOf(" ");
-    return `${(at > 20 ? cut.slice(0, at) : cut).replace(/[,;:—–-]+$/, "")}…`;
+    const slash = cut.lastIndexOf("/");
+    const head = at > 20 ? cut.slice(0, at) : slash > 20 ? cut.slice(0, slash + 1) : cut;
+    return `${head.replace(/[,;:—–-]+$/, "")}…`;
 };
 
 // The user says the chip, so the agent's "you/your" become "me/my".
@@ -150,9 +153,12 @@ const NOT_AN_ACTION = /\s*[—–]\s*or\s+.*$|\s*,?\s+or\s+(?:is|are|do|does|sho
 // "… any of these — e.g. A, B, or C —": the head applies to each example.
 const ANY_OF = /^(.*?)\b(?:any|one|some|all|each|either|both)\s+of\s+(?:these|those|them|the above|the following)\b\s*[—–:(,-]*\s*(?:e\.g\.,?|i\.e\.,?|such as|like|namely)?\s*(.+?)\s*[—–)]*\s*$/i;
 
+// ", and" splits only a list of three or more: "run the tests, and fix any
+// failures" is one action in two steps.
 const splitAlternatives = (body: string): string[] => {
-    const parts = body.split(/,\s*(?:or|and\/or)\s+|\s+or\s+|,\s+/).map((p) => p.trim()).filter(Boolean);
-    return parts.length > 1 && parts.every((p) => isVerb(firstWord(p))) ? parts : [body];
+    const parts = body.split(/,\s*(?:or|and\/or|and)\s+|\s+or\s+|,\s+/).map((p) => p.trim()).filter(Boolean);
+    const list = parts.length > 2 || !/,\s*and\s+/i.test(body);
+    return list && parts.length > 1 && parts.every((p) => isVerb(firstWord(p))) ? parts : [body];
 };
 
 const actionsFromOffer = (body: string): string[] => {
@@ -174,6 +180,14 @@ const participleAction = (np: string): string | undefined => {
     const m = np.match(/^(.+?)\s+([a-z]+)(\s+(?:through|out|up|down|over|in))?(?:\s+(?:too|as well|also))?$/i);
     const verb = m && PARTICIPLES[m[2].toLowerCase()];
     return verb ? `${verb}${m[3] ?? ""} ${m[1]}` : undefined;
+};
+
+// "the docs updated or the tests added" is two offers; a part that is not a
+// participle phrase ("… or something else") voids the whole sentence.
+const participleActions = (np: string): string[] => {
+    const parts = np.replace(NOT_AN_ACTION, "").split(/,\s*(?:or|and)\s+|\s+or\s+|,\s+/).map((p) => p.trim()).filter(Boolean);
+    const actions = parts.map(participleAction);
+    return actions.every(Boolean) ? (actions as string[]) : [];
 };
 
 // "Which do you prefer: Postgres or MySQL?" → two quick replies.
@@ -247,7 +261,7 @@ export function naturalFollowups(input: AnswerFacts, max = 3): NaturalChip[] {
         const raw = body
             ? actionsFromOffer(body)
             : noun
-                ? [participleAction(noun.replace(/[?.!]+$/, "")) ?? ""]
+                ? participleActions(noun.replace(/[?.!]+$/, ""))
                 : see
                     ? [`show me ${see}`]
                     : wantA
@@ -277,7 +291,8 @@ export function naturalFollowups(input: AnswerFacts, max = 3): NaturalChip[] {
         }
     }
 
-    // 3. Concrete cues. The agent saying it will carry on comes first.
+    // 3. Concrete cues, the agent saying it will carry on first. Offers fill
+    // the cap before any cue: three offers leave no room for Continue.
     if (UNFINISHED.test(text.slice(-300))) {
         pushT(naturalText("resume"), turnKind);
     }

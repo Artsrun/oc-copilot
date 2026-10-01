@@ -290,6 +290,7 @@ async function chatTurn(request, context, rawResponse, token, turn, flow) {
     };
     const toolQuietMs = Math.max(0, settings.get("toolQuietMs", 600000));
     const busyPolicy = settings.get("busySessionPolicy", "abort");
+    const linker = (0, context_1.createFileLinker)(cwd);
     try {
         let sessionId = state.id;
         if (attachUrl && !sessionId && !token.isCancellationRequested) {
@@ -343,6 +344,7 @@ async function chatTurn(request, context, rawResponse, token, turn, flow) {
             const attemptModel = chain[attempt];
             const handingOff = attempt > 0;
             if (handingOff) {
+                (0, context_1.emitAnswerParts)(response, linker.flush());
                 const label = attemptModel ?? "OpenCode default";
                 beat.phase(`Timed out — handing off to ${label}`);
                 (0, flow_1.flowAdd)(flow.nodes, "handoff", "handoff", label, "warn");
@@ -383,7 +385,7 @@ async function chatTurn(request, context, rawResponse, token, turn, flow) {
                     answer += text;
                     streamed = true;
                     beat.activity();
-                    response.markdown(text);
+                    (0, context_1.emitAnswerParts)(response, linker.push(text));
                 }
             };
             try {
@@ -455,6 +457,7 @@ async function chatTurn(request, context, rawResponse, token, turn, flow) {
                 break;
             }
         }
+        (0, context_1.emitAnswerParts)(response, linker.flush());
         await beat.stop(token.isCancellationRequested);
         if (metrics) {
             metrics.cancelled = token.isCancellationRequested;
@@ -468,7 +471,8 @@ async function chatTurn(request, context, rawResponse, token, turn, flow) {
         const finalAnswer = (0, format_1.scrubLeakedContext)(metrics ? (0, format_1.composeVisibleAnswer)(task, answer, metrics) : answer.trim());
         if (!streamed || (0, format_1.isPromptEcho)(answer, task) || !answer.trim()) {
             if (finalAnswer) {
-                response.markdown(finalAnswer);
+                const whole = (0, context_1.createFileLinker)(cwd);
+                (0, context_1.emitAnswerParts)(response, [...whole.push(finalAnswer), ...whole.flush()]);
             }
             else {
                 response.markdown("_OpenCode returned no output._");
@@ -553,6 +557,7 @@ async function chatTurn(request, context, rawResponse, token, turn, flow) {
         };
     }
     catch (error) {
+        (0, context_1.emitAnswerParts)(response, linker.flush());
         await beat.stop(token.isCancellationRequested);
         if (token.isCancellationRequested) {
             core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] stopped by the user: ${error}`);

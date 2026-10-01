@@ -6,7 +6,7 @@ import { httpGetJson, httpPostJson, stopServer, withDirectory } from "./net";
 import { toolFilePath } from "./metrics";
 import { discoverOpenCodeEnv, openCodeConfigModel, readJsonc, summariseEnv } from "./env";
 import { isVaguePrompt, planTimeout } from "./prompt";
-import { parseChatPrompt, splitModelPrefix, splitModelsFanout } from "./context";
+import { createFileLinker, parseChatPrompt, splitModelPrefix, splitModelsFanout } from "./context";
 import {
     LiveSessionTracker,
     INLINE_PARTICIPANT_ID,
@@ -116,6 +116,7 @@ export const __test = {
     badge,
     badgeMarks,
     naturalFollowups,
+    createFileLinker,
     chatStream,
     SETTLE_MS,
     parseAgentList,

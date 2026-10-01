@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import * as fs from "node:fs";
 import * as path from "node:path";
 import { config, refUri, relTo } from "./core";
 import { ChatKind, StepRecord } from "./metrics";
@@ -122,6 +123,201 @@ export function emitReferences(response: vscode.ChatResponseStream, uris: vscode
             response.reference(uri);
         } catch {
             // never let a decorative reference break the turn
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// claim:file-links — `src/cart.ts:42` in inline code becomes an anchor
+// that opens the file at that line. Only a file that exists in the workspace;
+// never inside a fence or a multi-backtick span. VS Code 1.139 merges an
+// inline reference into the markdown before it (chatModel.ts), so the pill
+// sits in the sentence; an empty-text markdown link would drop the line on
+// click (the pill passes `selection: undefined` over the URI's #L42).
+
+export type AnswerPart = string | { anchor: vscode.Uri | vscode.Location };
+
+const PATH_SPAN = /^((?:[A-Za-z]:)?[\w@.\-\\/]*[\w@\-]\.[A-Za-z0-9]{1,10})(?::(\d{1,6})(?:[:-]\d{1,6})?|#L(\d{1,6}))?$/;
+
+/** One linker per answer: text in, parts out. A span still open at a chunk's
+ * end is held until it closes; `flush()` releases whatever is held. */
+export function createFileLinker(
+    cwd: string,
+    isFile: (p: string) => boolean = (p) => {
+        try {
+            return fs.statSync(p).isFile();
+        } catch {
+            return false;
+        }
+    }
+): { push: (chunk: string) => AnswerPart[]; flush: () => AnswerPart[] } {
+    let fence = ""; // the run that opened a fenced block
+    let multi = 0; // inside a ``-or-longer inline span: its run length
+    let lineStart = true;
+    let held = "";
+    const known = new Map<string, boolean>();
+
+    const anchorFor = (span: string): AnswerPart | undefined => {
+        const m = span.length <= 240 ? span.match(PATH_SPAN) : null;
+        if (!m) {
+            return undefined;
+        }
+        const abs = path.resolve(cwd, m[1]);
+        const rel = path.relative(cwd, abs);
+        if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) {
+            return undefined;
+        }
+        if (!known.has(abs)) {
+            known.set(abs, isFile(abs));
+        }
+        if (!known.get(abs)) {
+            return undefined;
+        }
+        const uri = vscode.Uri.file(abs);
+        const line = Number(m[2] ?? m[3] ?? 0);
+        // Optional: the verify stub may lack them; a bare file still opens.
+        const Loc = (vscode as unknown as { Location?: typeof vscode.Location }).Location;
+        const Range = (vscode as unknown as { Range?: typeof vscode.Range }).Range;
+        return { anchor: line > 0 && Loc && Range ? new Loc(uri, new Range(line - 1, 0, line - 1, 0)) : uri };
+    };
+
+    const run = (text: string, final: boolean): AnswerPart[] => {
+        const parts: AnswerPart[] = [];
+        let out = "";
+        let i = 0;
+        let nlAt = 0; // the next newline after a span's opening, reused per line
+        const hold = (from: number): void => {
+            held = text.slice(from);
+            i = text.length;
+        };
+        while (i < text.length) {
+            const c = text[i];
+            if (c === "\n") {
+                // A blank line ends a paragraph, and any code span in it.
+                if (lineStart) {
+                    multi = 0;
+                }
+                lineStart = true;
+                out += c;
+                i += 1;
+                continue;
+            }
+            if (lineStart && !multi) {
+                // A fence line: up to three spaces, then ``` or ~~~. Held whole
+                // until its newline: "```" then "js" may arrive apart.
+                const nl = text.indexOf("\n", i);
+                const line = text.slice(i, nl === -1 ? text.length : nl);
+                if (!final && nl === -1 && /^ {0,3}(?:`*|~*)$|^ {0,3}(?:`{3,}|~{3,})/.test(line)) {
+                    hold(i);
+                    break;
+                }
+                const lead = line.match(/^ {0,3}(`{3,}|~{3,})/);
+                if (lead) {
+                    const r = lead[1];
+                    if (!fence || (r[0] === fence[0] && r.length >= fence.length && !line.slice(lead[0].length).trim())) {
+                        fence = fence ? "" : r;
+                    }
+                    out += line;
+                    i += line.length;
+                    continue;
+                }
+            }
+            lineStart = false;
+            if (fence) {
+                out += c;
+                i += 1;
+                continue;
+            }
+            if (c === "\\") {
+                if (i + 1 === text.length && !final) {
+                    hold(i);
+                    break;
+                }
+                out += text.slice(i, i + 2);
+                i += 2;
+                continue;
+            }
+            if (c !== "`") {
+                out += c;
+                i += 1;
+                continue;
+            }
+            let n = 1;
+            while (text[i + n] === "`") {
+                n += 1;
+            }
+            if (i + n === text.length && !final) {
+                hold(i);
+                break;
+            }
+            if (multi) {
+                multi = n === multi ? 0 : multi;
+                out += text.slice(i, i + n);
+                i += n;
+                continue;
+            }
+            if (n > 1) {
+                multi = n;
+                out += text.slice(i, i + n);
+                i += n;
+                continue;
+            }
+            // One backtick: a span that closes on this line with one backtick.
+            // indexOf, not a slice per backtick: a whole answer arrives at once
+            // when nothing streamed.
+            const tickAt = text.indexOf("`", i + 1);
+            if (nlAt !== -1 && nlAt <= i) {
+                nlAt = text.indexOf("\n", i + 1);
+            }
+            const end = tickAt === -1 ? nlAt : nlAt === -1 ? tickAt : Math.min(tickAt, nlAt);
+            if (end === -1 && !final) {
+                hold(i);
+                break;
+            }
+            if (end === -1 || text[end] === "\n" || text[end + 1] === "`") {
+                out += c;
+                i += 1;
+                continue;
+            }
+            const link = anchorFor(text.slice(i + 1, end));
+            if (link) {
+                if (out) {
+                    parts.push(out);
+                }
+                parts.push(link);
+                out = "";
+            } else {
+                out += text.slice(i, end + 1);
+            }
+            i = end + 1;
+        }
+        if (out) {
+            parts.push(out);
+        }
+        return parts;
+    };
+
+    return {
+        push: (chunk: string) => {
+            const text = held + chunk;
+            held = "";
+            return run(text, false);
+        },
+        flush: () => {
+            const text = held;
+            held = "";
+            return text ? run(text, true) : [];
+        }
+    };
+}
+
+/** Sends linked parts: text as markdown, a file as an inline anchor. */
+export function emitAnswerParts(response: vscode.ChatResponseStream, parts: readonly AnswerPart[]): void {
+    for (const part of parts) {
+        if (typeof part === "string") {
+            response.markdown(part);
+        } else {
+            response.anchor(part.anchor);
         }
     }
 }

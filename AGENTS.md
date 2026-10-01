@@ -27,7 +27,7 @@ no bundler, no test runner: plain TypeScript → `out/`, plain Node for the suit
 | `src/proc.ts` | Spawning: shim resolution, `cmd.exe` quoting, `killTree`, `PWD = cwd`. §2 rule 3. |
 | `src/models.ts` | Model catalog (server `GET /config/providers`, else `opencode models --verbose`), names, cache tiers, the picker, `writeModelPin`, short names, `modelResolver` (one forced refetch per turn). |
 | `src/agents.ts` | Which agent a read-only turn runs as: `planAgent`, only once OpenCode lists it. |
-| `src/context.ts` | Attachments/selection folding, references, `parseChatPrompt`, `splitModelPrefix`, `splitModelsFanout`. |
+| `src/context.ts` | Attachments/selection folding, references, answer file pills (`createFileLinker`), `parseChatPrompt`, `splitModelPrefix`, `splitModelsFanout`. |
 | `src/env.ts` | What OpenCode loaded: config, plugins, MCP, commands, skills, agents, instruction files. |
 | `src/followups.ts` + `.json` | **Every word a chip or handoff sends**, the marks, pills (`createBadger`), `followupsProblems`. Leaf: imports only its JSON. |
 | `src/natural.ts` | Answer-derived chips: the agent's own offer or either/or, a named step 1, the file it edited — or nothing. |
@@ -243,4 +243,5 @@ history belongs in `CHANGELOG.md`, not in the source.
 Every capability the README states is tagged `<!-- claim:id -->` and anchored by
 `claim:id` in a comment beside the code; gate 4 fails on a tag with no anchor.
 Current: `worktrees`, `worktree-command`, `inline-participant`, `model-names`,
-`parallel-models`, `command-aliases`, `flow`, `sessions`, `parallel-composer`.
+`parallel-models`, `command-aliases`, `flow`, `sessions`, `parallel-composer`,
+`file-links`.

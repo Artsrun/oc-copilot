@@ -16,7 +16,7 @@ import { mark, prompt as promptText } from "./followups";
 import { RunMetrics, RunOptions, StepRecord, finalizeStepStatuses, toolOutputBytes } from "./metrics";
 import { composeVisibleAnswer, isPromptEcho, metricsLogLine, scrubLeakedContext } from "./format";
 import { insistedOn, isVaguePrompt, markClarifiedPrompt, planTimeout } from "./prompt";
-import { buildChatContext, emitReferences, parseChatPrompt, splitModelPrefix, splitModelsFanout, stepUris } from "./context";
+import { buildChatContext, createFileLinker, emitAnswerParts, emitReferences, parseChatPrompt, splitModelPrefix, splitModelsFanout, stepUris } from "./context";
 import { ensureServer } from "./net";
 import { planAgentNotice, planAgentSetting, resolvePlanAgent } from "./agents";
 import {
@@ -452,6 +452,8 @@ async function chatTurn(
 
     const toolQuietMs = Math.max(0, settings.get<number>("toolQuietMs", 600000));
     const busyPolicy = settings.get<string>("busySessionPolicy", "abort");
+    // `src/cart.ts:42` in the answer becomes a pill that opens the file.
+    const linker = createFileLinker(cwd);
 
     try {
         let sessionId: string | undefined = state.id;
@@ -518,6 +520,7 @@ async function chatTurn(
             const attemptModel = chain[attempt];
             const handingOff = attempt > 0;
             if (handingOff) {
+                emitAnswerParts(response, linker.flush());
                 const label = attemptModel ?? "OpenCode default";
                 beat.phase(`Timed out — handing off to ${label}`);
                 flowAdd(flow.nodes, "handoff", "handoff", label, "warn");
@@ -567,7 +570,7 @@ async function chatTurn(
                     answer += text;
                     streamed = true;
                     beat.activity();
-                    response.markdown(text);
+                    emitAnswerParts(response, linker.push(text));
                 }
             };
             try {
@@ -654,6 +657,7 @@ async function chatTurn(
             }
         }
 
+        emitAnswerParts(response, linker.flush());
         await beat.stop(token.isCancellationRequested);
         if (metrics) {
             metrics.cancelled = token.isCancellationRequested;
@@ -671,7 +675,8 @@ async function chatTurn(
         );
         if (!streamed || isPromptEcho(answer, task) || !answer.trim()) {
             if (finalAnswer) {
-                response.markdown(finalAnswer);
+                const whole = createFileLinker(cwd);
+                emitAnswerParts(response, [...whole.push(finalAnswer), ...whole.flush()]);
             } else {
                 response.markdown("_OpenCode returned no output._");
             }
@@ -776,6 +781,7 @@ async function chatTurn(
             }
         };
     } catch (error) {
+        emitAnswerParts(response, linker.flush());
         await beat.stop(token.isCancellationRequested);
         if (token.isCancellationRequested) {
             // A run torn down by Stop is not a failed run.

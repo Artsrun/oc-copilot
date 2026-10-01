@@ -367,6 +367,8 @@ const vscodeStub = {
     },
     ThemeColor: class { constructor(id) { this.id = id; } },
     ThemeIcon: class { constructor(id) { this.id = id; } },
+    Range: class { constructor(sl, sc, el, ec) { this.start = { line: sl, character: sc }; this.end = { line: el, character: ec }; } },
+    Location: class { constructor(uri, range) { this.uri = uri; this.range = range; } },
     MarkdownString: class { constructor(v) { this.value = v; } },
     ChatResponseReferencePart: class { constructor(value) { this.value = value; } },
     QuickPickItemKind: { Separator: -1, Default: 0 },
@@ -487,7 +489,9 @@ function hostStream() {
         return handle !== undefined ? new Promise((resolve) => notify.push(resolve)) : undefined;
     };
     let pool = 0;
-    const rowText = (p) => (p && p.value && (p.value.variableName ?? String(p.value))) || String(p);
+    // A row with a file renders `cart.js  #read` (chatReferencesContentPart.ts, 1.139).
+    const rowText = (p) =>
+        (p && p.value && (p.value.value && p.value.value.fsPath ? `${path.basename(p.value.value.fsPath)} #${p.value.variableName}` : p.value.variableName ?? String(p.value))) || String(p);
     const check = () => {
         if (main.cancelled) stats.writesAfterCancel++;
         if (closed) {
@@ -3256,6 +3260,75 @@ const lbProvider = (global.__participant || {}).followupProvider;
     // every call threw into a catch. This stub's arrow-function anchor() hid it.
     add("LB no inline anchor is sent (the reference list already carries the file)", lb.anchors.length === 0);
 
+    // FK (0.0.194): a file named in the answer opens on click. `src/cart.ts:42`
+    // in inline code becomes an inline anchor at that line — only for a file
+    // in the workspace, never in a fence or a ``-span. Accordion rows that
+    // name one file carry it, so the row opens it.
+    {
+        const fkDir = fs.mkdtempSync(path.join(work, "fk-"));
+        fs.mkdirSync(path.join(fkDir, "src"));
+        fs.writeFileSync(path.join(fkDir, "src", "cart.ts"), "// cart\n");
+        const fkCart = path.join(fkDir, "src", "cart.ts");
+        const fkRun = (chunks) => {
+            const l = ext.__test.createFileLinker?.(fkDir);
+            return l ? [...chunks.flatMap((c) => l.push(c)), ...l.flush()] : chunks;
+        };
+        const fkText = (parts) => parts.map((p) => (typeof p === "string" ? p : "<A>")).join("");
+        const fkAnchors = (parts) => parts.filter((p) => typeof p !== "string").map((p) => p.anchor);
+        const fk1 = fkRun(["See `src/cart.ts:42` now."]);
+        const fk1a = fkAnchors(fk1)[0];
+        add("FK a path:line in inline code becomes an anchor at that line", fkText(fk1) === "See <A> now." && fk1a?.uri?.fsPath === fkCart && fk1a?.range?.start?.line === 41);
+        add("FK a bare path becomes an anchor to the file", fkAnchors(fkRun(["Edit `src/cart.ts`."]))[0]?.fsPath === fkCart);
+        const fkSame = (what, chunks) => {
+            const out = fkRun(chunks);
+            add(`FK ${what} stays text`, fkAnchors(out).length === 0 && fkText(out) === chunks.join(""));
+        };
+        fkSame("a path that does not exist", ["See `src/nope.ts:3`."]);
+        fkSame("a path outside the workspace", ["See `../cart.ts` and `" + path.join(os.tmpdir(), "x.ts") + "`."]);
+        fkSame("a path in a fence", ["```ts\n`src/cart.ts`\n```\n"]);
+        fkSame("a path in a fence split mid-fence", ["``", "`js\n`src/c", "art.ts`\n``", "`\n"]);
+        fkSame("a path in a ``-span", ["Run `` `src/cart.ts` `` here."]);
+        fkSame("an escaped backtick", ["Not \\`src/cart.ts\\` here."]);
+        fkSame("a span left open at the end", ["Tail `src/cart.ts"]);
+        const fkSplit = fkRun(["See `src/ca", "rt.ts:7", "` then."]);
+        add("FK a path split across chunks still becomes one anchor", fkText(fkSplit) === "See <A> then." && fkAnchors(fkSplit)[0]?.range?.start?.line === 6);
+        const fkAfter = fkRun(["```\nx\n```\nThen `src/cart.ts`."]);
+        add("FK a path after a closed fence becomes an anchor", fkText(fkAfter) === "```\nx\n```\nThen <A>.");
+        // An answer that never streamed arrives whole: one 300 KB line, 48k backticks.
+        const fkBig = "See `a` and `b.x` here, `src/nope.ts` too. ".repeat(7000);
+        const fkT0 = Date.now();
+        const fkBigOut = fkRun([fkBig]);
+        const fkMs = Date.now() - fkT0;
+        add(`FK a 300 KB one-line answer links in < 500ms (${fkMs}ms)`, fkMs < 500 && fkText(fkBigOut) === fkBig);
+
+        // Through a real turn: the anchor reaches the chat, the text around it too.
+        fs.writeFileSync(path.join(work, "fk-lane.ts"), "a\nb\nc\n");
+        settings.executable = writeFake("fake-fk.js", [
+            { type: "text", sessionID: "ses_fk", part: { text: "Fixed `fk-lane.ts:3`; `fk-gone.ts` is not there." } }
+        ]);
+        memento.clear();
+        const fk = stream();
+        await global.__handler({ prompt: "fix the lane for fk" }, {}, fk.response, fk.token);
+        const fkChat = fk.chatMarkdown.join("");
+        add(
+            "FK a turn sends a file it names as an inline anchor, the rest as text",
+            fk.anchors.length === 1 && fk.anchors[0].uri?.uri?.fsPath === path.join(work, "fk-lane.ts") && !fkChat.includes("`fk-lane.ts:3`") && fkChat.includes("`fk-gone.ts`")
+        );
+
+        // Accordion rows: a read/edit row carries its file; a shell row stays text.
+        const fkH = hostStream();
+        const fkBeat = ext.__test.startHeartbeat(fkH.response, "rows", 0, fkDir);
+        fkBeat.thought("Look at the cart");
+        fkBeat.step({ tool: "read", detail: path.join(fkDir, "src", "cart.ts"), filePath: path.join(fkDir, "src", "cart.ts"), durationMs: 2, status: "done" });
+        fkBeat.step({ tool: "bash", detail: "npm test", durationMs: 2, status: "done" });
+        fkBeat.activity();
+        await fkBeat.stop();
+        fkH.close();
+        await new Promise((r) => setTimeout(r, 20));
+        const fkRows = fkH.main.tasks.filter(Boolean).flatMap((t) => t.rows);
+        add("FK a read row carries its file (cart.ts #read); a shell row stays text", fkRows.join("|") === "cart.ts #read|bash: npm test");
+    }
+
     // LB (v169): the manifest's command table and the runtime control/agent
     // tables must not drift — the mirror of the BE setting-drift guard, for
     // commands. Rendering no typing and no spawn, this is pure manifest⇄source
@@ -3541,7 +3614,14 @@ const lbProvider = (global.__participant || {}).followupProvider;
         nfReview[0] && nfReview[0].prompt === `Draft a concrete plan for updating the §1 map. ${FJ.tail}` &&
             nfReview.every((c) => /^Draft a concrete plan for /.test(c.prompt) && !/deliverable/.test(c.prompt) && c.command === "plan")
     );
-    add("NF a long action is cut at a word, never mid-word", nfReview.every((c) => c.label.length <= (FJ.natural?.maxLabel ?? 56) && (!c.label.endsWith("…") || / \S+…$/.test(c.label) || /[a-z]…$/i.test(c.label))));
+    // A cut label is a prefix of its action that ends at a word or after a '/'.
+    const nfPath = nf("dev", "Done. Want me to fix src/components/authentication/LoginRedirectHandlerWithAVeryLongName.tsx?");
+    const nfAtBoundary = (c) => {
+        const head = c.label.endsWith("…") ? c.label.slice(0, -1) : undefined;
+        return head === undefined || (c.prompt.startsWith(head) && (head.endsWith("/") || /^[\s,;:—–-]/.test(c.prompt.slice(head.length))));
+    };
+    add("NF a long action is cut at a word, never mid-word", [...nfReview, ...nfPath].every((c) => c.label.length <= (FJ.natural?.maxLabel ?? 56) && nfAtBoundary(c)));
+    add("NF a long path is cut after a '/', not mid-name", nfPath[0]?.label === "Fix src/components/authentication/…");
     const nfLane = nf("plan", "Note: `README.md` is referenced by `ship-gate.js` but wasn't in your `scripts/` glob — let me know if you want the claim-anchor and documentation checks walked through too.");
     add("NF an offer after a dash, in participle form, reads as an action", nfLabels(nfLane).join("|") === "Walk through the claim-anchor and documentation checks");
     const nfOr = nf("dev", "The fix is on a scratch branch. Should I merge it into main or open a PR?");
@@ -3586,6 +3666,32 @@ const lbProvider = (global.__participant || {}).followupProvider;
     );
     const nfWantA = nf("plan", "The order is inverted too. Want a plan to fix these?");
     add("NF real: 'Want a plan to …?' reads as an offer", nfLabels(nfWantA).join("|") === "Draft a plan to fix these" && nfWantA[0].command === "plan");
+    // 0.0.193: a participle offer splits like a verb offer ("Add the docs
+    // updated or the tests" shipped before).
+    add(
+        "NF 'X-ed or Y-ed' participle offers are two chips",
+        nfLabels(nf("plan", "Done. Let me know if you would like the docs updated or the tests added.")).join("|") === "Update the docs|Add the tests"
+    );
+    const nfPart3 = nf("plan", "Done. Let me know if you want the caching fixed, the tests added or the logging removed.");
+    add(
+        "NF a participle list of three is three chips, each with its own verb",
+        nfLabels(nfPart3).join("|") === "Fix the caching|Add the tests|Remove the logging" && nfPart3.every((c) => c.command === "dev")
+    );
+    add(
+        "NF 'Next steps: A, B, and C' is three chips",
+        nfLabels(nf("plan", "Next steps: run the load test, benchmark the parser, and update the docs.")).join("|") === "Run the load test|Benchmark the parser|Update the docs"
+    );
+    add("NF 'A, and B' stays one action in two steps", nfLabels(nf("dev", "Want me to run the tests, and fix any failures?")).join("|") === "Run the tests, and fix any failures");
+    add(
+        "NF a throw in the chip code costs the chips, not the turn",
+        (() => {
+            try {
+                return Array.isArray(ext.__test.suggestFollowups({ agent: "dev", answer: "Done.", steps: undefined }));
+            } catch {
+                return false;
+            }
+        })()
+    );
     const nfEmpty = [
         ["a yes/no question", nf("plan", "The comment says discounts apply before tax, but the code applies them after. Is that intended?")],
         ["a plain explanation", nf("plan", "The total is subtotal times 1.2, then the discount. Money is integer cents throughout.")],
@@ -3597,7 +3703,8 @@ const lbProvider = (global.__participant || {}).followupProvider;
         ["'say the word' (vague, real)", nf("dev", "The guard was not applied — say the word if you want it.")],
         // A bare "X or Y?" is an invitation as often as a choice; no chips.
         ["an invitation shaped like a choice", nf("plan", "That covers it. Questions or feedback?")],
-        ["'Any questions or concerns?'", nf("plan", "That covers it. Any questions or concerns?")]
+        ["'Any questions or concerns?'", nf("plan", "That covers it. Any questions or concerns?")],
+        ["a participle offer with a part that is no action", nf("plan", "Done. Let me know if you want more detail or the tests added.")]
     ];
     for (const [what, chips] of nfEmpty) {
         add(`NF no chips for ${what}`, chips.length === 0);
@@ -3694,7 +3801,7 @@ const lbProvider = (global.__participant || {}).followupProvider;
         );
         add(
             "GP a thought and the tools that ran under it are one accordion",
-            !!gpThought && gpThought.rows.length === 2 && /^grep: /.test(gpThought.rows[0]) && /^read: /.test(gpThought.rows[1]) && / · 2 steps · /.test(gpThought.title)
+            !!gpThought && gpThought.rows.length === 2 && /^grep: /.test(gpThought.rows[0]) && /^\S+ #read$/.test(gpThought.rows[1]) && / · 2 steps · /.test(gpThought.title)
         );
         add("GP no task is left open when the turn ends", gpTasks.length >= 1 && gpH.spinning().length === 0 && gpTasks.every((t) => t.settled));
         const gpTaskAt = gpH.main.parts.findIndex((p) => p.kind === "task");

@@ -148,6 +148,9 @@ the chat has only control commands (`/help`, `/model`…), which are not traced.
   it as cwd and `PWD` (`npm run probe:pwd` measures a machine).
 - **Progress stays alive**: the live line names the running tool or the latest
   thought; finished thoughts fold into accordions (`groupProgress`).
+- **Files open on click** <!-- claim:file-links -->: a workspace file the answer
+  names in inline code (`src/cart.ts:42`) becomes a pill that opens it at that
+  line; an accordion row that read or edited one file opens it too.
 - **Follow-ups are the answer's own next moves**: what the agent offered or
   asked ("Which do you prefer: Postgres or MySQL?"), a step 1, the file it
   edited — else none. Recovery chips appear only after a failure or a stop.
@@ -344,6 +347,18 @@ All under `opencodeCopilotBridge.`.
 
 The last five releases; the full history is `CHANGELOG.md` in the repository.
 
+### 0.0.194
+
+- **Files open on click**: a workspace file the answer names in inline code
+  (`src/cart.ts:42`) is a pill that opens it at that line; an accordion row
+  that read or edited one file opens it too.
+
+### 0.0.193
+
+Follow-up chip fixes: "the docs updated or the tests added" and "Next steps:
+A, B, and C" give one chip per action; long paths are cut after a `/`; a chip
+bug can no longer mark a finished turn as failed.
+
 ### 0.0.192
 
 Review fixes: `/sessions` keeps a chat's counters, cleans up a failed fork,
@@ -363,20 +378,3 @@ scan covers every committed file. No behaviour change.
   Submit from two lanes on, inserted into the chat input.
 - **New Session = Ask OpenCode, merged**: a new chat with `@opencode ` typed.
   The chat you leave keeps its session; nothing is sent.
-
-### 0.0.189
-
-- **Fixed: a multi-line `/parallel` prompt pasted on Windows (CRLF) ran as no
-  lanes.** A `---` line now separates lanes whatever the line endings, may have
-  spaces around it, and is text inside backticks or a fence.
-
-### 0.0.188
-
-`/flow`, safer lane splitting, and two rendering fixes. No setting was removed.
-
-- **`/flow`**: a flowchart of what a turn did, from memory, no model call (`/f`).
-- **Lanes split on `|`, `;;` or a `---` line only.** `||` and `::` are text.
-- **Fixed: a mark after a backslash** (`\(•‿•)`) became a broken pill; a pill
-  next to a backtick is now kept apart.
-- **Fixed: every unknown lane model cost a catalog fetch**: one per turn now,
-  and Stop cuts it short.

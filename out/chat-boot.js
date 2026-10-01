@@ -55,6 +55,7 @@ exports.recalledFollowups = recalledFollowups;
 exports.outcomeOf = outcomeOf;
 exports.followupsFor = followupsFor;
 const vscode = __importStar(require("vscode"));
+const path = __importStar(require("node:path"));
 const core_1 = require("./core");
 const metrics_1 = require("./metrics");
 const format_1 = require("./format");
@@ -76,14 +77,16 @@ function nextMilestone(elapsedS) {
 }
 const supportsTaskProgress = (response) => typeof response.progress === "function" && response.progress.length >= 2;
 exports.supportsTaskProgress = supportsTaskProgress;
-const stepRow = (label) => {
+const stepRow = (label, file) => {
     const Ref = vscode.ChatResponseReferencePart;
-    return Ref ? new Ref({ variableName: label }) : { value: { variableName: label } };
+    const value = file ? { variableName: file.tool, value: file.uri } : { variableName: label };
+    return Ref ? new Ref(value) : { value };
 };
-function finishedTask(response, title, rows) {
+const FILE_TOOLS = /^(?:read|edit|write|patch|multiedit|apply_patch)$/i;
+function finishedTask(response, title, rows, files) {
     response.progress.call(response, title, (reporter) => {
         for (const row of rows) {
-            reporter.report(stepRow(row));
+            reporter.report(stepRow(row, files?.get(row)));
         }
         return Promise.resolve(title);
     });
@@ -168,7 +171,7 @@ function startHeartbeat(response, initial, timeoutMs, cwd) {
             return false;
         }
         const n = g.rows.length;
-        finishedTask(response, `${g.title} · ${n} step${n === 1 ? "" : "s"} · ${(0, core_1.secs)(Date.now() - g.openedAt)}`, g.rows);
+        finishedTask(response, `${g.title} · ${n} step${n === 1 ? "" : "s"} · ${(0, core_1.secs)(Date.now() - g.openedAt)}`, g.rows, g.files);
         lastSentAt = Date.now();
         return true;
     };
@@ -179,6 +182,7 @@ function startHeartbeat(response, initial, timeoutMs, cwd) {
                 title: pendingThought ? `${(0, followups_1.mark)("thought")} ${pendingThought}` : `${(0, followups_1.mark)("tool")} Working`,
                 rows: [],
                 open: new Set(),
+                files: new Map(),
                 openedAt: Date.now()
             };
             pendingThought = "";
@@ -190,6 +194,12 @@ function startHeartbeat(response, initial, timeoutMs, cwd) {
         if (!accordion || !row) {
             return;
         }
+        const file = step.filePath && FILE_TOOLS.test(step.tool) ? path.resolve(cwd ?? "", step.filePath) : "";
+        const remember = (g) => {
+            if (file && !g.files.has(row)) {
+                g.files.set(row, { uri: vscode.Uri.file(file), tool: step.tool.toLowerCase() });
+            }
+        };
         if (step.status === "running") {
             if (seen.has(row)) {
                 return;
@@ -198,13 +208,19 @@ function startHeartbeat(response, initial, timeoutMs, cwd) {
             const g = currentGroup();
             g.rows.push(row);
             g.open.add(row);
+            remember(g);
             return;
         }
         if (seen.delete(row)) {
             group?.open.delete(row);
+            if (group) {
+                remember(group);
+            }
             return;
         }
-        currentGroup().rows.push(row);
+        const g = currentGroup();
+        g.rows.push(row);
+        remember(g);
     };
     return {
         phase: (text) => {
@@ -564,7 +580,13 @@ async function runParallelLanes(opts) {
     }
 }
 function suggestFollowups(input) {
-    return (0, natural_1.naturalFollowups)(input);
+    try {
+        return (0, natural_1.naturalFollowups)(input);
+    }
+    catch (error) {
+        core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] follow-up chips left out: ${error}`);
+        return [];
+    }
 }
 const followupStore = new Map();
 const FOLLOWUP_STORE_CAP = 64;

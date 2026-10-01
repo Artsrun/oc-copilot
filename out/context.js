@@ -37,12 +37,15 @@ exports.isInstructionFile = isInstructionFile;
 exports.isIgnorableReference = isIgnorableReference;
 exports.buildChatContext = buildChatContext;
 exports.emitReferences = emitReferences;
+exports.createFileLinker = createFileLinker;
+exports.emitAnswerParts = emitAnswerParts;
 exports.stepUris = stepUris;
 exports.splitModelPrefix = splitModelPrefix;
 exports.splitModelsFanout = splitModelsFanout;
 exports.parseChatPrompt = parseChatPrompt;
 exports.uniqueModels = uniqueModels;
 const vscode = __importStar(require("vscode"));
+const fs = __importStar(require("node:fs"));
 const path = __importStar(require("node:path"));
 const core_1 = require("./core");
 const INSTRUCTION_FILES = /(^|[\\/])(AGENTS\.md|CLAUDE\.md|copilot-instructions\.md|.*\.instructions\.md|.*\.prompt\.md)$/i;
@@ -134,6 +137,175 @@ function emitReferences(response, uris) {
             response.reference(uri);
         }
         catch {
+        }
+    }
+}
+const PATH_SPAN = /^((?:[A-Za-z]:)?[\w@.\-\\/]*[\w@\-]\.[A-Za-z0-9]{1,10})(?::(\d{1,6})(?:[:-]\d{1,6})?|#L(\d{1,6}))?$/;
+function createFileLinker(cwd, isFile = (p) => {
+    try {
+        return fs.statSync(p).isFile();
+    }
+    catch {
+        return false;
+    }
+}) {
+    let fence = "";
+    let multi = 0;
+    let lineStart = true;
+    let held = "";
+    const known = new Map();
+    const anchorFor = (span) => {
+        const m = span.length <= 240 ? span.match(PATH_SPAN) : null;
+        if (!m) {
+            return undefined;
+        }
+        const abs = path.resolve(cwd, m[1]);
+        const rel = path.relative(cwd, abs);
+        if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) {
+            return undefined;
+        }
+        if (!known.has(abs)) {
+            known.set(abs, isFile(abs));
+        }
+        if (!known.get(abs)) {
+            return undefined;
+        }
+        const uri = vscode.Uri.file(abs);
+        const line = Number(m[2] ?? m[3] ?? 0);
+        const Loc = vscode.Location;
+        const Range = vscode.Range;
+        return { anchor: line > 0 && Loc && Range ? new Loc(uri, new Range(line - 1, 0, line - 1, 0)) : uri };
+    };
+    const run = (text, final) => {
+        const parts = [];
+        let out = "";
+        let i = 0;
+        let nlAt = 0;
+        const hold = (from) => {
+            held = text.slice(from);
+            i = text.length;
+        };
+        while (i < text.length) {
+            const c = text[i];
+            if (c === "\n") {
+                if (lineStart) {
+                    multi = 0;
+                }
+                lineStart = true;
+                out += c;
+                i += 1;
+                continue;
+            }
+            if (lineStart && !multi) {
+                const nl = text.indexOf("\n", i);
+                const line = text.slice(i, nl === -1 ? text.length : nl);
+                if (!final && nl === -1 && /^ {0,3}(?:`*|~*)$|^ {0,3}(?:`{3,}|~{3,})/.test(line)) {
+                    hold(i);
+                    break;
+                }
+                const lead = line.match(/^ {0,3}(`{3,}|~{3,})/);
+                if (lead) {
+                    const r = lead[1];
+                    if (!fence || (r[0] === fence[0] && r.length >= fence.length && !line.slice(lead[0].length).trim())) {
+                        fence = fence ? "" : r;
+                    }
+                    out += line;
+                    i += line.length;
+                    continue;
+                }
+            }
+            lineStart = false;
+            if (fence) {
+                out += c;
+                i += 1;
+                continue;
+            }
+            if (c === "\\") {
+                if (i + 1 === text.length && !final) {
+                    hold(i);
+                    break;
+                }
+                out += text.slice(i, i + 2);
+                i += 2;
+                continue;
+            }
+            if (c !== "`") {
+                out += c;
+                i += 1;
+                continue;
+            }
+            let n = 1;
+            while (text[i + n] === "`") {
+                n += 1;
+            }
+            if (i + n === text.length && !final) {
+                hold(i);
+                break;
+            }
+            if (multi) {
+                multi = n === multi ? 0 : multi;
+                out += text.slice(i, i + n);
+                i += n;
+                continue;
+            }
+            if (n > 1) {
+                multi = n;
+                out += text.slice(i, i + n);
+                i += n;
+                continue;
+            }
+            const tickAt = text.indexOf("`", i + 1);
+            if (nlAt !== -1 && nlAt <= i) {
+                nlAt = text.indexOf("\n", i + 1);
+            }
+            const end = tickAt === -1 ? nlAt : nlAt === -1 ? tickAt : Math.min(tickAt, nlAt);
+            if (end === -1 && !final) {
+                hold(i);
+                break;
+            }
+            if (end === -1 || text[end] === "\n" || text[end + 1] === "`") {
+                out += c;
+                i += 1;
+                continue;
+            }
+            const link = anchorFor(text.slice(i + 1, end));
+            if (link) {
+                if (out) {
+                    parts.push(out);
+                }
+                parts.push(link);
+                out = "";
+            }
+            else {
+                out += text.slice(i, end + 1);
+            }
+            i = end + 1;
+        }
+        if (out) {
+            parts.push(out);
+        }
+        return parts;
+    };
+    return {
+        push: (chunk) => {
+            const text = held + chunk;
+            held = "";
+            return run(text, false);
+        },
+        flush: () => {
+            const text = held;
+            held = "";
+            return text ? run(text, true) : [];
+        }
+    };
+}
+function emitAnswerParts(response, parts) {
+    for (const part of parts) {
+        if (typeof part === "string") {
+            response.markdown(part);
+        }
+        else {
+            response.anchor(part.anchor);
         }
     }
 }

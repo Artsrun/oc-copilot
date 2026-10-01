@@ -3,6 +3,35 @@
 Full release history, newest first; releases before the last one are condensed
 to their summary and headlines. The README ships the last five.
 
+### 0.0.194
+
+Files named in chat open on click.
+
+- **File pills in the answer**: `src/cart.ts`, `src/cart.ts:42` or
+  `src/cart.ts#L42` in inline code becomes an inline anchor that opens the
+  file at that line. Only a file that exists inside the workspace; never inside
+  a fence or a multi-backtick span; a path split across stream chunks is held
+  until its span closes. Sent as `response.anchor(Location)`: VS Code 1.139
+  merges it into the sentence, while an empty-text markdown link would lose the
+  line on click. Checks `FK`.
+- **Accordion rows open their file**: a `read`, `edit`, `write` or `patch`
+  row carries its file and renders as `cart.ts  #read`; shell and search rows
+  stay text.
+
+### 0.0.193
+
+Fixes from a review of the follow-up chips.
+
+- **Fixed: "let me know if you want the docs updated or the tests added"
+  gave one garbled chip** ("Add the docs updated or the tests", sent to
+  `/dev`). Each part is its own chip now; a part that is no action ("more
+  detail or …") leaves the sentence without chips.
+- **"Next steps: A, B, and C"** is three chips, not one cut-off chip. ", and"
+  between two actions ("run the tests, and fix any failures") stays one.
+- A long path in a chip label is cut after a `/`, not inside a file name.
+- A bug while reading chips from a finished answer costs the chips, not the
+  turn: it no longer reports "OpenCode failed to start" under the answer.
+
 ### 0.0.192
 
 Fixes from a review of `/sessions` and the `/parallel` composer.

@@ -123,6 +123,7 @@ exports.__test = {
     badge: followups_1.badge,
     badgeMarks: followups_1.badgeMarks,
     naturalFollowups: natural_1.naturalFollowups,
+    createFileLinker: context_1.createFileLinker,
     chatStream: chat_boot_1.chatStream,
     SETTLE_MS: chat_boot_1.SETTLE_MS,
     parseAgentList: agents_1.parseAgentList,
