@@ -366,3 +366,28 @@ Chat sessions list and comes back when it finishes.
   chats (no `@opencode`) — if they vanish too, it is the host. Pinning a chat
   keeps it visible in the compact list. **Developer: Set Log Level → Trace**
   then the Window log shows `Disposing chat session …` if a model is unloaded.
+
+---
+
+## A `node.cmd` ahead of `node.exe` on PATH sends every fake through cmd.exe
+
+**Dated 2026-10-02. Environment, not product.** Six suite checks (J, JC, FV,
+IL) failed on every run: each one sends a multi-line prompt. Cause: `npx node@22`
+run inside the repo installed the `node` npm package as a dependency, so
+`node_modules/.bin/node.cmd` came first on PATH under `npm run`. The fakes'
+shim reads `node "<file>" %*`; `readShimTarget` resolved `node` to that
+`node.cmd`, correctly refused to chain into a second shim, and fell back to
+cmd.exe, which cuts the prompt at its first newline (§7). After removing the
+package, the suite printed `ALL 766 CHECKS PASSED` on Node 20.6.1 and on Node
+22.23.2. Never run `npx node@…` in this folder. In production this needs a
+shim whose head is `node` and a `node.cmd` earlier on PATH: unmeasured, and
+rare.
+
+## `@vscode/vsce` 4 needs Node 22; the gate's fallback list was wrong
+
+**Dated 2026-10-02. Fixed in the gate.** `vsce ls` on Node 20.6.1 died with
+`util.styleText is not a function` (vsce 4.0.0 declares `engines.node >= 22`),
+so the gate used `simulatePackageList`. That listed 69 files, `dist/*.vsix` and
+`.vscode/*` among them: `toRe` turned `**` into `(.*/)?` and then rewrote that
+group's own `*` and `?`. With placeholders, the simulation matches `vsce ls`
+(Node 22) file for file: 34 = 34. Use Node 22 for the gate.

@@ -434,14 +434,22 @@ function simulatePackageList(dir) {
               .map((l) => l.trim())
               .filter((l) => l && !l.startsWith("#"))
         : [];
+    // Placeholders first: replacing `**` with `(.*/)?` and then `*` and `?`
+    // rewrote the group it had just written, so `dist/**` matched nothing and
+    // every dist VSIX "shipped" whenever vsce could not run.
     const toRe = (glob) =>
         new RegExp(
             "^" +
                 glob
                     .replace(/[.+^${}()|[\]\\]/g, "\\$&")
-                    .replace(/\*\*\/?/g, "(.*/)?")
-                    .replace(/\*/g, "[^/]*")
-                    .replace(/\?/g, "[^/]") +
+                    .replace(/\*\*\//g, "\u0000")
+                    .replace(/\*\*/g, "\u0003")
+                    .replace(/\*/g, "\u0001")
+                    .replace(/\?/g, "\u0002")
+                    .replace(/\u0000/g, "(.*/)?")
+                    .replace(/\u0003/g, ".*")
+                    .replace(/\u0001/g, "[^/]*")
+                    .replace(/\u0002/g, "[^/]") +
                 "$"
         );
     const res = patterns.map(toRe);
