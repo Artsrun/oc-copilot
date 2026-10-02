@@ -36,7 +36,6 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.ROUTED_COMMANDS = exports.KIND_COMMAND_NAMES = exports.allCommands = exports.DEFAULT_ALIASES = exports.SLASH_COMMANDS = exports.SETTLE_MS = exports.GROUP_MAX_ROWS = exports.stepLabel = exports.supportsTaskProgress = exports.REASONING_EVERY_MS = exports.HEARTBEAT_MILESTONES_S = void 0;
 exports.nextMilestone = nextMilestone;
 exports.finishedTask = finishedTask;
-exports.traceSteps = traceSteps;
 exports.startHeartbeat = startHeartbeat;
 exports.chatStream = chatStream;
 exports.thoughtLine = thoughtLine;
@@ -45,6 +44,7 @@ exports.typedSlash = typedSlash;
 exports.commandAliases = commandAliases;
 exports.resolveAlias = resolveAlias;
 exports.kindChoice = kindChoice;
+exports.retiredCommand = retiredCommand;
 exports.isKindCommand = isKindCommand;
 exports.helpMarkdown = helpMarkdown;
 exports.splitLanes = splitLanes;
@@ -63,7 +63,6 @@ const runs_1 = require("./runs");
 const followups_1 = require("./followups");
 const natural_1 = require("./natural");
 const models_1 = require("./models");
-const flow_1 = require("./flow");
 exports.HEARTBEAT_MILESTONES_S = [3, 10, 30, 60, 120, 180, 300, 600];
 exports.REASONING_EVERY_MS = 5000;
 function nextMilestone(elapsedS) {
@@ -104,12 +103,6 @@ const stepLabel = (step, cwd) => {
     return !detail || detail === "running" ? "" : `${step.tool}: ${shortDetail(detail, cwd)}`;
 };
 exports.stepLabel = stepLabel;
-function traceSteps(nodes, steps, cwd) {
-    for (const step of steps) {
-        const label = (0, exports.stepLabel)(step, cwd);
-        (0, flow_1.flowAdd)(nodes, "step", step.tool, label.slice(step.tool.length + 2), step.status === "timeout" ? "fail" : undefined);
-    }
-}
 exports.GROUP_MAX_ROWS = 24;
 exports.SETTLE_MS = 120;
 function startHeartbeat(response, initial, timeoutMs, cwd) {
@@ -346,7 +339,7 @@ function thoughtLine(reasoning, max = 90) {
     const pick = [...sentences].reverse().find((x) => !RESTATEMENT.test(x)) ?? sentences[sentences.length - 1] ?? plain;
     return (0, core_1.truncate)(pick, max);
 }
-exports.SLASH_COMMANDS = ["new", "session", "sessions", "help", "model", "ping", "env", "stop", "flow"];
+exports.SLASH_COMMANDS = ["new", "session", "sessions", "help", "model", "ping", "env", "stop"];
 const CONTROL_COMMANDS = new Set(exports.SLASH_COMMANDS);
 const KIND_COMMANDS = {
     plan: "plan",
@@ -369,7 +362,6 @@ exports.DEFAULT_ALIASES = {
     m: "model",
     w: "worktree",
     e: "env",
-    f: "flow",
     ls: "sessions",
     h: "help",
     "?": "help"
@@ -416,6 +408,12 @@ function kindChoice(declared, parsedKind) {
 }
 exports.KIND_COMMAND_NAMES = Object.keys(KIND_COMMANDS);
 exports.ROUTED_COMMANDS = ["worktree"];
+const RETIRED = { flow: "0.0.196", f: "0.0.196" };
+function retiredCommand(prompt) {
+    const word = prompt.match(/^\/(\S+)(?=\s|$)/)?.[1]?.toLowerCase() ?? "";
+    const since = Object.prototype.hasOwnProperty.call(RETIRED, word) ? RETIRED[word] : undefined;
+    return since ? `\`/${word}\` was removed in ${since}, so nothing was run. \`/help\` lists the commands.` : undefined;
+}
 function isKindCommand(declared) {
     return Boolean(KIND_COMMANDS[declared]);
 }
@@ -434,7 +432,6 @@ function helpMarkdown() {
         "| `/stop` | Stop a run still going on the server (closing the chat does not) |",
         "| `/new` | Start a fresh session |",
         "| `/model` | Show and change the model chain |",
-        "| `/flow [n\\|all]` | Diagram of what a turn did — folder, session, agent, model, steps, end. No model call |",
         "",
         "Inline prefixes still work: `dev:`, `model:provider/id` — or a short name, `model:tundra`.",
         "Lanes split on `|`, `;;` or a `---` line. Per lane: `/parallel m:tundra review auth | m:oasis read the logs`. One task on several models: `/parallel models:tundra,oasis,aspen review auth`.",
@@ -505,7 +502,7 @@ async function runParallelLanes(opts) {
         try {
             const metrics = await (0, runs_1.runOpenCode)({
                 executable: opts.executable,
-                task: lane,
+                task: `${lane}${opts.preamble ?? ""}`,
                 cwd: opts.cwd,
                 agent: laneAgent,
                 attachUrl,
@@ -543,30 +540,18 @@ async function runParallelLanes(opts) {
     for (const [i, result] of results.entries()) {
         (0, metrics_1.finalizeStepStatuses)(result.metrics);
         const body = (0, format_1.scrubLeakedContext)(result.answer.trim()) || "_(no output)_";
-        const flow = (0, format_1.flowLine)(result.metrics);
+        const steps = (0, format_1.stepsLine)(result.metrics);
         const fail = result.metrics.error
             ? ` · ${(0, followups_1.mark)("warn")} ${(0, core_1.truncate)(String(result.metrics.error), 120)}`
             : "";
         const laneModel = specs[i].model ?? opts.model;
         const title = sameTask && laneModel ? modelName(laneModel) : (0, core_1.truncate)(result.lane, 80) + (laneModel ? ` · ${modelName(laneModel)}` : "");
         opts.response.markdown(`\n\n### ${i + 1}. ${title}\n\n${specs[i].error ? "_(not run)_" : body}\n\n` +
-            `> ${flow ? flow + " · " : ""}${(0, core_1.secs)(result.metrics.totalMs)}` +
+            `> ${steps ? steps + " · " : ""}${(0, core_1.secs)(result.metrics.totalMs)}` +
             (result.metrics.cost > 0 ? ` · $${result.metrics.cost.toFixed(4)}` : "") +
             (result.metrics.timedOut ? " · " + (0, followups_1.mark)("quiet") + " partial" : fail));
     }
     const ok = results.filter((r) => !r.metrics.timedOut && r.answer.trim()).length;
-    if (opts.trace) {
-        for (const [i, r] of results.entries()) {
-            const nodes = [];
-            const m = r.metrics;
-            const laneModel = specs[i].model ?? opts.model;
-            (0, flow_1.flowAdd)(nodes, "info", "model", specs[i].ref ?? (laneModel ? modelName(laneModel) : "OpenCode default"), specs[i].error ? "fail" : undefined);
-            traceSteps(nodes, m.steps, opts.cwd);
-            const cost = m.cost > 0 ? ` · $${m.cost.toFixed(4)}` : "";
-            (0, flow_1.flowAdd)(nodes, "info", specs[i].error ? "not run" : m.timedOut ? `timed out after ${(0, core_1.secs)(m.totalMs)}` : m.error ? `error: ${m.error}` : `answered in ${(0, core_1.secs)(m.totalMs)}${cost}`, "", specs[i].error || m.error || m.timedOut ? "fail" : undefined);
-            opts.trace.lanes.push({ title: (0, core_1.truncate)(sameTask && laneModel ? modelName(laneModel) : r.lane, 40), nodes });
-        }
-    }
     const totalMs = Math.max(...results.map((r) => r.metrics.totalMs), 0);
     const serialMs = results.reduce((n, r) => n + r.metrics.totalMs, 0);
     const cost = results.reduce((n, r) => n + r.metrics.cost, 0);
@@ -575,9 +560,6 @@ async function runParallelLanes(opts) {
         (cost > 0 ? ` · $${cost.toFixed(4)}` : "") +
         ".\n\nLanes ran in isolated sessions, so nothing above is in your ongoing " +
         "conversation. Paste the parts you want to keep into a normal `@opencode` turn.");
-    if (opts.trace) {
-        opts.trace.end = { kind: "end", key: `${ok}/${results.length} lanes returned in ${(0, core_1.secs)(totalMs)}${cost > 0 ? ` · $${cost.toFixed(4)}` : ""}`, parts: [], count: 1, status: ok < results.length ? "warn" : undefined };
-    }
 }
 function suggestFollowups(input) {
     try {
@@ -635,11 +617,6 @@ function outcomeOf(metadata) {
     }
 }
 function followupsFor(metadata) {
-    const chips = chipsFor(metadata);
-    (0, flow_1.noteFlowChips)(metadata.flow, chips.map((c) => c.label ?? c.prompt));
-    return chips;
-}
-function chipsFor(metadata) {
     const outcome = outcomeOf(metadata);
     const kind = metadata.agent === "dev" || metadata.kind === "dev" ? "dev" : "plan";
     const own = typeof metadata.prompt === "string" ? metadata.prompt : undefined;

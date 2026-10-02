@@ -3,6 +3,26 @@
 Full release history, newest first; releases before the last one are condensed
 to their summary and headlines. The README ships the last five.
 
+### 0.0.196
+
+`/flow` is removed, `/parallel` lanes get your attachments, and the gate
+catches two more kinds of drift. No setting was removed.
+
+- **Removed: `/flow`** and its alias `/f` — the command, the turn trace in
+  every turn's metadata, `src/flow.ts`, the mermaid probe and the docs. A
+  typed `/flow` or `/f` now says it was removed and runs nothing; before, the
+  `/` kept it out of the vague-prompt gate and it would have gone to the model
+  as a paid task. The mermaid finding stays in REFS. Checks `RM`.
+- **Fixed: `/parallel` dropped attached files.** The context was built after
+  the parallel branch had returned, so `#file:` reached no lane. Every lane now
+  gets the attachment after its own task, the files show as references, and
+  `includeChatReferences: false` still keeps lanes bare. Checks `J`.
+- **Gate: without git, every file is scanned for internal names.** The 0.0.195
+  tar's `.vscode/settings.json` pinned a model on a private gateway, and the
+  fallback scan read only the packaged files; that file is kept as committed.
+- **Gate: `package-lock.json` must carry the manifest's version** (it said
+  0.0.194 in 0.0.195, as it said 0.0.187 in 0.0.189).
+
 ### 0.0.195
 
 Fixes from a review of `/parallel`.

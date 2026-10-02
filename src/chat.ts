@@ -44,7 +44,6 @@ import {
     sessionBusy
 } from "./runs";
 import { modelRefProblem, modelResolver } from "./models";
-import { FlowNode, FlowStatus, FlowTrace, flowAdd, newTrace, rememberFlow } from "./flow";
 import {
     LaneSpec,
     controlCommand,
@@ -52,10 +51,10 @@ import {
     kindChoice,
     rememberFollowups,
     resolveAlias,
+    retiredCommand,
     runParallelLanes,
     splitLanes,
     startHeartbeat,
-    traceSteps,
     chatStream,
     suggestFollowups,
     thoughtLine,
@@ -69,8 +68,6 @@ export interface TurnOrigin {
     inline?: boolean;
 }
 
-// Every turn that reached a task is traced for /flow (metadata.flow = its id);
-// control commands are not.
 export async function handleChat(
     request: vscode.ChatRequest,
     context: vscode.ChatContext,
@@ -78,43 +75,6 @@ export async function handleChat(
     token: vscode.CancellationToken,
     turn: TurnOrigin = {}
 ): Promise<vscode.ChatResult> {
-    const flow = newTrace();
-    const result = await chatTurn(request, context, rawResponse, token, turn, flow);
-    if (!flow.nodes.length && !flow.lanes.length) {
-        return result;
-    }
-    const meta = (result.metadata ?? {}) as Record<string, unknown>;
-    flow.end ??= endNode(meta.cancelled ? "stopped" : meta.error ? `error: ${meta.error}` : String(meta.kind ?? "done"),
-        meta.cancelled ? "warn" : meta.error ? "fail" : undefined);
-    rememberFlow(flow);
-    return { ...result, metadata: { ...meta, flow: flow.id } };
-}
-
-const endNode = (key: string, status?: FlowStatus): FlowNode => ({ kind: "end", key, parts: [], count: 1, status });
-
-const runEnd = (m: RunMetrics, model?: string): FlowNode =>
-    m.cancelled
-        ? endNode(`stopped by you after ${secs(m.totalMs)}`, "warn")
-        : m.timedOut
-            ? endNode(`timed out after ${secs(m.totalMs)}${m.stuckTool ? ` in ${m.stuckTool}` : ""}`, "fail")
-            : m.error
-                ? endNode(`error: ${m.error}`, "fail")
-                : endNode(
-                    `answered in ${secs(m.totalMs)}` +
-                    (model ? ` by ${model}` : "") +
-                    (m.tokens.input || m.tokens.output ? ` · ${m.tokens.input}↓/${m.tokens.output}↑` : "") +
-                    (m.cost > 0 ? ` · $${m.cost.toFixed(4)}` : "")
-                );
-
-async function chatTurn(
-    request: vscode.ChatRequest,
-    context: vscode.ChatContext,
-    rawResponse: vscode.ChatResponseStream,
-    token: vscode.CancellationToken,
-    turn: TurnOrigin,
-    flow: FlowTrace
-): Promise<vscode.ChatResult> {
-    const note = (key: string, part = "", status?: FlowStatus): void => flowAdd(flow.nodes, "info", key, part, status);
     // Nothing is written after Stop (the host drops it, then throws); marks become pills.
     const response = chatStream(rawResponse, token);
     const choice = resolveFolder(request);
@@ -133,6 +93,11 @@ async function chatTurn(
         return { metadata: { kind: "idle" } };
     }
     const prompt = aliased.prompt;
+    const retired = retiredCommand(prompt);
+    if (retired) {
+        response.markdown(retired);
+        return { metadata: { kind: "idle" } };
+    }
     // Scoped to this chat thread, not to the folder — see threadSession().
     const state = resolveSessionState(context, cwd);
     // A thread restored from a previous window: hold its session out of retention now.
@@ -148,7 +113,6 @@ async function chatTurn(
     // Control commands (./chat-commands): model-free, and never mistaken for a task.
     const answered = await handleControlCommand({
         control,
-        args: typedSlash(prompt) ? prompt.replace(/^\/\S+\s*/, "") : prompt,
         token,
         context,
         cwd,
@@ -216,8 +180,6 @@ async function chatTurn(
         .map((m) => m.trim())
         .filter(Boolean);
 
-    flow.title = kind === "parallel" ? "parallel" : `${agentLabel} · ${task}`;
-    note("folder", folder.name + (isMultiRoot() ? ` (${choice.reason})` : ""));
     const resolveModel = modelResolver(executable, cwd, (work) => untilStop(work, token));
 
     if (kind === "parallel") {
@@ -270,7 +232,7 @@ async function chatTurn(
                 continue;
             }
             const r = await resolveModel(ref);
-            lanes.push("id" in r ? { task: laneTask, model: r.id } : { task: laneTask, error: modelRefProblem(ref, r), ref });
+            lanes.push("id" in r ? { task: laneTask, model: r.id } : { task: laneTask, error: modelRefProblem(ref, r) });
         }
         if (token.isCancellationRequested) {
             return { metadata: { kind: "parallel", lanes: lanes.length, cancelled: true } };
@@ -291,12 +253,16 @@ async function chatTurn(
         if (token.isCancellationRequested) {
             return { metadata: { kind: "parallel", lanes: lanes.length, cancelled: true } };
         }
+        // Attachments go to every lane, as to a plan or dev turn.
+        const laneCtx = buildChatContext(request, cwd, { inline: turn.inline });
+        emitReferences(response, laneCtx.uris);
+        if (laneCtx.uris.length) {
+            logChannel.appendLine(`[${stamp()}] context for ${lanes.length} lanes: ${laneCtx.uris.map((u) => relTo(cwd, u)).join(", ")}`);
+        }
         const laneNote = planAgentNotice(lanePlan, cwd);
         if (laneNote) {
             response.markdown(`> ${mark("warn")} ${laneNote}\n\n`);
         }
-        note("agent", write ? devAgent : lanePlan?.agent ?? "plan", laneNote ? "warn" : undefined);
-        note("transport", laneUrl ? "cli attached to server" : "cli");
         await runParallelLanes({
             response,
             token,
@@ -310,7 +276,7 @@ async function chatTurn(
             devAgent,
             planAgent: lanePlan?.agent,
             attachUrl: laneUrl,
-            trace: flow
+            preamble: laneCtx.preamble
         });
         return { metadata: { kind: "parallel", lanes: lanes.length } };
     }
@@ -355,7 +321,6 @@ async function chatTurn(
             "- `explain how sessions are persisted in src/extension.ts`"
         );
         markClarifiedPrompt(prompt);
-        note("vague prompt", "asked for detail, no run", "warn");
         // "Run it anyway" is a chip (followupsFor), never also a button.
         return { metadata: { kind: "clarify", agent: agentLabel, prompt } };
     }
@@ -366,7 +331,6 @@ async function chatTurn(
     const handoffReturn = takeHandoffReturn(state.id, agentKey, Boolean(pinned));
     const model = pinned ?? handoffReturn;
     const chain = handoffChain(model, fallbackModels);
-    note("model", model ? `${model} (${inlineModel ? "model:" : settingPin ? "setting" : "back after a handoff"})` : "OpenCode default");
 
     // timeoutMs is a verbatim fixed cap; idleTimeoutMs is what stops a hung run.
     const tPlan = planTimeout(agentLabel, kind);
@@ -374,7 +338,6 @@ async function chatTurn(
     const idleTimeoutMs = tPlan.idleTimeoutMs;
 
     const continuing = Boolean(state.id);
-    note("session", continuing ? `${state.id} · turn ${state.turns + 1}` : "new");
     logChannel.appendLine(
         `\n===== ${stamp()} ${agentLabel} · ${continuing ? `session ${state.id}` : "new session"} · ` +
         `${truncate(task, 120)} =====`
@@ -482,13 +445,10 @@ async function chatTurn(
         if (agentNote) {
             response.markdown(`> ${mark("warn")} ${agentNote}\n\n`);
         }
-        note("transport", useServer ? "server" : attachUrl ? "cli attached to server" : "cli");
-        note("agent", agent, agentNote ? "warn" : undefined);
         if (guardBase && sessionId && busyPolicy !== "queue" && !token.isCancellationRequested) {
             if (await timed("busy-check", () => sessionBusy(guardBase, sessionId as string, cwd))) {
                 beat.phase("Stopping an unfinished earlier run in this session");
                 const stopped = await abortServerRun(guardBase, sessionId, cwd, "busy before send");
-                note("busy session", stopped ? "stopped the earlier run" : "still busy", "warn");
                 response.markdown(
                     stopped
                         ? "> " + mark("stop") + " This session was still busy with an earlier run nobody was watching, so I stopped it first — otherwise this message would have waited behind it. If turns stay slow, `/new` starts a clean session.\n\n"
@@ -508,13 +468,11 @@ async function chatTurn(
 
         if (preRun.length) {
             logChannel.appendLine(`[${stamp()}] pre-run: ${preRun.join(" · ")}`);
-            note("pre-run", preRun.join(" · "));
         }
         // Stop pressed while the server was starting: nothing ran, nothing to abort.
         if (token.isCancellationRequested) {
             await beat.stop(true);
             logChannel.appendLine(`[${stamp()}] stopped by the user before the run started`);
-            flow.end = endNode("stopped before the run", "warn");
             refreshStatus(cwd);
             return { metadata: { kind, agent: agentLabel, sessionId, cwd, turns: state.turns, cancelled: true } };
         }
@@ -526,7 +484,6 @@ async function chatTurn(
                 emitAnswerParts(response, linker.flush());
                 const label = attemptModel ?? "OpenCode default";
                 beat.phase(`Timed out — handing off to ${label}`);
-                flowAdd(flow.nodes, "handoff", "handoff", label, "warn");
                 logChannel.appendLine(
                     `[${stamp()}] handoff → ${label}` + (sessionId ? ` (session ${sessionId})` : "")
                 );
@@ -589,7 +546,6 @@ async function chatTurn(
                         cwd
                     );
                     sessionRestarted = true;
-                    note("session missing", "restarted", "warn");
                     answer = "";
                     streamed = false;
                 } else if (!serverTransport || token.isCancellationRequested) {
@@ -598,7 +554,6 @@ async function chatTurn(
                     // The managed server failed: the CLI takes this and later attempts.
                     logChannel.appendLine(`[${stamp()}] server failed, falling back to CLI: ${error}`);
                     beat.phase("Server transport unavailable — retrying via cli");
-                    note("server failed", "cli took over", "warn");
                     serverTransport = false;
                     answer = "";
                     streamed = false;
@@ -617,7 +572,6 @@ async function chatTurn(
             if (runOpts.attachUrl && isAttachFailure(metrics) && !token.isCancellationRequested) {
                 logChannel.appendLine(`[${stamp()}] attach to ${runOpts.attachUrl} failed — running cold`);
                 beat.phase("Server unreachable — starting OpenCode directly");
-                note("attach failed", "ran cold", "warn");
                 runOpts.attachUrl = undefined;
                 answer = "";
                 streamed = false;
@@ -627,12 +581,10 @@ async function chatTurn(
             if (!sessionRestarted && isMissingSessionRun(metrics) && runOpts.sessionId && !token.isCancellationRequested) {
                 metrics = await restartAfterMissingSession(runOpts, serverTransport, beat, response, cwd);
                 sessionRestarted = true;
-                note("session missing", "restarted", "warn");
                 answer = "";
                 streamed = false;
             }
             sessionId = metrics.sessionId ?? sessionId;
-            traceSteps(flow.nodes, metrics.steps, cwd);
             lastAttempt = attempt;
             if (attempt === 0) {
                 firstModel = attemptModel ?? metrics.model;
@@ -728,7 +680,6 @@ async function chatTurn(
         // The model that answered: reported by the run, else the one named.
         const answeredBy = metrics?.model ?? chain[lastAttempt];
         if (metrics) {
-            flow.end = runEnd(metrics, answeredBy);
         }
         if (lastAttempt > 0 && !settingPin && firstModel && sessionId) {
             rememberHandoffReturn(sessionId, firstModel, agentKey);
@@ -789,13 +740,11 @@ async function chatTurn(
         if (token.isCancellationRequested) {
             // A run torn down by Stop is not a failed run.
             logChannel.appendLine(`[${stamp()}] stopped by the user: ${error}`);
-            flow.end = endNode("stopped", "warn");
             refreshStatus(cwd);
             return { metadata: { kind, agent: agentLabel, sessionId: state.id, cwd, turns: state.turns, cancelled: true } };
         }
         setStatus("$(warning) OpenCode", "The last OpenCode run failed", true);
         const err = error as NodeJS.ErrnoException;
-        flow.end = endNode(`failed to start: ${err?.message ?? error}`, "fail");
         if (err.code === "ENOENT") {
             response.markdown(
                 `\n\nCouldn't launch OpenCode (\`${executable}\`). Install the OpenCode CLI, ` +

@@ -107,8 +107,6 @@ export interface TurnMetadata {
     toolOutputBytes?: number;
     agent?: string;
     model?: string;
-    /** This turn's /flow trace id. */
-    flow?: string;
 }
 
 /**
@@ -159,25 +157,6 @@ export function threadSession(history: readonly unknown[], cwd: string): Session
         };
     }
     return undefined;
-}
-
-/** This chat's /flow trace ids, newest first, back to its last `/new`. */
-export function threadFlows(history: readonly unknown[], cwd: string): string[] {
-    const ids: string[] = [];
-    for (let i = history.length - 1; i >= 0; i--) {
-        const turn = history[i] as { participant?: string; result?: { metadata?: TurnMetadata } } | undefined;
-        if (!turn || !OWN_PARTICIPANTS.has(turn.participant ?? "") || !turn.result) {
-            continue;
-        }
-        const meta = turn.result.metadata ?? {};
-        if (meta.kind === "new" && (!meta.cwd || meta.cwd === cwd)) {
-            break;
-        }
-        if (typeof meta.flow === "string") {
-            ids.push(meta.flow);
-        }
-    }
-    return ids;
 }
 
 /**

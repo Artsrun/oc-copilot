@@ -53,8 +53,6 @@ const ALLOWED = [
     "extension/out/natural.js",
     // v185: which agent a read-only turn runs as (planAgent).
     "extension/out/agents.js",
-    // v188: /flow — the turn trace and its mermaid rendering.
-    "extension/out/flow.js",
     // v190: /sessions and the /parallel composer.
     "extension/out/sessions.js",
     "extension/out/chat-sessions.js",
@@ -225,14 +223,20 @@ function checkList(listed) {
     const leaks = [];
     // Everything git would commit is public, not only what ships: the suite's
     // fixtures held the employer's gateway ids while this scan read only the
-    // package. Without a git checkout, fall back to the packaged files.
+    // package. Without a git checkout (a tar of the tree), every file is scanned:
+    // the 0.0.195 tar's .vscode/settings.json named the gateway and a scan of
+    // the packaged files alone passed it.
     const tracked = spawnSync("git", ["ls-files", "-co", "--exclude-standard"], { cwd: root, encoding: "utf8" });
-    const shippedJs = fs.existsSync(path.join(root, "out"))
-        ? fs.readdirSync(path.join(root, "out")).filter((f) => f.endsWith(".js") || f.endsWith(".json")).map((f) => path.join("out", f))
-        : [];
-    const scanned = tracked.status === 0
-        ? tracked.stdout.split(/\r?\n/).filter(Boolean)
-        : ["package.json", "README.md", "readme.md", ...shippedJs];
+    const walk = (rel) =>
+        fs.readdirSync(path.join(root, rel), { withFileTypes: true }).flatMap((e) => {
+            const r = rel ? `${rel}/${e.name}` : e.name;
+            if (e.isDirectory()) {
+                return ["node_modules", ".git", "dist"].includes(e.name) ? [] : walk(r);
+            }
+            // The .gitignore'd outputs: logs and packages are never committed.
+            return e.isFile() && !/\.(log|vsix|tgz)$/.test(e.name) ? [r] : [];
+        });
+    const scanned = tracked.status === 0 ? tracked.stdout.split(/\r?\n/).filter(Boolean) : walk("");
     for (const rel of scanned) {
         if (rel === "scripts/ship-gate.js") {
             continue; // holds the generic patterns themselves
@@ -252,7 +256,7 @@ function checkList(listed) {
         }
     }
     const noLeaks = leaks.length === 0;
-    results.push([`4/4 no internal names in ${tracked.status === 0 ? "committed" : "shipped"} files`, noLeaks]);
+    results.push([`4/4 no internal names in ${tracked.status === 0 ? "committed" : "any"} files`, noLeaks]);
 
     // v178: a README claim must name code that backs it. Tag the claim with
     // <!-- claim:id --> and put `claim:id` in a comment next to the code. A
@@ -311,6 +315,19 @@ function checkList(listed) {
     // 1 · the changelog must name the current version exactly as a heading.
     const docVersion = new RegExp(`^#{2,6}\\s+${pkg.version.replace(/\./g, "\\.")}\\s*$`, "m");
     results.push(["4/4 readme has a changelog heading for this version", docVersion.test(readme)]);
+    // The lock's own version drifted twice (0.0.187 in 0.0.189, 0.0.194 in
+    // 0.0.195): `npm version` was never run, the manifest was edited by hand.
+    const lockPath = path.join(root, "package-lock.json");
+    const lock = fs.existsSync(lockPath) ? JSON.parse(fs.readFileSync(lockPath, "utf8")) : {};
+    const lockVersions = [lock.version, lock.packages?.[""]?.version];
+    results.push([
+        `4/4 package-lock.json is at ${pkg.version}${lockVersions.every((v) => v === pkg.version) ? "" : ` (has ${lockVersions.join(", ")})`}`,
+        lockVersions.every((v) => v === pkg.version)
+    ]);
+    if (!lockVersions.every((v) => v === pkg.version)) {
+        failed += 1;
+        console.log(`\npackage-lock.json says ${lockVersions.join(" / ")}; run \`npm install --package-lock-only\`.`);
+    }
     // v183: `vsce package` (not `vsce ls`) rejects a relative README link when
     // package.json has no repository URL — which is deliberate here (REFS). The
     // gate said "safe to package" and packaging then failed on
@@ -341,8 +358,8 @@ function checkList(listed) {
         failed += 1;
         console.log(`\nUndocumented command(s): ${missingCommands.join(", ")}`);
     }
-    // v188: every chat command too, as `/name` (/flow shipped undocumented in a
-    // draft: this list only read the palette commands).
+    // v188: every chat command too, as `/name` (a chat command once shipped
+    // undocumented in a draft: this list only read the palette commands).
     const missingChat = (pkg.contributes?.chatParticipants ?? [])
         .flatMap((p) => (p.commands ?? []).map((c) => c.name))
         .filter((name, i, all) => all.indexOf(name) === i && !readme.includes(`/${name}`));

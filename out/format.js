@@ -2,7 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.scrubLeakedContext = scrubLeakedContext;
 exports.isPromptEcho = isPromptEcho;
-exports.flowLine = flowLine;
+exports.stepsLine = stepsLine;
 exports.composeVisibleAnswer = composeVisibleAnswer;
 exports.metricsLogLine = metricsLogLine;
 const core_1 = require("./core");
@@ -19,7 +19,7 @@ function isPromptEcho(text, prompt) {
     }
     return a === b || a === `${b}.` || (b.startsWith(a) && a.length < 64);
 }
-function flowLine(metrics, max = 6) {
+function stepsLine(metrics, max = 6) {
     if (metrics.steps.length === 0) {
         return "";
     }

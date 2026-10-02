@@ -2,12 +2,11 @@ import * as vscode from "vscode";
 import * as path from "node:path";
 import { config, logChannel, secs, stamp, truncate } from "./core";
 import { ChatKind, RunMetrics, StepRecord, emptyTokens, finalizeStepStatuses } from "./metrics";
-import { flowLine, scrubLeakedContext } from "./format";
+import { scrubLeakedContext, stepsLine } from "./format";
 import { abortServerRun, createServerSession, runOpenCode } from "./runs";
 import { CASES, ChipKey, Outcome, chipOf, createBadger, mark } from "./followups";
 import { naturalFollowups } from "./natural";
 import { cachedModelInfo } from "./models";
-import { FlowNode, FlowTrace, flowAdd, noteFlowChips } from "./flow";
 
 export interface Heartbeat {
     /** A status line of the bridge's own ("handing off…", "retrying via cli"). */
@@ -106,14 +105,6 @@ export const stepLabel = (step: StepRecord, cwd?: string): string => {
     const detail = (step.detail ?? "").replace(STEP_RUNNING, "");
     return !detail || detail === "running" ? "" : `${step.tool}: ${shortDetail(detail, cwd)}`;
 };
-
-/** Each tool step of a run as /flow nodes, merged when the same tool repeats. */
-export function traceSteps(nodes: FlowNode[], steps: readonly StepRecord[], cwd?: string): void {
-    for (const step of steps) {
-        const label = stepLabel(step, cwd);
-        flowAdd(nodes, "step", step.tool, label.slice(step.tool.length + 2), step.status === "timeout" ? "fail" : undefined);
-    }
-}
 
 // A group that never sees a thought would grow for the whole run; past this
 // many rows it closes and the next step opens a fresh one.
@@ -407,7 +398,7 @@ export function thoughtLine(reasoning: string, max = 90): string {
 // One source of truth for the control commands: the manifest's
 // `chatParticipants[].commands`, the runtime set, and the typed-`/word`
 // regex all derive from this, so they cannot drift (the LB group guards it).
-export const SLASH_COMMANDS = ["new", "session", "sessions", "help", "model", "ping", "env", "stop", "flow"] as const;
+export const SLASH_COMMANDS = ["new", "session", "sessions", "help", "model", "ping", "env", "stop"] as const;
 const CONTROL_COMMANDS = new Set<string>(SLASH_COMMANDS);
 const KIND_COMMANDS: Record<string, ChatKind> = {
     plan: "plan",
@@ -438,7 +429,6 @@ export const DEFAULT_ALIASES: Readonly<Record<string, string>> = {
     m: "model",
     w: "worktree",
     e: "env",
-    f: "flow",
     ls: "sessions",
     h: "help",
     "?": "help"
@@ -497,6 +487,16 @@ export const KIND_COMMAND_NAMES = Object.keys(KIND_COMMANDS);
 // Participant commands routed to their own handler before kind/control parsing.
 export const ROUTED_COMMANDS = ["worktree"] as const;
 
+// A removed command typed from habit would otherwise go to the model as a paid
+// task (`/` keeps it out of the vague-prompt gate). Answered, never run.
+const RETIRED: Readonly<Record<string, string>> = { flow: "0.0.196", f: "0.0.196" };
+
+export function retiredCommand(prompt: string): string | undefined {
+    const word = prompt.match(/^\/(\S+)(?=\s|$)/)?.[1]?.toLowerCase() ?? "";
+    const since = Object.prototype.hasOwnProperty.call(RETIRED, word) ? RETIRED[word] : undefined;
+    return since ? `\`/${word}\` was removed in ${since}, so nothing was run. \`/help\` lists the commands.` : undefined;
+}
+
 export function isKindCommand(declared: string): boolean {
     return Boolean(KIND_COMMANDS[declared]);
 }
@@ -516,7 +516,6 @@ export function helpMarkdown(): string {
         "| `/stop` | Stop a run still going on the server (closing the chat does not) |",
         "| `/new` | Start a fresh session |",
         "| `/model` | Show and change the model chain |",
-        "| `/flow [n\\|all]` | Diagram of what a turn did — folder, session, agent, model, steps, end. No model call |",
         "",
         "Inline prefixes still work: `dev:`, `model:provider/id` — or a short name, `model:tundra`.",
         "Lanes split on `|`, `;;` or a `---` line. Per lane: `/parallel m:tundra review auth | m:oasis read the logs`. One task on several models: `/parallel models:tundra,oasis,aspen review auth`.",
@@ -541,8 +540,6 @@ export interface LaneSpec {
     task: string;
     model?: string;
     error?: string;
-    /** The model as typed, for /flow when it did not resolve. */
-    ref?: string;
 }
 
 interface LaneResult {
@@ -585,8 +582,8 @@ export async function runParallelLanes(opts: {
     /** `planAgent` as OpenCode confirmed it (see ./agents). */
     planAgent?: string;
     attachUrl?: string;
-    /** Lanes and their steps, for /flow. */
-    trace?: FlowTrace;
+    /** Attachments, appended to every lane's task (titles stay the task). */
+    preamble?: string;
 }): Promise<void> {
     const specs = opts.lanes;
     const lanes = specs.map((s) => s.task);
@@ -647,7 +644,7 @@ export async function runParallelLanes(opts: {
             try {
                 const metrics = await runOpenCode({
                     executable: opts.executable,
-                    task: lane,
+                    task: `${lane}${opts.preamble ?? ""}`,
                     cwd: opts.cwd,
                     // A fresh session per lane: no shared context.
                     agent: laneAgent,
@@ -690,7 +687,7 @@ export async function runParallelLanes(opts: {
     for (const [i, result] of results.entries()) {
         finalizeStepStatuses(result.metrics);
         const body = scrubLeakedContext(result.answer.trim()) || "_(no output)_";
-        const flow = flowLine(result.metrics);
+        const steps = stepsLine(result.metrics);
         // A failed lane shows its error; "partial" is for a real timeout only.
         const fail = result.metrics.error
             ? ` · ${mark("warn")} ${truncate(String(result.metrics.error), 120)}`
@@ -699,31 +696,13 @@ export async function runParallelLanes(opts: {
         const title = sameTask && laneModel ? modelName(laneModel) : truncate(result.lane, 80) + (laneModel ? ` · ${modelName(laneModel)}` : "");
         opts.response.markdown(
             `\n\n### ${i + 1}. ${title}\n\n${specs[i].error ? "_(not run)_" : body}\n\n` +
-            `> ${flow ? flow + " · " : ""}${secs(result.metrics.totalMs)}` +
+            `> ${steps ? steps + " · " : ""}${secs(result.metrics.totalMs)}` +
             (result.metrics.cost > 0 ? ` · $${result.metrics.cost.toFixed(4)}` : "") +
             (result.metrics.timedOut ? " · " + mark("quiet") + " partial" : fail)
         );
     }
 
     const ok = results.filter((r) => !r.metrics.timedOut && r.answer.trim()).length;
-    if (opts.trace) {
-        for (const [i, r] of results.entries()) {
-            const nodes: FlowNode[] = [];
-            const m = r.metrics;
-            const laneModel = specs[i].model ?? opts.model;
-            flowAdd(nodes, "info", "model", specs[i].ref ?? (laneModel ? modelName(laneModel) : "OpenCode default"), specs[i].error ? "fail" : undefined);
-            traceSteps(nodes, m.steps, opts.cwd);
-            const cost = m.cost > 0 ? ` · $${m.cost.toFixed(4)}` : "";
-            flowAdd(
-                nodes,
-                "info",
-                specs[i].error ? "not run" : m.timedOut ? `timed out after ${secs(m.totalMs)}` : m.error ? `error: ${m.error}` : `answered in ${secs(m.totalMs)}${cost}`,
-                "",
-                specs[i].error || m.error || m.timedOut ? "fail" : undefined
-            );
-            opts.trace.lanes.push({ title: truncate(sameTask && laneModel ? modelName(laneModel) : r.lane, 40), nodes });
-        }
-    }
     const totalMs = Math.max(...results.map((r) => r.metrics.totalMs), 0);
     const serialMs = results.reduce((n, r) => n + r.metrics.totalMs, 0);
     const cost = results.reduce((n, r) => n + r.metrics.cost, 0);
@@ -734,9 +713,6 @@ export async function runParallelLanes(opts: {
         ".\n\nLanes ran in isolated sessions, so nothing above is in your ongoing " +
         "conversation. Paste the parts you want to keep into a normal `@opencode` turn."
     );
-    if (opts.trace) {
-        opts.trace.end = { kind: "end", key: `${ok}/${results.length} lanes returned in ${secs(totalMs)}${cost > 0 ? ` · $${cost.toFixed(4)}` : ""}`, parts: [], count: 1, status: ok < results.length ? "warn" : undefined };
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -831,12 +807,6 @@ export function outcomeOf(metadata: Record<string, unknown>): Outcome {
 }
 
 export function followupsFor(metadata: Record<string, unknown>): vscode.ChatFollowup[] {
-    const chips = chipsFor(metadata);
-    noteFlowChips(metadata.flow, chips.map((c) => c.label ?? c.prompt));
-    return chips;
-}
-
-function chipsFor(metadata: Record<string, unknown>): vscode.ChatFollowup[] {
     const outcome = outcomeOf(metadata);
     const kind: "dev" | "plan" = metadata.agent === "dev" || metadata.kind === "dev" ? "dev" : "plan";
     const own = typeof metadata.prompt === "string" ? metadata.prompt : undefined;

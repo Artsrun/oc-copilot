@@ -55,7 +55,6 @@ const followups_1 = require("./followups");
 const natural_1 = require("./natural");
 const commands_registry_1 = require("./commands-registry");
 const worktree_1 = require("./worktree");
-const flow_1 = require("./flow");
 function activate(context) {
     (0, core_1.setExtensionContext)(context);
     (0, core_1.setLogChannel)(vscode.window.createOutputChannel("OpenCode"));
@@ -140,14 +139,6 @@ exports.__test = {
     splitModelsFanout: context_1.splitModelsFanout,
     resolveAlias: chat_boot_1.resolveAlias,
     commandAliases: chat_boot_1.commandAliases,
-    MAX_NODES: flow_1.MAX_NODES,
-    flowAdd: flow_1.flowAdd,
-    flowById: flow_1.flowById,
-    flowSummary: flow_1.flowSummary,
-    newTrace: flow_1.newTrace,
-    rememberFlow: flow_1.rememberFlow,
-    threadFlows: session_1.threadFlows,
-    toMermaid: flow_1.toMermaid,
     laneProblem: compose_1.laneProblem,
     sessionRoot: runs_1.sessionRoot
 };

@@ -14,16 +14,15 @@ no bundler, no test runner: plain TypeScript → `out/`, plain Node for the suit
 
 | Path | What lives there |
 | --- | --- |
-| `src/chat.ts` | **The chat turn.** `handleChat` (traces the turn for /flow) → `chatTurn`: routing, vague-prompt gate, context, agent and model choice, the recovery ladder (handoff, CLI fallback, cold rerun, stale session), `pre-run:` timings. |
-| `src/chat-boot.ts` | Rendering and vocabulary: heartbeat (plain live lines + milestone ticker; finished accordions with `groupProgress`), **`chatStream`** (nothing after Stop, never throws, one pill badger per turn), `helpMarkdown`, `splitLanes` (`\|` `;;` `---` only), `runParallelLanes`, `traceSteps`, command aliases, the command/kind vocabulary, **`followupsFor`**. |
-| `src/chat-commands.ts` | Control commands — `/help` `/new` `/model` `/ping` `/env` `/session` `/sessions` `/stop` `/flow`: model-free answers. |
-| `src/flow.ts` | **/flow**: the turn trace (`flowAdd` merges repeats), `toMermaid` (mermaid-safe labels, 60-node cap), `flowSummary`, the 20-turn memory store. Leaf: no imports. |
+| `src/chat.ts` | **The chat turn.** `handleChat`: routing, vague-prompt gate, context, agent and model choice, the recovery ladder (handoff, CLI fallback, cold rerun, stale session), `pre-run:` timings. |
+| `src/chat-boot.ts` | Rendering and vocabulary: heartbeat (plain live lines + milestone ticker; finished accordions with `groupProgress`), **`chatStream`** (nothing after Stop, never throws, one pill badger per turn), `helpMarkdown`, `splitLanes` (`\|` `;;` `---` only), `runParallelLanes`, command aliases, the command/kind vocabulary, **`followupsFor`**. |
+| `src/chat-commands.ts` | Control commands — `/help` `/new` `/model` `/ping` `/env` `/session` `/sessions` `/stop`: model-free answers. |
 | `src/chat-sessions.ts` | **/sessions**: the picker and Continue / Fork / Close / Delete; binds a chat by returning `{sessionId, turns, cwd}` metadata. |
 | `src/sessions.ts` | OpenCode's session store over HTTP: list, last messages, fork (+ headless rules back), archive, delete. |
 | `src/compose.ts` | **The /parallel composer**: one `createQuickPick` per lane, `laneProblem` (the real splitter), insert via `chat.open` + `isPartialQuery`. |
 | `src/runs.ts` | Running OpenCode: CLI stream and server transport, event → `StepRecord`, tokens/cost, idle cap, compaction, **headless asks**. |
 | `src/net.ts` | Bounded HTTP, the managed `opencode serve`, shared SSE demux by session id. |
-| `src/session.ts` | Session state per chat thread (`threadSession`, `threadFlows`), live-session tracker, handoff chain and the way back after one, status bar. |
+| `src/session.ts` | Session state per chat thread (`threadSession`), live-session tracker, handoff chain and the way back after one, status bar. |
 | `src/proc.ts` | Spawning: shim resolution, `cmd.exe` quoting, `killTree`, `PWD = cwd`. §2 rule 3. |
 | `src/models.ts` | Model catalog (server `GET /config/providers`, else `opencode models --verbose`), names, cache tiers, the picker, `writeModelPin`, short names, `modelResolver` (one forced refetch per turn). |
 | `src/agents.ts` | Which agent a read-only turn runs as: `planAgent`, only once OpenCode lists it. |
@@ -41,12 +40,12 @@ Layering has no cycles:
 
 ```
 extension.ts  →  chat · chat-boot · commands-registry · session · worktree · leaf modules (for __test)
-     chat     →  agents · chat-boot · chat-commands · chat-worktree · context · flow · format · metrics · models · net · prompt · runs · session · core
- chat-commands →  chat-boot · chat-sessions · commands · context · env · flow · models · net · prompt · proc · runs · session · core
+     chat     →  agents · chat-boot · chat-commands · chat-worktree · context · format · metrics · models · net · prompt · runs · session · core
+ chat-commands →  chat-boot · chat-sessions · commands · context · env · models · net · prompt · proc · runs · session · core
  chat-sessions →  sessions (→ net · runs) · session · core
     compose   →  chat-boot · models · core   (used by chat and commands-registry)
-  chat-boot   →  core · flow · format · metrics · models · runs
-     all      →  core.ts · followups.ts (JSON only) · natural.ts (→ followups) · flow.ts (nothing)
+  chat-boot   →  core · format · metrics · models · runs
+     all      →  core.ts · followups.ts (JSON only) · natural.ts (→ followups)
 ```
 
 **One action, one channel.** A chip owns the next *message* (Retry, Run it, the
@@ -112,7 +111,7 @@ npm run verify    # the suite alone
 | 1 | typecheck | `tsc --noEmit` exits 0 |
 | 2 | build | `tsc` exits 0 and `out/` is newer than `src/` |
 | 3 | verify | the suite exits 0 **and** prints `ALL <N> CHECKS PASSED` |
-| 4 | package | only `ALLOWED` files ship; no internal name in any committed file (private tokens from `OCB_LEAKY` or `~/.ocb-leaky`, never the repo); every README claim anchored; version heading, every palette command, chat command and setting documented; absolute links; no dist VSIX of this version with other code; no artifacts at the root |
+| 4 | package | only `ALLOWED` files ship; no internal name in any committed file — every file without git (private tokens from `OCB_LEAKY` or `~/.ocb-leaky`, never the repo); `package-lock.json` at the manifest version; every README claim anchored; version heading, every palette command, chat command and setting documented; absolute links; no dist VSIX of this version with other code; no artifacts at the root |
 
 - The suite takes well over 30 s; do not judge it by a 30 s timeout.
 - It **aborts on the first exception**: fix crashes first, then red checks.
@@ -131,7 +130,6 @@ A probe measures one thing on this machine and prints it. Paste its output.
 | `scripts/probe-progress-inflation.js` | How many `progress()` calls a realistic run makes. |
 | `scripts/probe-sse-crosstalk.js` | That the SSE demux cannot leak another chat's text. |
 | `scripts/probe-opencode-pwd.js` | Which folder `opencode run` works in: stale `PWD` vs `spawnOpenCode()`. |
-| `scripts/probe-mermaid-flow.js` | Whether /flow diagrams parse and render in real mermaid 11 (Chromium); `MERMAID_RAW=1` must fail. Needs `npm i --no-save mermaid@11 playwright`. |
 
 *Write to the OS temp dir, never the repo* — the suite sweeps `ocb-*` at
 startup, not exit (Windows holds a just-exited child's cwd).
@@ -196,10 +194,6 @@ history belongs in `CHANGELOG.md`, not in the source.
   rule, which replaces the span rule: no background, colour only as a bare word
   (`#hex` → `rgb(…)` → stripped). Marks are inline-code pills; a pill never
   follows a backslash and never touches another backtick run (`KB`).
-- **Chat renders a ```` ```mermaid ```` block** with the built-in Mermaid
-  Markdown Features renderer (main@4b24360). Mermaid honours `%%{…}%%` even inside
-  a quoted label and rejects `[""]`: `flowLabel` entity-codes `#` `"` `%` `&` `<` `>` and the backtick
-  and never returns empty (`FL`, probe above).
 - **Every `progress()` call is a new line** (no in-place update): elapsed time
   renders only at milestones (`LF`).
 - **Copilot's Thinking part and tool rows are proposed API** — not used.
@@ -243,5 +237,5 @@ history belongs in `CHANGELOG.md`, not in the source.
 Every capability the README states is tagged `<!-- claim:id -->` and anchored by
 `claim:id` in a comment beside the code; gate 4 fails on a tag with no anchor.
 Current: `worktrees`, `worktree-command`, `inline-participant`, `model-names`,
-`parallel-models`, `command-aliases`, `flow`, `sessions`, `parallel-composer`,
+`parallel-models`, `command-aliases`, `sessions`, `parallel-composer`,
 `file-links`.

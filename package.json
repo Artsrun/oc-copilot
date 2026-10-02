@@ -2,7 +2,7 @@
   "name": "opencode-copilot-bridge",
   "displayName": "OpenCode Copilot Bridge",
   "description": "Delegate research, planning, and development to OpenCode from GitHub Copilot Chat.",
-  "version": "0.0.195",
+  "version": "0.0.196",
   "publisher": "local",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -91,10 +91,6 @@
           {
             "name": "sessions",
             "description": "This folder's OpenCode sessions — continue, fork, close or delete one"
-          },
-          {
-            "name": "flow",
-            "description": "Diagram of what the last turn did — folder, session, agent, model, steps. No model call"
           },
           {
             "name": "help",

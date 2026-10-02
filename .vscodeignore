@@ -45,7 +45,6 @@ scripts/probe-windows-shim.js
 scripts/probe-progress-inflation.js
 scripts/probe-sse-crosstalk.js
 scripts/probe-opencode-pwd.js
-scripts/probe-mermaid-flow.js
 scripts/verify-chat-output.js
 # macOS helper for repo users (install/doctor); not needed inside the .vsix
 scripts/mac-setup.sh

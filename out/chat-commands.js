@@ -14,7 +14,6 @@ const session_1 = require("./session");
 const commands_1 = require("./commands");
 const chat_boot_1 = require("./chat-boot");
 const chat_sessions_1 = require("./chat-sessions");
-const flow_1 = require("./flow");
 async function handleControlCommand(p) {
     switch (p.control) {
         case "help":
@@ -170,27 +169,6 @@ async function handleControlCommand(p) {
         }
         case "sessions":
             return (0, chat_sessions_1.handleSessions)({ cwd: p.cwd, folderName: p.folder.name, state: p.state, response: p.response, token: p.token });
-        case "flow": {
-            const arg = p.args.trim().toLowerCase();
-            const back = arg === "" ? 1 : Number(arg);
-            if (arg !== "all" && !(Number.isInteger(back) && back >= 1)) {
-                p.response.markdown("`/flow` draws the last turn, `/flow 3` the third-last, `/flow all` every traced turn of this chat.");
-                return { metadata: { kind: "flow" } };
-            }
-            const ids = (0, session_1.threadFlows)(p.context.history ?? [], p.cwd);
-            const picked = arg === "all" ? [...ids].reverse() : ids.slice(back - 1, back);
-            const traces = picked.flatMap((id) => (0, flow_1.flowById)(id) ?? []);
-            if (!traces.length) {
-                p.response.markdown(ids.length >= back || arg === "all"
-                    ? "That turn is no longer in memory: `/flow` keeps the last 20 turns of this window, and none from before a reload."
-                    : `This chat has ${ids.length ? `${ids.length} traced turn(s)` : "no traced turn yet"} — \`/flow\` draws a plan, dev or parallel turn after it ran.`);
-                return { metadata: { kind: "flow" } };
-            }
-            p.response.markdown(traces
-                .map((t) => `**${(0, core_1.mdText)((0, core_1.truncate)(t.title, 80))}** — ${(0, core_1.mdText)((0, flow_1.flowSummary)(t))}\n\n\`\`\`mermaid\n${(0, flow_1.toMermaid)(t)}\n\`\`\``)
-                .join("\n\n"));
-            return { metadata: { kind: "flow" } };
-        }
         default:
             return undefined;
     }

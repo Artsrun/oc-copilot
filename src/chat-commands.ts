@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { config, formatBytes, mdText, truncate } from "./core";
+import { config, formatBytes, truncate } from "./core";
 import { mark } from "./followups";
 import { resolveExecutable } from "./proc";
 import { ensureServer, httpGetJson, withDirectory } from "./net";
@@ -11,7 +11,6 @@ import { cachedModelInfo, getModelCatalog, modelLabel, pinLevel } from "./models
 import {
     SessionState,
     getActiveSession,
-    threadFlows,
     liveSessions,
     refreshStatus,
     setActiveSession,
@@ -20,7 +19,6 @@ import {
 import { runCapture } from "./commands";
 import { helpMarkdown } from "./chat-boot";
 import { handleSessions } from "./chat-sessions";
-import { flowById, flowSummary, toMermaid } from "./flow";
 
 // The "/help", "/new", "/model", "/ping", "/env", and "/session" control
 // commands. Each answers from local state and never touches the model, so they
@@ -29,8 +27,6 @@ import { flowById, flowSummary, toMermaid } from "./flow";
 // the caller continues on to the real task.
 export interface ControlProps {
     control: string;
-    /** What follows the command: `/flow 3` → "3". */
-    args: string;
     token?: vscode.CancellationToken;
     context: vscode.ChatContext;
     cwd: string;
@@ -235,32 +231,6 @@ export async function handleControlCommand(p: ControlProps): Promise<vscode.Chat
         }
         case "sessions":
             return handleSessions({ cwd: p.cwd, folderName: p.folder.name, state: p.state, response: p.response, token: p.token });
-        case "flow": {
-            // No model call, no spawn, no request: the trace is in memory.
-            const arg = p.args.trim().toLowerCase();
-            const back = arg === "" ? 1 : Number(arg);
-            if (arg !== "all" && !(Number.isInteger(back) && back >= 1)) {
-                p.response.markdown("`/flow` draws the last turn, `/flow 3` the third-last, `/flow all` every traced turn of this chat.");
-                return { metadata: { kind: "flow" } };
-            }
-            const ids = threadFlows(p.context.history ?? [], p.cwd);
-            const picked = arg === "all" ? [...ids].reverse() : ids.slice(back - 1, back);
-            const traces = picked.flatMap((id) => flowById(id) ?? []);
-            if (!traces.length) {
-                p.response.markdown(
-                    ids.length >= back || arg === "all"
-                        ? "That turn is no longer in memory: `/flow` keeps the last 20 turns of this window, and none from before a reload."
-                        : `This chat has ${ids.length ? `${ids.length} traced turn(s)` : "no traced turn yet"} — \`/flow\` draws a plan, dev or parallel turn after it ran.`
-                );
-                return { metadata: { kind: "flow" } };
-            }
-            p.response.markdown(
-                traces
-                    .map((t) => `**${mdText(truncate(t.title, 80))}** — ${mdText(flowSummary(t))}\n\n\`\`\`mermaid\n${toMermaid(t)}\n\`\`\``)
-                    .join("\n\n")
-            );
-            return { metadata: { kind: "flow" } };
-        }
         default:
             return undefined;
     }

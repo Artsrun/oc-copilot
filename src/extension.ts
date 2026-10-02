@@ -14,7 +14,6 @@ import {
     handoffChain,
     notifyIfSlow,
     resolveSessionState,
-    threadFlows,
     threadSession
 } from "./session";
 import { getModelCatalog, modelLabel, parseModelList, parseProviders, parseVerboseModels, resolveModelRef } from "./models";
@@ -27,7 +26,6 @@ import { badge, badgeMarks, chipOf, createBadger, followupsProblems } from "./fo
 import { naturalFollowups } from "./natural";
 import { registerCommands } from "./commands-registry";
 import { slugify } from "./worktree";
-import { MAX_NODES, flowAdd, flowById, flowSummary, newTrace, rememberFlow, toMermaid } from "./flow";
 
 // Activation is kept deliberately thin. This file owns the participant
 // registration (including the follow-up chips keyed on the turn's metadata), the
@@ -133,14 +131,6 @@ export const __test = {
     splitModelsFanout,
     resolveAlias,
     commandAliases,
-    MAX_NODES,
-    flowAdd,
-    flowById,
-    flowSummary,
-    newTrace,
-    rememberFlow,
-    threadFlows,
-    toMermaid,
     laneProblem,
     sessionRoot
 };

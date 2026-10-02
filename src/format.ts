@@ -26,8 +26,8 @@ export function isPromptEcho(text: string, prompt: string): boolean {
     return a === b || a === `${b}.` || (b.startsWith(a) && a.length < 64);
 }
 
-// A compact one-line flow summary: read → read → read reads as "read ×3".
-export function flowLine(metrics: RunMetrics, max = 6): string {
+// A compact one-line step summary: read → read → read reads as "read ×3".
+export function stepsLine(metrics: RunMetrics, max = 6): string {
     if (metrics.steps.length === 0) {
         return "";
     }

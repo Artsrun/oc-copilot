@@ -12,35 +12,11 @@ const agents_1 = require("./agents");
 const session_1 = require("./session");
 const runs_1 = require("./runs");
 const models_1 = require("./models");
-const flow_1 = require("./flow");
 const chat_boot_1 = require("./chat-boot");
 const chat_commands_1 = require("./chat-commands");
 const compose_1 = require("./compose");
 const chat_worktree_1 = require("./chat-worktree");
 async function handleChat(request, context, rawResponse, token, turn = {}) {
-    const flow = (0, flow_1.newTrace)();
-    const result = await chatTurn(request, context, rawResponse, token, turn, flow);
-    if (!flow.nodes.length && !flow.lanes.length) {
-        return result;
-    }
-    const meta = (result.metadata ?? {});
-    flow.end ??= endNode(meta.cancelled ? "stopped" : meta.error ? `error: ${meta.error}` : String(meta.kind ?? "done"), meta.cancelled ? "warn" : meta.error ? "fail" : undefined);
-    (0, flow_1.rememberFlow)(flow);
-    return { ...result, metadata: { ...meta, flow: flow.id } };
-}
-const endNode = (key, status) => ({ kind: "end", key, parts: [], count: 1, status });
-const runEnd = (m, model) => m.cancelled
-    ? endNode(`stopped by you after ${(0, core_1.secs)(m.totalMs)}`, "warn")
-    : m.timedOut
-        ? endNode(`timed out after ${(0, core_1.secs)(m.totalMs)}${m.stuckTool ? ` in ${m.stuckTool}` : ""}`, "fail")
-        : m.error
-            ? endNode(`error: ${m.error}`, "fail")
-            : endNode(`answered in ${(0, core_1.secs)(m.totalMs)}` +
-                (model ? ` by ${model}` : "") +
-                (m.tokens.input || m.tokens.output ? ` · ${m.tokens.input}↓/${m.tokens.output}↑` : "") +
-                (m.cost > 0 ? ` · $${m.cost.toFixed(4)}` : ""));
-async function chatTurn(request, context, rawResponse, token, turn, flow) {
-    const note = (key, part = "", status) => (0, flow_1.flowAdd)(flow.nodes, "info", key, part, status);
     const response = (0, chat_boot_1.chatStream)(rawResponse, token);
     const choice = (0, core_1.resolveFolder)(request);
     if (!choice) {
@@ -56,6 +32,11 @@ async function chatTurn(request, context, rawResponse, token, turn, flow) {
         return { metadata: { kind: "idle" } };
     }
     const prompt = aliased.prompt;
+    const retired = (0, chat_boot_1.retiredCommand)(prompt);
+    if (retired) {
+        response.markdown(retired);
+        return { metadata: { kind: "idle" } };
+    }
     const state = (0, session_1.resolveSessionState)(context, cwd);
     if (state.id) {
         session_1.liveSessions.mark(cwd, state.id);
@@ -64,7 +45,6 @@ async function chatTurn(request, context, rawResponse, token, turn, flow) {
     const control = (0, chat_boot_1.controlCommand)(declared, (0, chat_boot_1.typedSlash)(prompt));
     const answered = await (0, chat_commands_1.handleControlCommand)({
         control,
-        args: (0, chat_boot_1.typedSlash)(prompt) ? prompt.replace(/^\/\S+\s*/, "") : prompt,
         token,
         context,
         cwd,
@@ -113,8 +93,6 @@ async function chatTurn(request, context, rawResponse, token, turn, flow) {
         .get("fallbackModels", [])
         .map((m) => m.trim())
         .filter(Boolean);
-    flow.title = kind === "parallel" ? "parallel" : `${agentLabel} · ${task}`;
-    note("folder", folder.name + ((0, core_1.isMultiRoot)() ? ` (${choice.reason})` : ""));
     const resolveModel = (0, models_1.modelResolver)(executable, cwd, (work) => (0, core_1.untilStop)(work, token));
     if (kind === "parallel") {
         const laneText = parsed.model ? `m:${parsed.model} ${parsed.task}` : parsed.task;
@@ -156,7 +134,7 @@ async function chatTurn(request, context, rawResponse, token, turn, flow) {
                 continue;
             }
             const r = await resolveModel(ref);
-            lanes.push("id" in r ? { task: laneTask, model: r.id } : { task: laneTask, error: (0, models_1.modelRefProblem)(ref, r), ref });
+            lanes.push("id" in r ? { task: laneTask, model: r.id } : { task: laneTask, error: (0, models_1.modelRefProblem)(ref, r) });
         }
         if (token.isCancellationRequested) {
             return { metadata: { kind: "parallel", lanes: lanes.length, cancelled: true } };
@@ -171,12 +149,15 @@ async function chatTurn(request, context, rawResponse, token, turn, flow) {
         if (token.isCancellationRequested) {
             return { metadata: { kind: "parallel", lanes: lanes.length, cancelled: true } };
         }
+        const laneCtx = (0, context_1.buildChatContext)(request, cwd, { inline: turn.inline });
+        (0, context_1.emitReferences)(response, laneCtx.uris);
+        if (laneCtx.uris.length) {
+            core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] context for ${lanes.length} lanes: ${laneCtx.uris.map((u) => (0, core_1.relTo)(cwd, u)).join(", ")}`);
+        }
         const laneNote = (0, agents_1.planAgentNotice)(lanePlan, cwd);
         if (laneNote) {
             response.markdown(`> ${(0, followups_1.mark)("warn")} ${laneNote}\n\n`);
         }
-        note("agent", write ? devAgent : lanePlan?.agent ?? "plan", laneNote ? "warn" : undefined);
-        note("transport", laneUrl ? "cli attached to server" : "cli");
         await (0, chat_boot_1.runParallelLanes)({
             response,
             token,
@@ -190,7 +171,7 @@ async function chatTurn(request, context, rawResponse, token, turn, flow) {
             devAgent,
             planAgent: lanePlan?.agent,
             attachUrl: laneUrl,
-            trace: flow
+            preamble: laneCtx.preamble
         });
         return { metadata: { kind: "parallel", lanes: lanes.length } };
     }
@@ -223,19 +204,16 @@ async function chatTurn(request, context, rawResponse, token, turn, flow) {
             "- `/dev add a regression test for the redirect loop`\n" +
             "- `explain how sessions are persisted in src/extension.ts`");
         (0, prompt_1.markClarifiedPrompt)(prompt);
-        note("vague prompt", "asked for detail, no run", "warn");
         return { metadata: { kind: "clarify", agent: agentLabel, prompt } };
     }
     const agentKey = isBuild ? devAgent : (0, agents_1.planAgentSetting)();
     const handoffReturn = (0, session_1.takeHandoffReturn)(state.id, agentKey, Boolean(pinned));
     const model = pinned ?? handoffReturn;
     const chain = (0, session_1.handoffChain)(model, fallbackModels);
-    note("model", model ? `${model} (${inlineModel ? "model:" : settingPin ? "setting" : "back after a handoff"})` : "OpenCode default");
     const tPlan = (0, prompt_1.planTimeout)(agentLabel, kind);
     timeoutMs = tPlan.timeoutMs;
     const idleTimeoutMs = tPlan.idleTimeoutMs;
     const continuing = Boolean(state.id);
-    note("session", continuing ? `${state.id} · turn ${state.turns + 1}` : "new");
     core_1.logChannel.appendLine(`\n===== ${(0, core_1.stamp)()} ${agentLabel} · ${continuing ? `session ${state.id}` : "new session"} · ` +
         `${(0, core_1.truncate)(task, 120)} =====`);
     if (model && !pinned) {
@@ -310,13 +288,10 @@ async function chatTurn(request, context, rawResponse, token, turn, flow) {
         if (agentNote) {
             response.markdown(`> ${(0, followups_1.mark)("warn")} ${agentNote}\n\n`);
         }
-        note("transport", useServer ? "server" : attachUrl ? "cli attached to server" : "cli");
-        note("agent", agent, agentNote ? "warn" : undefined);
         if (guardBase && sessionId && busyPolicy !== "queue" && !token.isCancellationRequested) {
             if (await timed("busy-check", () => (0, runs_1.sessionBusy)(guardBase, sessionId, cwd))) {
                 beat.phase("Stopping an unfinished earlier run in this session");
                 const stopped = await (0, runs_1.abortServerRun)(guardBase, sessionId, cwd, "busy before send");
-                note("busy session", stopped ? "stopped the earlier run" : "still busy", "warn");
                 response.markdown(stopped
                     ? "> " + (0, followups_1.mark)("stop") + " This session was still busy with an earlier run nobody was watching, so I stopped it first — otherwise this message would have waited behind it. If turns stay slow, `/new` starts a clean session.\n\n"
                     : "> " + (0, followups_1.mark)("warn") + " This session is still busy with an earlier run and it did not stop. This message may wait behind it — `/new` starts a clean session.\n\n");
@@ -331,12 +306,10 @@ async function chatTurn(request, context, rawResponse, token, turn, flow) {
         let firstModel;
         if (preRun.length) {
             core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] pre-run: ${preRun.join(" · ")}`);
-            note("pre-run", preRun.join(" · "));
         }
         if (token.isCancellationRequested) {
             await beat.stop(true);
             core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] stopped by the user before the run started`);
-            flow.end = endNode("stopped before the run", "warn");
             (0, session_1.refreshStatus)(cwd);
             return { metadata: { kind, agent: agentLabel, sessionId, cwd, turns: state.turns, cancelled: true } };
         }
@@ -347,7 +320,6 @@ async function chatTurn(request, context, rawResponse, token, turn, flow) {
                 (0, context_1.emitAnswerParts)(response, linker.flush());
                 const label = attemptModel ?? "OpenCode default";
                 beat.phase(`Timed out — handing off to ${label}`);
-                (0, flow_1.flowAdd)(flow.nodes, "handoff", "handoff", label, "warn");
                 core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] handoff → ${label}` + (sessionId ? ` (session ${sessionId})` : ""));
             }
             answer = "";
@@ -395,7 +367,6 @@ async function chatTurn(request, context, rawResponse, token, turn, flow) {
                 if ((0, runs_1.isMissingSessionError)(error) && runOpts.sessionId && !token.isCancellationRequested) {
                     metrics = await (0, runs_1.restartAfterMissingSession)(runOpts, serverTransport, beat, response, cwd);
                     sessionRestarted = true;
-                    note("session missing", "restarted", "warn");
                     answer = "";
                     streamed = false;
                 }
@@ -405,7 +376,6 @@ async function chatTurn(request, context, rawResponse, token, turn, flow) {
                 else {
                     core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] server failed, falling back to CLI: ${error}`);
                     beat.phase("Server transport unavailable — retrying via cli");
-                    note("server failed", "cli took over", "warn");
                     serverTransport = false;
                     answer = "";
                     streamed = false;
@@ -422,7 +392,6 @@ async function chatTurn(request, context, rawResponse, token, turn, flow) {
             if (runOpts.attachUrl && (0, runs_1.isAttachFailure)(metrics) && !token.isCancellationRequested) {
                 core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] attach to ${runOpts.attachUrl} failed — running cold`);
                 beat.phase("Server unreachable — starting OpenCode directly");
-                note("attach failed", "ran cold", "warn");
                 runOpts.attachUrl = undefined;
                 answer = "";
                 streamed = false;
@@ -431,12 +400,10 @@ async function chatTurn(request, context, rawResponse, token, turn, flow) {
             if (!sessionRestarted && (0, runs_1.isMissingSessionRun)(metrics) && runOpts.sessionId && !token.isCancellationRequested) {
                 metrics = await (0, runs_1.restartAfterMissingSession)(runOpts, serverTransport, beat, response, cwd);
                 sessionRestarted = true;
-                note("session missing", "restarted", "warn");
                 answer = "";
                 streamed = false;
             }
             sessionId = metrics.sessionId ?? sessionId;
-            (0, chat_boot_1.traceSteps)(flow.nodes, metrics.steps, cwd);
             lastAttempt = attempt;
             if (attempt === 0) {
                 firstModel = attemptModel ?? metrics.model;
@@ -509,7 +476,6 @@ async function chatTurn(request, context, rawResponse, token, turn, flow) {
         }
         const answeredBy = metrics?.model ?? chain[lastAttempt];
         if (metrics) {
-            flow.end = runEnd(metrics, answeredBy);
         }
         if (lastAttempt > 0 && !settingPin && firstModel && sessionId) {
             (0, session_1.rememberHandoffReturn)(sessionId, firstModel, agentKey);
@@ -561,13 +527,11 @@ async function chatTurn(request, context, rawResponse, token, turn, flow) {
         await beat.stop(token.isCancellationRequested);
         if (token.isCancellationRequested) {
             core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] stopped by the user: ${error}`);
-            flow.end = endNode("stopped", "warn");
             (0, session_1.refreshStatus)(cwd);
             return { metadata: { kind, agent: agentLabel, sessionId: state.id, cwd, turns: state.turns, cancelled: true } };
         }
         (0, core_1.setStatus)("$(warning) OpenCode", "The last OpenCode run failed", true);
         const err = error;
-        flow.end = endNode(`failed to start: ${err?.message ?? error}`, "fail");
         if (err.code === "ENOENT") {
             response.markdown(`\n\nCouldn't launch OpenCode (\`${executable}\`). Install the OpenCode CLI, ` +
                 "or set an absolute path in the `opencodeCopilotBridge.executable` setting.");

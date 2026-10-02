@@ -134,14 +134,6 @@ const happy = writeFake("fake-ok.js", [
     }
 ]);
 
-// v188: a stall fake for FL (the v151 one is scoped to its group).
-const stallFakeFl = () =>
-    writeFake(
-        "fake-stall-fl.js",
-        [{ type: "step_finish", sessionID: "ses_hand_fl", part: { reason: "length", cost: 0.05, tokens: { input: 50, output: 1, reasoning: 0, total: 51, cache: { read: 0, write: 0 } } } }],
-        "setTimeout(() => {}, 60000);\n"
-    );
-
 const partial = writeFake("fake-partial.js", [
     { type: "reasoning", sessionID: "ses_diff", part: { text: "User wants diffs between current branch and dev-newplat." } },
     {
@@ -835,6 +827,45 @@ function collectConfigProperties(configuration) {
     const sentJ2 = (lastArgv("fake-ok.js").slice(-1)[0]) || "";
     add("J includeChatReferences=false sends no context block", !/Files the user attached:/.test(sentJ2));
     settings.includeChatReferences = true;
+
+    // J: a /parallel turn hands the attachment to every lane. 0.0.195 built the
+    // context after the parallel branch had returned, so `#file:` reached no lane.
+    {
+        const jpLog = path.join(work, "fake-jp.argvs");
+        const jpFake = writeFake(
+            "fake-jp.js",
+            [{ type: "text", sessionID: "ses_jp", part: { text: "lane ok" } }],
+            `fs.appendFileSync(${JSON.stringify(jpLog)}, JSON.stringify(process.argv) + "\\n");\n`
+        );
+        const jpRun = async (prompt) => {
+            settings.executable = jpFake;
+            settings.transport = "cli";
+            fs.rmSync(jpLog, { force: true });
+            memento.clear();
+            const st = stream();
+            await global.__handler(
+                { prompt, command: "parallel", references: [{ id: "vscode.file", value: { fsPath: attached, scheme: "file" } }] },
+                {},
+                st.response,
+                st.token
+            );
+            const runs = fs.existsSync(jpLog) ? fs.readFileSync(jpLog, "utf8").trim().split("\n").map((l) => JSON.parse(l)) : [];
+            return { runs, st, text: st.chatMarkdown.join("") };
+        };
+        const jp = await jpRun("review auth | list deps");
+        const jpTasks = jp.runs.map((a) => a[a.length - 1]);
+        add(
+            "J every /parallel lane gets the attachment, its own task leading",
+            jpTasks.length === 2 && jpTasks.every((t) => /Files the user attached:/.test(t) && t.includes("src/login.ts")) &&
+                jpTasks.some((t) => t.startsWith("review auth")) && jpTasks.some((t) => t.startsWith("list deps"))
+        );
+        add("J a /parallel attachment is a chat reference, and no lane title carries the context block", jp.st.refs.some((r) => r === attached) && !/### \d\. [^\n]*Files the user attached/.test(jp.text));
+        settings.includeChatReferences = false;
+        const jpOff = await jpRun("review auth | list deps");
+        add("J includeChatReferences=false keeps /parallel lanes bare", jpOff.runs.length === 2 && jpOff.runs.every((a) => !/Files the user attached:/.test(a[a.length - 1])));
+        settings.includeChatReferences = true;
+        settings.executable = happy;
+    }
 
     // K: heartbeat keeps the progress line alive with an elapsed readout.
     add(
@@ -5409,137 +5440,46 @@ const lbProvider = (global.__participant || {}).followupProvider;
         add("AL /help lists the aliases", /Aliases: `\/p` parallel · `\/d` dev/.test(alH.chatMarkdown.join("")));
     }
 
-    // ==================== v188 ====================
-    // FL: /flow — what a turn did, as a mermaid flowchart, from memory. The
-    // diagram is read back from what reached chat, never from the store.
+    // ==================== v196 ====================
+    // RM: /flow is gone, all of it — the command, its alias, the trace id in
+    // metadata, the module, the probe, the gate entry and the docs.
     {
-        const own = "opencodeCopilotBridge.chat";
-        const hist = (...metas) => metas.map((metadata) => ({ participant: own, result: { metadata } }));
-        const flowCmd = async (args, history, typed = false) => {
-            const st = stream();
-            const r = await global.__handler(typed ? { prompt: `/flow ${args}`.trim() } : { prompt: args, command: "flow" }, { history }, st.response, st.token);
-            return { text: st.chatMarkdown.join(""), r };
-        };
-        const turn = async (req, history = []) => {
-            const st = stream();
-            const r = await global.__handler(req, { history }, st.response, st.token);
-            return { text: st.chatMarkdown.join(""), r };
-        };
-        const nodeLines = (m) => m.split("\n").filter((l) => /^\s+n\d+[[({]/.test(l));
+        const rmRead = (f) => (fs.existsSync(path.join(repoDir, f)) ? fs.readFileSync(path.join(repoDir, f), "utf8") : "");
+        const rmPkg = JSON.parse(rmRead("package.json"));
+        add(
+            "RM no flow module, build output or mermaid probe",
+            !fs.existsSync(path.join(repoDir, "src", "flow.ts")) && !fs.existsSync(path.join(repoDir, "out", "flow.js")) && !fs.existsSync(path.join(repoDir, "scripts", "probe-mermaid-flow.js"))
+        );
+        const rmSrc = fs.readdirSync(path.join(repoDir, "src")).filter((f) => f.endsWith(".ts")).map((f) => rmRead(path.join("src", f))).join("\n");
+        add("RM no source imports ./flow or draws mermaid", !/from "\.\/flow"/.test(rmSrc) && !/mermaid/i.test(rmSrc));
+        add("RM neither participant offers /flow", rmPkg.contributes.chatParticipants.every((p) => !p.commands.some((c) => c.name === "flow")));
+        add("RM /flow is no control command and /f no alias", !ext.__test.slashCommands.includes("flow") && ext.__test.resolveAlias("/f 2", ext.__test.commandAliases({})).prompt === "/f 2");
+        add("RM a user alias to flow is refused as a non-command", /not a command/.test(ext.__test.resolveAlias("/zz", ext.__test.commandAliases({ zz: "flow" })).problem || ""));
+        add("RM the gate allows no out/flow.js and the package ignores no mermaid probe", !/flow\.js/.test(rmRead("scripts/ship-gate.js")) && !/mermaid/.test(rmRead(".vscodeignore")));
+        const rmHelp = stream();
+        await global.__handler({ prompt: "", command: "help" }, {}, rmHelp.response, rmHelp.token);
+        // The README's changelog may say it was removed; nothing above it may offer it.
+        const rmReadme = rmRead("README.md").split(/^## Changelog$/m)[0];
+        add("RM README (above its changelog), AGENTS and /help name no /flow", rmReadme.length > 1000 && !/\/flow\b|claim:flow/.test(rmReadme + rmRead("AGENTS.md")) && /\/sessions/.test(rmHelp.chatMarkdown.join("")) && !/\/flow\b|`\/f`/.test(rmHelp.chatMarkdown.join("")));
 
-        // Pure half.
-        const tr = ext.__test.newTrace();
-        tr.title = "plan · x";
-        for (let i = 0; i < 7; i++) ext.__test.flowAdd(tr.nodes, "step", "read", `f${i % 3}.ts`);
-        ext.__test.flowAdd(tr.nodes, "step", "grep", "a");
-        tr.end = { kind: "end", key: "answered in 1.0s", parts: [], count: 1 };
-        add("FL toMermaid is deterministic", ext.__test.toMermaid(tr) === ext.__test.toMermaid(tr) && ext.__test.toMermaid(tr).startsWith("flowchart TD\n"));
-        add("FL flow.ts is a leaf: no vscode, no local import", !/import\s/.test(fs.readFileSync(path.join(repoDir, "src", "flow.ts"), "utf8")));
-        add("FL a repeated tool is one node: `read ×7: f0.ts, f1.ts, f2.ts`", ext.__test.toMermaid(tr).includes('("read ×7: f0.ts, f1.ts, f2.ts")') && nodeLines(ext.__test.toMermaid(tr)).length === 4);
-        add("FL the summary counts steps: `8 steps`", ext.__test.flowSummary(tr) === "plan · x → 8 steps → answered in 1.0s".replace("plan · x → ", ""));
-        const big = ext.__test.newTrace();
-        for (let i = 0; i < 200; i++) ext.__test.flowAdd(big.nodes, "step", `t${i}`);
-        big.end = { kind: "end", key: "done", parts: [], count: 1 };
-        const bigM = ext.__test.toMermaid(big);
-        add(`FL at most ${ext.__test.MAX_NODES} nodes, the cut said`, nodeLines(bigM).length <= ext.__test.MAX_NODES && /… \d+ more/.test(bigM) && bigM.includes('"t199"'));
-        const evil = ext.__test.newTrace();
-        evil.title = 'say "hi" `x` <script>alert(1)</script> #1 %% --> end';
-        ext.__test.flowAdd(evil.nodes, "step", "bash", 'echo "a" --> b\n```\nrm -rf / ; %%{init}%% ' + "z".repeat(2000));
-        ext.__test.flowAdd(evil.nodes, "info", "model", "a]b[c(d)e{f}g|h;i");
-        ext.__test.flowAdd(evil.nodes, "info", "");
-        evil.lanes.push({ title: 'lane "1" `x`', nodes: [] });
-        ext.__test.flowAdd(evil.lanes[0].nodes, "info", 'x"y');
-        const evilM = ext.__test.toMermaid(evil);
-        const shaped = /^\s+(n\d+(\["[^"\n]*"\]|\("[^"\n]*"\)|\{\{"[^"\n]*"\}\}|\(\["[^"\n]*"\]\))(:::\w+)?|n\d+ -(->|\.->) n\d+|subgraph L\d+\["[^"\n]*"\]|end|classDef \w+ [^\n]*)$/;
-        add("FL hostile labels keep every line in shape (quotes, --> , %%, ``` , newlines)", evilM.split("\n").slice(1).every((l) => shaped.test(l)));
-        add("FL no backtick, <, >, & or % (a `%%{init}%%` directive works inside quotes) reaches the diagram", !/[`<>&%]/.test(evilM.replace(/-->|-\.->/g, "")));
-        add("FL a label is one bounded line", nodeLines(evilM).every((l) => l.length < 200));
-        add("FL a label is never empty (mermaid rejects [\"\"])", !/\[""\]|\(""\)/.test(evilM) && evilM.includes('["·"]'));
-
-        // A real plan turn, then /flow on its history.
         settings.executable = happy;
         settings.transport = "cli";
         memento.clear();
-        const t1 = await turn({ prompt: "explain the redirect loop in my_login.ts" });
-        const id1 = t1.r.metadata.flow;
-        add("FL a traced turn carries its trace id, nothing more", typeof id1 === "string" && /^f[0-9a-z]+$/.test(id1));
-        const f1 = await flowCmd("", hist(t1.r.metadata));
-        const m1 = (f1.text.match(/```mermaid\n([\s\S]*?)\n```/) || [])[1] || "";
-        add("FL /flow sends a mermaid block", m1.startsWith("flowchart TD"));
-        add(
-            "FL /flow shows folder, model, session, transport, agent, each tool, the end",
-            ["folder: ", "model: OpenCode default", "session: new", "transport: cli", "agent: plan", '("grep', '("read', "answered in"].every((x) => m1.includes(x))
-        );
-        add("FL the title is plain text in markdown: my_login is not italic", f1.text.includes("my\\_login.ts") && f1.text.includes("2 steps"));
-        add("FL /flow itself is not traced", f1.r.metadata.kind === "flow" && f1.r.metadata.flow === undefined);
-
-        // /flow spawns nothing and needs no server.
-        const flLog = path.join(work, "fl-argv.jsonl");
-        settings.executable = writeFake("fake-fl.js", [], `fs.appendFileSync(${JSON.stringify(flLog)}, JSON.stringify(process.argv) + "\\n");\n`);
-        settings.transport = "server";
-        settings.serverPort = 1;
-        const f7 = await flowCmd("", hist(t1.r.metadata), true);
-        add("FL a typed `/flow` spawns nothing and calls no server", f7.text.includes("```mermaid") && !fs.existsSync(flLog));
-        delete settings.serverPort;
-        settings.transport = "cli";
-        settings.executable = happy;
-
-        // Two turns: `/flow 2`, `/flow all`, bad args, an empty chat.
-        const t2 = await turn({ prompt: "and where is the cookie set", command: "plan" }, hist(t1.r.metadata));
-        const two = hist(t1.r.metadata, t2.r.metadata);
-        add("FL /flow is the last turn, /flow 2 the one before", (await flowCmd("", two)).text.includes("where is the cookie") && (await flowCmd("2", two)).text.includes("redirect loop"));
-        const fAll = await flowCmd("all", two);
-        add("FL /flow all draws every traced turn, oldest first", (fAll.text.match(/```mermaid/g) || []).length === 2 && fAll.text.indexOf("redirect loop") < fAll.text.indexOf("where is the cookie"));
-        add("FL a bad argument explains the forms", /`\/flow 3`/.test((await flowCmd("x", two)).text) && /`\/flow 3`/.test((await flowCmd("0", two)).text));
-        add("FL a chat with no traced turn says so", /no traced turn yet/.test((await flowCmd("", [])).text));
-        add("FL a trace id that is gone says so", /no longer in memory/.test((await flowCmd("", hist({ kind: "plan", flow: "fgone" }))).text));
-
-        // A clarify turn: the chips chosen after it land in its trace.
-        const tc = await turn({ prompt: "fix" });
-        global.__participant.followupProvider.provideFollowups(tc.r);
-        const fc = await flowCmd("", hist(tc.r.metadata));
-        add("FL a clarify turn is traced, with the chips it got", tc.r.metadata.kind === "clarify" && fc.text.includes("vague prompt") && /chips: /.test(fc.text));
-
-        // A handoff turn.
-        settings.executable = stallFakeFl();
-        settings.timeoutMs = 1200;
-        settings.model = "acme/first";
-        settings.fallbackModels = ["acme/second"];
-        const th = await turn({ prompt: "force a model handoff for flow" });
-        const fh = await flowCmd("", hist(th.r.metadata));
-        add("FL a handoff is its own node, naming the model handed to", fh.text.includes('{{"handoff: acme/second"}}:::warn'));
-        add("FL a timed-out turn ends in a failed end node", /\(\["timed out after [\d.]+s"\]\):::fail/.test(fh.text) && fh.text.includes("model: acme/first (setting)"));
-        settings.model = "";
-        settings.fallbackModels = [];
-        settings.timeoutMs = 30000;
-        settings.executable = happy;
-
-        // A parallel turn: one subgraph per lane; the unresolved lane failed unrun.
-        globalMemento.clear();
-        const tp = await turn({ prompt: "m:nosuch-model review auth | list deps", command: "parallel" });
-        const fp = await flowCmd("", hist(tp.r.metadata));
-        add("FL /parallel draws one subgraph per lane", /subgraph L0\["1\. review auth"\]/.test(fp.text) && /subgraph L1\["2\. list deps"\]/.test(fp.text));
-        add("FL an unresolved lane is failed and not run; the end counts lanes", /model: nosuch-model"\]:::fail/.test(fp.text) && fp.text.includes('"not run"') && /1\/2 lanes returned/.test(fp.text));
-        add("FL a lane shows its own steps", /subgraph L1[\s\S]*\("grep[\s\S]*\("read/.test(fp.text));
-        add("FL nothing secret from the model catalog reaches /flow", !/SECRET/.test(fp.text + f1.text));
-
-        // Store and thread bounds.
-        const kept = [];
-        for (let i = 0; i < 21; i++) {
-            const t = ext.__test.newTrace();
-            ext.__test.flowAdd(t.nodes, "info", `x${i}`);
-            ext.__test.rememberFlow(t);
-            kept.push(t.id);
+        const rmTurn = stream();
+        const rmR = await global.__handler({ prompt: "explain the redirect loop" }, {}, rmTurn.response, rmTurn.token);
+        add("RM a finished turn's metadata carries no trace id", rmR.metadata.kind !== undefined && !("flow" in rmR.metadata) && Number.isInteger(rmR.metadata.turns));
+        // `/` keeps a typed word out of the vague-prompt gate: without the
+        // notice, habit would send `/flow 2` to the model as a paid task.
+        for (const typed of ["/flow", "/flow 2", "/FLOW all", "/f 2"]) {
+            fs.rmSync(path.join(work, "fake-ok.js.argv"), { force: true });
+            const rmTyped = stream();
+            const rmT = await global.__handler({ prompt: typed }, {}, rmTyped.response, rmTyped.token);
+            add(`RM a typed \`${typed}\` runs nothing and says it was removed`, rmT.metadata.kind === "idle" && !fs.existsSync(path.join(work, "fake-ok.js.argv")) && /was removed in 0\.0\.196/.test(rmTyped.chatMarkdown.join("")));
         }
-        add("FL memory keeps the last 20 traces", ext.__test.flowById(kept[0]) === undefined && Boolean(ext.__test.flowById(kept[1])) && Boolean(ext.__test.flowById(kept[20])));
-        add(
-            "FL /new ends what /flow reads of a chat; another folder's /new does not",
-            JSON.stringify(ext.__test.threadFlows(hist({ flow: "a" }, { kind: "new", cwd: work }, { flow: "b" }), work)) === '["b"]' &&
-                JSON.stringify(ext.__test.threadFlows(hist({ flow: "a" }, { kind: "new", cwd: "/elsewhere" }, { flow: "b" }), work)) === '["b","a"]'
-        );
-        add("FL /f is /flow", ext.__test.resolveAlias("/f 2", ext.__test.commandAliases({})).prompt === "/flow 2");
-        const flPkg = require(path.join(__dirname, "..", "package.json"));
-        add("FL /flow is a panel command, not an inline one", flPkg.contributes.chatParticipants[0].commands.some((c) => c.name === "flow") && !flPkg.contributes.chatParticipants[1].commands.some((c) => c.name === "flow"));
+        fs.rmSync(path.join(work, "fake-ok.js.argv"), { force: true });
+        const rmFlowy = stream();
+        await global.__handler({ prompt: "/flowchart of the auth module" }, {}, rmFlowy.response, rmFlowy.token);
+        add("RM only the exact word is retired: `/flowchart …` still runs", fs.existsSync(path.join(work, "fake-ok.js.argv")));
     }
 
     // ==================== v190 ====================

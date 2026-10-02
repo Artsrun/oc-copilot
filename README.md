@@ -55,7 +55,6 @@ says `CANNOT USE these API proposals` — the inline entry left out, not a failu
 | `/plan <task>` | Read-only agent (the default): `plan`, or your `planAgent` |
 | `/parallel a \| b \| c` | Independent read-only lanes at once, in isolated sessions — `/parallel` alone composes them step by step |
 | `/worktree <task>` | Editing agent in a NEW git worktree + branch; your checkout is untouched <!-- claim:worktree-command --> |
-| `/flow [n\|all]` | Diagram of what a turn did. No model call |
 | `/session` | Session id, turns, tokens and cost |
 | `/sessions` | This folder's sessions: continue, fork, close or delete one |
 | `/stop` | Stop a run still going on the server (closing the chat does not) |
@@ -81,7 +80,7 @@ line (any line ending): `||` (a shell OR) is text, and so is anything inside
 backticks or a table row. <!-- claim:parallel-models -->
 
 **Aliases.** `/p` parallel · `/d` dev · `/pl` plan · `/n` new · `/s` session ·
-`/x` stop · `/m` model · `/w` worktree · `/e` env · `/f` flow · `/ls` sessions ·
+`/x` stop · `/m` model · `/w` worktree · `/e` env · `/ls` sessions ·
 `/h` `/?` help,
 plus your own in `commandAliases` (`{ "zg": "parallel" }`). Typed, not in the
 `/` menu; a real command wins; an alias to a non-command is refused.
@@ -118,22 +117,6 @@ archived ones left out; this chat's is marked). Pick one, then:
 Closing or deleting this chat's own session starts the chat fresh. Needs
 OpenCode's server (started on demand). Debug: the output channel logs
 `/sessions: …` with the server's error.
-
-### `/flow` — what a turn did  <!-- claim:flow -->
-
-`/flow` draws the last turn of this chat as a flowchart: folder → model →
-session → transport → agent → each tool step (repeats merged, `read ×7`) →
-handoffs → how it ended, and the chips it offered. `/flow 2` is the turn
-before, `/flow all` every traced turn since the last `/new`. `/parallel` draws a
-box per lane. No model call, no process, no request — traces live in memory for
-the last 20 turns of the window, so none survive a reload.
-
-It is a ```` ```mermaid ```` block: VS Code's built-in mermaid renderer draws it
-in chat; elsewhere it is text you can paste into mermaid.live. Debug: nothing
-drawn → check the answer has a `mermaid` block (**Copy**), then that the
-built-in **Mermaid Markdown Features** extension is enabled (present on VS Code
-main as of 2026-09-29; a build without it shows the text). "No traced turn" →
-the chat has only control commands (`/help`, `/model`…), which are not traced.
 
 ### How it behaves
 
@@ -347,6 +330,13 @@ All under `opencodeCopilotBridge.`.
 
 The last five releases; the full history is `CHANGELOG.md` in the repository.
 
+### 0.0.196
+
+- **Removed `/flow`** (and `/f`); typed from habit, it runs nothing.
+- **`/parallel` lanes get your attachments** — `#file:` reached no lane before.
+- The ship gate scans every file for internal names even without git, and
+  checks the lock file's version.
+
 ### 0.0.195
 
 Review fixes for `/parallel`: with `transport: server` the lanes attach to the
@@ -370,9 +360,3 @@ bug can no longer mark a finished turn as failed.
 Review fixes: `/sessions` keeps a chat's counters, cleans up a failed fork,
 and reports server errors; the composer keeps model ids with a colon and the
 model you chose. Run lanes and Compose… are chips.
-
-### 0.0.191
-
-Repository hygiene: neutral model names in examples and tests; the leak
-scan covers every committed file. No behaviour change.
-

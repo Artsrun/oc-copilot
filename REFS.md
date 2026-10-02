@@ -311,24 +311,13 @@ marks are inline-code pills. In CommonMark `\(` escapes the `(` and a pill
 touching another backtick run fuses the runs, so the badger skips an escaped
 mark and puts a zero-width space between a pill and a backtick (0.0.188).
 
-## /flow: mermaid in chat
+## Mermaid in chat (from `/flow`, removed in 0.0.196)
 
-Chat draws a ```` ```mermaid ```` block in any response: the built-in
-`mermaid-markdown-features` extension contributes a `chatOutputRenderers` entry
-with `codeBlockLanguageIdentifiers: ["mermaid"]`, and
-`chatMarkdownContentPart.ts` routes a code block to it when
-`hasCodeBlockRenderer(languageId)` (microsoft/vscode main@4b24360,
-2026-09-29). No setting gates it; the extension needs the `chatOutputRenderer`
-proposal, which a built-in has. Which stable release first ships it: unmeasured.
-
-`scripts/probe-mermaid-flow.js` (mermaid 11, Chromium 1194, `securityLevel:
-strict`): all three cases parse and render; with `MERMAID_RAW=1` (no escaping)
-the hostile case fails `Parse error on line 4`. Found on the way: a
-`%%{init: …}%%` directive inside a quoted label is still taken as a directive
-(it ate the rest of the label), and `[""]` does not parse. `flowLabel`
-entity-codes `#` `"` `%` `&` `<` `>` and the backtick (mermaid decodes
-`#34;` etc.) and never returns
-an empty label.
+Chat draws a ```` ```mermaid ```` block from any participant through the
+built-in `mermaid-markdown-features` renderer (microsoft/vscode main@4b24360).
+Mermaid takes `%%{…}%%` inside a quoted label as a directive and rejects
+`[""]`; label escaping and the Chromium probe are in git at `23ef0f2`
+(`src/flow.ts`, `scripts/probe-mermaid-flow.js`).
 
 ## OpenCode's session store over HTTP (1.18.33)
 

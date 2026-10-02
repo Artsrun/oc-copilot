@@ -37,7 +37,6 @@ exports.liveSessions = exports.LiveSessionTracker = exports.OWN_PARTICIPANTS = e
 exports.getActiveSession = getActiveSession;
 exports.setActiveSession = setActiveSession;
 exports.threadSession = threadSession;
-exports.threadFlows = threadFlows;
 exports.resolveSessionState = resolveSessionState;
 exports.threadScopeActive = threadScopeActive;
 exports.refreshStatus = refreshStatus;
@@ -127,23 +126,6 @@ function threadSession(history, cwd) {
         };
     }
     return undefined;
-}
-function threadFlows(history, cwd) {
-    const ids = [];
-    for (let i = history.length - 1; i >= 0; i--) {
-        const turn = history[i];
-        if (!turn || !exports.OWN_PARTICIPANTS.has(turn.participant ?? "") || !turn.result) {
-            continue;
-        }
-        const meta = turn.result.metadata ?? {};
-        if (meta.kind === "new" && (!meta.cwd || meta.cwd === cwd)) {
-            break;
-        }
-        if (typeof meta.flow === "string") {
-            ids.push(meta.flow);
-        }
-    }
-    return ids;
 }
 function resolveSessionState(context, cwd) {
     if (!threadScopeActive(context)) {
