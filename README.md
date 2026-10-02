@@ -347,6 +347,12 @@ All under `opencodeCopilotBridge.`.
 
 The last five releases; the full history is `CHANGELOG.md` in the repository.
 
+### 0.0.195
+
+Review fixes for `/parallel`: with `transport: server` the lanes attach to the
+warm server instead of running cold, and Stop no longer waits out a cold server
+boot.
+
 ### 0.0.194
 
 - **Files open on click**: a workspace file the answer names in inline code
@@ -370,11 +376,3 @@ model you chose. Run lanes and Compose… are chips.
 Repository hygiene: neutral model names in examples and tests; the leak
 scan covers every committed file. No behaviour change.
 
-### 0.0.190
-
-- **`/sessions`**: this folder's OpenCode sessions — Continue here, Fork into
-  this chat, Close (archive) or Delete.
-- **`/parallel` alone opens a lane composer** — task and model per page,
-  Submit from two lanes on, inserted into the chat input.
-- **New Session = Ask OpenCode, merged**: a new chat with `@opencode ` typed.
-  The chat you leave keeps its session; nothing is sent.

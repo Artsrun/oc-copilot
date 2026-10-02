@@ -3,6 +3,18 @@
 Full release history, newest first; releases before the last one are condensed
 to their summary and headlines. The README ships the last five.
 
+### 0.0.195
+
+Fixes from a review of `/parallel`.
+
+- **Fixed: `transport: server` ran `/parallel` lanes cold**, serialising them
+  on one `opencode.db`. Lanes attach to the managed server now; `cli` stays
+  cold, `auto` keeps the `attachDevToServer` opt-out. Checks `FC`.
+- **Fixed: Stop waited out a cold server boot** before the turn ended. The
+  three server warm-ups are raced against Stop.
+- The composed-lanes text moved to `metadata.composedLanes`; `lanes` is only
+  ever a count.
+
 ### 0.0.194
 
 Files named in chat open on click.

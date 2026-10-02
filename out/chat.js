@@ -127,7 +127,7 @@ async function chatTurn(request, context, rawResponse, token, turn, flow) {
             const query = (0, compose_1.chatQuery)(composed);
             const inserted = await (0, compose_1.insertIntoChat)(query);
             response.markdown(`${inserted ? "Inserted into the chat input — press Enter to run" : "Copy this into the chat to run"} **${composed.length} lanes**:\n\n\`\`\`text\n${query}\n\`\`\``);
-            return { metadata: { kind: "composed", lanes: (0, compose_1.composeLanes)(composed) } };
+            return { metadata: { kind: "composed", composedLanes: (0, compose_1.composeLanes)(composed) } };
         }
         const fan = (0, context_1.splitModelsFanout)(laneText);
         if (fan && ((0, chat_boot_1.splitLanes)(fan.task).length > 1 || fan.models.length < 2 || !fan.task)) {
@@ -166,7 +166,7 @@ async function chatTurn(request, context, rawResponse, token, turn, flow) {
             response.markdown("> " + (0, followups_1.mark)("warn") + " `parallelAllowWrite` is on. Concurrent editing agents in one checkout can " +
                 "overwrite each other — prefer the git-worktree scripts for parallel edits.\n");
         }
-        const laneUrl = attachDev ? await warmServer(cwd) : undefined;
+        const laneUrl = transport === "server" || attachDev ? await (0, core_1.untilStop)(warmServer(cwd), token) : undefined;
         const lanePlan = write ? undefined : await (0, core_1.untilStop)((0, agents_1.resolvePlanAgent)(cwd, laneUrl), token);
         if (token.isCancellationRequested) {
             return { metadata: { kind: "parallel", lanes: lanes.length, cancelled: true } };
@@ -278,7 +278,7 @@ async function chatTurn(request, context, rawResponse, token, turn, flow) {
             preRun.push(`${label} ${Date.now() - t}ms`);
         }
     };
-    const attachUrl = !useServer && attachDev ? await timed("server", () => warmServer(cwd)) : undefined;
+    const attachUrl = !useServer && attachDev ? await (0, core_1.untilStop)(timed("server", () => warmServer(cwd)), token) : undefined;
     const beat = (0, chat_boot_1.startHeartbeat)(response, `${continuing ? "Continuing" : "Starting"} the OpenCode ${agentLabel} session` +
         (useServer ? " via server" : attachUrl ? " via server (attached)" : " via cli") +
         (model ? ` (${model})` : ""), timeoutMs, cwd);
@@ -301,7 +301,7 @@ async function chatTurn(request, context, rawResponse, token, turn, flow) {
                 core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] could not pre-create a session, the run creates one: ${error}`);
             }
         }
-        const guardBase = attachUrl ?? (useServer ? await timed("server", () => warmServer(cwd)) : undefined);
+        const guardBase = attachUrl ?? (useServer ? await (0, core_1.untilStop)(timed("server", () => warmServer(cwd)), token) : undefined);
         const planChoice = isBuild || (0, agents_1.planAgentSetting)() === "plan"
             ? undefined
             : await timed("agent", () => (0, core_1.untilStop)((0, agents_1.resolvePlanAgent)(cwd, guardBase), token));

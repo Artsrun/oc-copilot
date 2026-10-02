@@ -1862,6 +1862,30 @@ function collectConfigProperties(configuration) {
     memento.clear();
     await global.__handler({ prompt: "cli stays cold", command: "dev" }, {}, attCli.response, attCli.token);
     add("FC transport cli never attaches", !lastArgv("fake-ok.js").includes("--attach"));
+
+    // FC: `transport: server` attaches /parallel lanes too; cold lanes
+    // serialise on one opencode.db. Both lanes' argv are appended: the plain
+    // .argv file is overwritten by whichever lane exits last.
+    const laneLog = path.join(work, "fake-lane-att.argvs");
+    const laneFake = writeFake(
+        "fake-lane-att.js",
+        [{ type: "text", sessionID: "ses_lane", part: { text: "lane ok" } }],
+        `fs.appendFileSync(${JSON.stringify(laneLog)}, JSON.stringify(process.argv) + "\\n");\n`
+    );
+    const laneRuns = async (transport) => {
+        settings.transport = transport;
+        settings.executable = laneFake;
+        fs.rmSync(laneLog, { force: true });
+        const st = stream();
+        await global.__handler({ prompt: "review auth | read the logs", command: "parallel" }, {}, st.response, st.token);
+        return fs.existsSync(laneLog) ? fs.readFileSync(laneLog, "utf8").trim().split("\n").map((l) => JSON.parse(l)) : [];
+    };
+    const laneUrlArg = `http://127.0.0.1:${fakePort}`;
+    const srvLanes = await laneRuns("server");
+    add("FC transport server attaches both parallel lanes to the warm server", srvLanes.length === 2 && srvLanes.every((a) => a[a.indexOf("--attach") + 1] === laneUrlArg));
+    const cliLanes = await laneRuns("cli");
+    add("FC transport cli keeps parallel lanes cold", cliLanes.length === 2 && cliLanes.every((a) => !a.includes("--attach")));
+    settings.executable = happy;
     settings.transport = "server";
 
     // FC: a stale session id must not poison the workspace.
@@ -5739,6 +5763,7 @@ const lbProvider = (global.__participant || {}).followupProvider;
         const chipsOf = (r) => global.__participant.followupProvider.provideFollowups(r, {}, stream().token);
         const w1Chips = chipsOf(w1.r);
         add("PW the reply shows the command; its one chip runs those lanes, and there is no button", w1.text.includes(q1[0].query) && w1.buttons.length === 0 && w1Chips.length === 1 && w1Chips[0].command === "parallel" && w1Chips[0].prompt === q1[0].query.replace(/^@opencode \/parallel /, ""));
+        add("PW the composed metadata carries its text as composedLanes, never lanes", typeof w1.r.metadata.composedLanes === "string" && w1.r.metadata.lanes === undefined);
         add("RV every composer label is an icon alone, so a typed task never matches or reorders it", pages.length >= 3 && pages.every((p) => p.iconOnly) && !pages.some((p) => p.items.some((l) => l.includes("`"))));
 
         const w2 = await pwTurn([{ type: "grep a | wc -l" }, { type: "grep `a | wc -l`" }, { type: "list deps" }, { type: "and a third", pick: "Submit" }]);
@@ -5789,6 +5814,30 @@ const lbProvider = (global.__participant || {}).followupProvider;
         settings.transport = rvSaved.transport;
         add("RV Stop during the composer's cold model list ends the turn within the second", rvTook < 1300);
         add("RV …and no quick pick opens once the list arrives", pages.length === 0);
+
+        // RV: Stop while a /parallel turn waits on a cold server boot (a serve
+        // that never listens; ensureServer polls for 20 s) ends the turn at once.
+        const bootPort = await new Promise((resolve) => {
+            const probe = http.createServer().listen(0, "127.0.0.1", () => {
+                const p = probe.address().port;
+                probe.close(() => resolve(p));
+            });
+        });
+        const bootSaved = { exe: settings.executable, transport: settings.transport, port: settings.serverPort };
+        settings.executable = writeFake("fake-slow-serve.js", [], "if (process.argv.includes('serve')) setTimeout(() => {}, 4000);\n");
+        settings.transport = "server";
+        settings.serverPort = bootPort;
+        const bootStop = stream();
+        const bootT0 = Date.now();
+        const bootTurn = global.__handler({ prompt: "a | b", command: "parallel" }, {}, bootStop.response, bootStop.token);
+        setTimeout(() => bootStop.token.cancel(), 300);
+        await bootTurn;
+        const bootTook = Date.now() - bootT0;
+        await new Promise((r) => setTimeout(r, 4500));
+        settings.executable = bootSaved.exe;
+        settings.transport = bootSaved.transport;
+        settings.serverPort = bootSaved.port;
+        add("RV Stop during a parallel turn's cold server boot ends the turn within the second", bootTook < 1300);
 
         vscodeStub.commands.executeCommand = realExec;
         globalMemento.clear();

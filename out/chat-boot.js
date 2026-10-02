@@ -660,7 +660,9 @@ function chipsFor(metadata) {
             return chips(followups_1.CASES[outcome], again ? { RETRY: again } : {});
         }
         case "composed":
-            return typeof metadata.lanes === "string" && metadata.lanes ? chips(followups_1.CASES.composed, { RUN_LANES: metadata.lanes }) : [];
+            return typeof metadata.composedLanes === "string" && metadata.composedLanes
+                ? chips(followups_1.CASES.composed, { RUN_LANES: metadata.composedLanes })
+                : [];
         case "done": {
             const sessionId = typeof metadata.sessionId === "string" ? metadata.sessionId : undefined;
             const turns = typeof metadata.turns === "number" ? metadata.turns : 0;

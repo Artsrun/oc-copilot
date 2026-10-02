@@ -237,7 +237,7 @@ async function chatTurn(
             response.markdown(
                 `${inserted ? "Inserted into the chat input — press Enter to run" : "Copy this into the chat to run"} **${composed.length} lanes**:\n\n\`\`\`text\n${query}\n\`\`\``
             );
-            return { metadata: { kind: "composed", lanes: composeLanes(composed) } };
+            return { metadata: { kind: "composed", composedLanes: composeLanes(composed) } };
         }
         const fan = splitModelsFanout(laneText);
         if (fan && (splitLanes(fan.task).length > 1 || fan.models.length < 2 || !fan.task)) {
@@ -282,7 +282,10 @@ async function chatTurn(
                 "overwrite each other — prefer the git-worktree scripts for parallel edits.\n"
             );
         }
-        const laneUrl = attachDev ? await warmServer(cwd) : undefined;
+        // `transport: server` attaches lanes too (cold lanes serialise on one
+        // opencode.db); `auto` keeps the attachDevToServer opt-out. Raced
+        // against Stop: a cold server boot takes tens of seconds.
+        const laneUrl = transport === "server" || attachDev ? await untilStop(warmServer(cwd), token) : undefined;
         // Read-only lanes run as `planAgent` too, checked once for all.
         const lanePlan = write ? undefined : await untilStop(resolvePlanAgent(cwd, laneUrl), token);
         if (token.isCancellationRequested) {
@@ -431,7 +434,7 @@ async function chatTurn(
             preRun.push(`${label} ${Date.now() - t}ms`);
         }
     };
-    const attachUrl = !useServer && attachDev ? await timed("server", () => warmServer(cwd)) : undefined;
+    const attachUrl = !useServer && attachDev ? await untilStop(timed("server", () => warmServer(cwd)), token) : undefined;
 
     const beat = startHeartbeat(
         response,
@@ -468,7 +471,7 @@ async function chatTurn(
         }
 
         // Never queue silently behind a run nobody watches (busySessionPolicy).
-        const guardBase = attachUrl ?? (useServer ? await timed("server", () => warmServer(cwd)) : undefined);
+        const guardBase = attachUrl ?? (useServer ? await untilStop(timed("server", () => warmServer(cwd)), token) : undefined);
         // planAgent only once OpenCode lists it: the CLI runs an unknown name
         // as BUILD (REFS "Read-only turns"). Raced against Stop.
         const planChoice = isBuild || planAgentSetting() === "plan"

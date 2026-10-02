@@ -864,7 +864,10 @@ function chipsFor(metadata: Record<string, unknown>): vscode.ChatFollowup[] {
         }
         case "composed":
             // The composed lanes are the next message: a chip, not a button.
-            return typeof metadata.lanes === "string" && metadata.lanes ? chips(CASES.composed, { RUN_LANES: metadata.lanes }) : [];
+            // `composedLanes` is text; `lanes` stays a count on the run path.
+            return typeof metadata.composedLanes === "string" && metadata.composedLanes
+                ? chips(CASES.composed, { RUN_LANES: metadata.composedLanes })
+                : [];
         case "done": {
             // Only what this answer points at (./natural), else nothing.
             const sessionId = typeof metadata.sessionId === "string" ? metadata.sessionId : undefined;
