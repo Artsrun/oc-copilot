@@ -96,8 +96,8 @@ export function setStatus(text: string, tooltip?: string, warn = false): void {
         return;
     }
     item.text = text;
-    // A MarkdownString renders the usage table; plain string hosts (and the
-    // headless stub) fall back to the raw text, which is still readable.
+    // A MarkdownString renders the session id as code; plain string hosts (and
+    // the headless stub) fall back to the raw text, which is still readable.
     try {
         item.tooltip = tooltip && vscode.MarkdownString ? new vscode.MarkdownString(tooltip) : tooltip;
     } catch {

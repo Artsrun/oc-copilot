@@ -106,7 +106,6 @@ exports.__test = {
     isMissingSessionRun: runs_1.isMissingSessionRun,
     threadSession: session_1.threadSession,
     resolveSessionState: session_1.resolveSessionState,
-    LiveSessionTracker: session_1.LiveSessionTracker,
     slashCommands: [...chat_boot_1.SLASH_COMMANDS],
     kindCommands: [...chat_boot_1.KIND_COMMAND_NAMES],
     routedCommands: [...chat_boot_1.ROUTED_COMMANDS],

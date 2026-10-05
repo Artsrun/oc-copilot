@@ -3,6 +3,40 @@
 Full release history, newest first; releases before the last one are condensed
 to their summary and headlines. The README ships the last five.
 
+### 0.0.197
+
+A dead-code and stale-comment sweep, `/help` that lists every command, and
+the repo stops tracking `.vscode/settings.json`. No setting was removed.
+
+- **Removed: the live-session tracker.** Six call sites marked and dropped
+  sessions, and nothing had read the tracker since the retention it served
+  went away (0.0.165). Its 13 checks tested the class alone, and two of them
+  pinned the dead calls in place.
+- **Removed: `planTimeout`'s two parameters.** Neither was read; the budget
+  is the same for every agent and kind. Checks `CG`.
+- **Removed: the Diagnose "session log dir" row**, which reported a folder
+  nothing has written since session logs went.
+- **Fixed: `/help` lacked `/ping` and `/env`** and said "one session per
+  workspace"; it is one per chat. Checks `I`.
+- **Fixed: the repo tracked `.vscode/settings.json` with a model pin.** Set
+  Default Model, run in this repo, writes the pick where the pin lives
+  (`DM`), so your own model went into a tracked file: how a private gateway
+  id reached the 0.0.195 tar. The file is deleted and git-ignored; a pick goes
+  to User settings.
+- **Checks back from the dead.** `JF` (two reads of one file stay two steps,
+  on both transports) read a footer removed in 0.0.165 and was commented out;
+  it reads the debug log's step count now. `E` ran a turn and asserted
+  nothing. `CB` asserts the exit code reaches the debug log.
+- **Dead code out of the suite**: unread locals, values computed only to be
+  `void`ed, commented-out checks, tombstone comments. A tripwire fails on any
+  empty if/else/loop block in `src/` (the `/flow` removal left one). Checks
+  `ES`.
+- **Gate: without git, the leak scan reads the tree under `.gitignore`** —
+  the same 76 files `git ls-files` lists — instead of a hand-kept skip list.
+  `media/logo.svg`, referenced by nothing, no longer ships (34 files).
+- Stale comments corrected: catalog tiers, the status tooltip, the SSE ask
+  watcher, a REFS section cited by a name it never had.
+
 ### 0.0.196
 
 `/flow` is removed, `/parallel` lanes get your attachments, and the gate
@@ -19,7 +53,7 @@ catches two more kinds of drift. No setting was removed.
   `includeChatReferences: false` still keeps lanes bare. Checks `J`.
 - **Gate: without git, every file is scanned for internal names.** The 0.0.195
   tar's `.vscode/settings.json` pinned a model on a private gateway, and the
-  fallback scan read only the packaged files; the pin now names a public model.
+  fallback scan read only the packaged files.
 - **Gate: `package-lock.json` must carry the manifest's version** (it said
   0.0.194 in 0.0.195, as it said 0.0.187 in 0.0.189).
 

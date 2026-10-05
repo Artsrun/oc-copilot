@@ -34,65 +34,6 @@ export function setActiveSession(cwd: string, value: SessionState): Thenable<voi
 }
 
 /**
- * Which sessions this window is still driving. Bounded, folder-scoped and
- * recency-aware: an entry counts as live only while it was last seen inside
- * the supplied grace window, the key is cwd\0sessionId so folder A cannot
- * protect a same-named session under folder B, and the least-recently-seen
- * entry is evicted at the cap so a long-lived window cannot grow it without
- * bound. The clock is injected so tests advance it without sleeping.
- * Membership is per window and deliberately not persisted.
- */
-export class LiveSessionTracker {
-    private readonly cap: number;
-    private readonly now: () => number;
-    // A Map iterates in insertion order and `mark` re-inserts, so the first key
-    // is always the least recently seen — no separate ordinal, no scan to evict.
-    private readonly entries = new Map<string, { lastSeenMs: number }>();
-
-    constructor(cap = 200, now: () => number = () => Date.now()) {
-        this.cap = cap;
-        this.now = now;
-    }
-
-    private key(cwd: string, sessionId: string): string {
-        return `${cwd}\0${sessionId}`;
-    }
-
-    mark(cwd: string, sessionId: string): void {
-        const k = this.key(cwd, sessionId);
-        this.entries.delete(k);
-        this.entries.set(k, { lastSeenMs: this.now() });
-        this.enforceCap();
-    }
-
-    /** `/new`: the user walked away from this thread's previous session. */
-    drop(cwd: string, sessionId: string): void {
-        this.entries.delete(this.key(cwd, sessionId));
-    }
-
-    isLive(cwd: string, sessionId: string, graceMs: number): boolean {
-        const e = this.entries.get(this.key(cwd, sessionId));
-        return !!e && this.now() - e.lastSeenMs <= graceMs;
-    }
-
-    get size(): number {
-        return this.entries.size;
-    }
-
-    private enforceCap(): void {
-        while (this.entries.size > this.cap) {
-            const oldest = this.entries.keys().next();
-            if (oldest.done) {
-                break;
-            }
-            this.entries.delete(oldest.value);
-        }
-    }
-}
-
-export const liveSessions = new LiveSessionTracker();
-
-/**
  * The metadata every turn returns. VS Code replays it in `ChatContext.history`,
  * so it is the wire format by which a chat thread describes its own session.
  */

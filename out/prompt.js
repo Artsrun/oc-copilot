@@ -5,7 +5,7 @@ exports.markClarifiedPrompt = markClarifiedPrompt;
 exports.insistedOn = insistedOn;
 exports.isVaguePrompt = isVaguePrompt;
 const core_1 = require("./core");
-function planTimeout(agentLabel, kind) {
+function planTimeout() {
     const settings = (0, core_1.config)();
     const raw = settings.get("timeoutMs", 0);
     const base = raw > 0 ? Math.max(1000, raw) : 0;

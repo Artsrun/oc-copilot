@@ -22,7 +22,7 @@ no bundler, no test runner: plain TypeScript → `out/`, plain Node for the suit
 | `src/compose.ts` | **The /parallel composer**: one `createQuickPick` per lane, `laneProblem` (the real splitter), insert via `chat.open` + `isPartialQuery`. |
 | `src/runs.ts` | Running OpenCode: CLI stream and server transport, event → `StepRecord`, tokens/cost, idle cap, compaction, **headless asks**. |
 | `src/net.ts` | Bounded HTTP, the managed `opencode serve`, shared SSE demux by session id. |
-| `src/session.ts` | Session state per chat thread (`threadSession`), live-session tracker, handoff chain and the way back after one, status bar. |
+| `src/session.ts` | Session state per chat thread (`threadSession`), handoff chain and the way back after one, completion toasts, status bar. |
 | `src/proc.ts` | Spawning: shim resolution, `cmd.exe` quoting, `killTree`, `PWD = cwd`. §2 rule 3. |
 | `src/models.ts` | Model catalog (server `GET /config/providers`, else `opencode models --verbose`), names, cache tiers, the picker, `writeModelPin`, short names, `modelResolver` (one forced refetch per turn). |
 | `src/agents.ts` | Which agent a read-only turn runs as: `planAgent`, only once OpenCode lists it. |
@@ -111,7 +111,7 @@ npm run verify    # the suite alone
 | 1 | typecheck | `tsc --noEmit` exits 0 |
 | 2 | build | `tsc` exits 0 and `out/` is newer than `src/` |
 | 3 | verify | the suite exits 0 **and** prints `ALL <N> CHECKS PASSED` |
-| 4 | package | only `ALLOWED` files ship; no internal name in any committed file — every file without git (private tokens from `OCB_LEAKY` or `~/.ocb-leaky`, never the repo); `package-lock.json` at the manifest version; every README claim anchored; version heading, every palette command, chat command and setting documented; absolute links; no dist VSIX of this version with other code; no artifacts at the root |
+| 4 | package | only `ALLOWED` files ship; no internal name in any committed file — without git, the tree under `.gitignore` (private tokens from `OCB_LEAKY` or `~/.ocb-leaky`, never the repo); `package-lock.json` at the manifest version; every README claim anchored; version heading, every palette command, chat command and setting documented; absolute links; no dist VSIX of this version with other code; no artifacts at the root |
 
 - The suite takes well over 30 s; do not judge it by a 30 s timeout.
 - It **aborts on the first exception**: fix crashes first, then red checks.

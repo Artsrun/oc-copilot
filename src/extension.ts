@@ -8,7 +8,6 @@ import { discoverOpenCodeEnv, openCodeConfigModel, readJsonc, summariseEnv } fro
 import { isVaguePrompt, planTimeout } from "./prompt";
 import { createFileLinker, parseChatPrompt, splitModelPrefix, splitModelsFanout } from "./context";
 import {
-    LiveSessionTracker,
     INLINE_PARTICIPANT_ID,
     PARTICIPANT_ID,
     handoffChain,
@@ -98,7 +97,6 @@ export const __test = {
     isMissingSessionRun,
     threadSession,
     resolveSessionState,
-    LiveSessionTracker,
     slashCommands: [...SLASH_COMMANDS],
     kindCommands: [...KIND_COMMAND_NAMES],
     routedCommands: [...ROUTED_COMMANDS],

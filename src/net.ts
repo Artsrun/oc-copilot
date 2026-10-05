@@ -284,7 +284,8 @@ function carriesContent(ev: Record<string, unknown>): boolean {
 }
 
 interface SseSubscriber {
-    // undefined means "every event" — the Live View is deliberately unfiltered.
+    // undefined means "every event": the ask watcher follows a session's
+    // subagents, whose ids it learns from the stream itself.
     sessionId?: string;
     onEvent: (payload: Record<string, unknown>) => void;
     onStatus: (text: string) => void;

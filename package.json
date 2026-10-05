@@ -2,7 +2,7 @@
   "name": "opencode-copilot-bridge",
   "displayName": "OpenCode Copilot Bridge",
   "description": "Delegate research, planning, and development to OpenCode from GitHub Copilot Chat.",
-  "version": "0.0.196",
+  "version": "0.0.197",
   "publisher": "local",
   "license": "MIT",
   "icon": "media/icon.png",

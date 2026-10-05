@@ -40,7 +40,7 @@ export async function handleWorktree(p: {
         `(from \`${wt.baseRef}\` @ \`${wt.baseSha.slice(0, 7)}\`). Your checkout is not touched.\n\n`
     );
 
-    const tPlan = planTimeout("dev", "dev");
+    const tPlan = planTimeout();
     const devAgent = settings.get<string>("devAgent", "build").trim() || "build";
     const transport = settings.get<string>("transport", "auto");
     let attachUrl: string | undefined;

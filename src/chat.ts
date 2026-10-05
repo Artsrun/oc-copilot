@@ -22,7 +22,6 @@ import { planAgentNotice, planAgentSetting, resolvePlanAgent } from "./agents";
 import {
     getActiveSession,
     handoffChain,
-    liveSessions,
     notifyIfSlow,
     refreshStatus,
     rememberHandoffReturn,
@@ -100,10 +99,6 @@ export async function handleChat(
     }
     // Scoped to this chat thread, not to the folder — see threadSession().
     const state = resolveSessionState(context, cwd);
-    // A thread restored from a previous window: hold its session out of retention now.
-    if (state.id) {
-        liveSessions.mark(cwd, state.id);
-    }
 
     // A registered command arrives as `request.command`, stripped from the prompt;
     // a typed `/word` (older hosts, unregistered commands) arrives in the text.
@@ -332,8 +327,8 @@ export async function handleChat(
     const model = pinned ?? handoffReturn;
     const chain = handoffChain(model, fallbackModels);
 
-    // timeoutMs is a verbatim fixed cap; idleTimeoutMs is what stops a hung run.
-    const tPlan = planTimeout(agentLabel, kind);
+    // timeoutMs is an optional hard cap (at least 1s); idleTimeoutMs is what stops a hung run.
+    const tPlan = planTimeout();
     timeoutMs = tPlan.timeoutMs;
     const idleTimeoutMs = tPlan.idleTimeoutMs;
 
@@ -687,7 +682,6 @@ export async function handleChat(
         let turns = baseline.turns;
         if (sessionId) {
             turns += 1;
-            liveSessions.mark(cwd, sessionId);
             await setActiveSession(cwd, {
                 id: sessionId,
                 turns,

@@ -1,5 +1,5 @@
-// v13 checks: everything v12 asserted, plus slash commands, chat references,
-// heartbeat-safe progress, cancellation, multi-turn briefing, and follow-ups.
+// The suite (AGENTS.md §5): stubs vscode, loads out/extension.js, drives chat
+// turns through fake OpenCode binaries, and prints ALL <N> CHECKS PASSED.
 const Module = require("node:module");
 const fs = require("node:fs");
 const os = require("node:os");
@@ -631,20 +631,13 @@ function collectConfigProperties(configuration) {
     const a = stream();
     await global.__handler({ prompt: "Why does login redirect loop?" }, {}, a.response, a.token);
     const chat = a.chatMarkdown.join("");
-    const logPath = path.join(work, "sessions", "ses_test.md");
-    const htmlPath = path.join(work, "sessions", "ses_test.html");
-    const log = fs.existsSync(logPath) ? fs.readFileSync(logPath, "utf8") : "";
-    // The briefing is rendered when it is opened, not after every turn, so the
-    // absence of the file here is the perf contract — checked before rendering it
-    // the same way the Open briefing button does.
-    const htmlWrittenDuringTurn = fs.existsSync(htmlPath);
 
     add("A chat has no <details>", !/<details>/i.test(chat));
     add("A chat contains answer", chat.includes("stale cookie"));
     add("A chat answer leads", chat.trimStart().startsWith("The redirect loop"));
     add("A chat has no mermaid", !chat.includes("```mermaid"));
     add("A chat hides raw thought", !chat.includes("Thinking about the redirect bug"));
-    add("A a turn writes nothing into the workspace", !htmlWrittenDuringTurn && log === "");
+    add("A a turn writes nothing into the workspace", !fs.existsSync(path.join(work, "sessions")));
 
     settings.executable = partial;
     memento.clear();
@@ -652,8 +645,6 @@ function collectConfigProperties(configuration) {
     const promptB = "check current branch difs with dev-newplat";
     await global.__handler({ prompt: promptB }, {}, b.response, b.token);
     const chatB = b.chatMarkdown.join("");
-    const logBPath = path.join(work, "sessions", "ses_diff.md");
-    const logB = fs.existsSync(logBPath) ? fs.readFileSync(logBPath, "utf8") : "";
 
     add("B does not use prompt as the only answer", !/^check current branch difs with dev-newplat\s*$/m.test(chatB.trim()));
 
@@ -675,7 +666,7 @@ function collectConfigProperties(configuration) {
     await global.__handler({ prompt: "what does %PATH% mean" }, {}, cPct.response, cPct.token);
     add("C percent prompt still answers", cPct.chatMarkdown.join("").includes("stale cookie"));
 
-    const bare = writeFake("ocb-fake", [
+    writeFake("ocb-fake", [
         { type: "text", sessionID: "ses_bare", part: { text: "bare-ok" } },
         { type: "step_finish", sessionID: "ses_bare", part: { reason: "stop", cost: 0.001, tokens: { input: 1, output: 1, reasoning: 0, total: 2, cache: { read: 0, write: 0 } } } }
     ]);
@@ -700,14 +691,6 @@ function collectConfigProperties(configuration) {
     const d = stream();
     await global.__handler({ prompt: "diff please" }, {}, d.response, d.token);
     const chatD = d.chatMarkdown.join("");
-    const logD = fs.existsSync(path.join(work, "sessions", "ses_to.md"))
-        ? fs.readFileSync(path.join(work, "sessions", "ses_to.md"), "utf8")
-        : "";
-    const line1 = (chatD.match(/1\.\s+`bash`[^\n]*/g) || [])[0] || "";
-    const line2 = (chatD.match(/2\.\s+`bash`[^\n]*/g) || [])[0] || "";
-    void line1;
-    void line2;
-    void logD;
     add("D a capped run still answers instead of going silent", chatD.trim().length > 0);
 
     // E: the context warning went out with the nerd surface; a fat run must
@@ -717,8 +700,7 @@ function collectConfigProperties(configuration) {
     memento.clear();
     const e = stream();
     await global.__handler({ prompt: "show the diff" }, {}, e.response, e.token);
-    const chatE = e.chatMarkdown.join("");
-    void chatE;
+    add("E a run with a 300 KB tool output still shows its answer", e.chatMarkdown.join("").includes("Diff is large."));
 
     settings.executable = happy;
     memento.clear();
@@ -760,6 +742,10 @@ function collectConfigProperties(configuration) {
     await global.__handler({ prompt: "", command: "help" }, {}, i1.response, i1.token);
     const helpChat = i1.chatMarkdown.join("");
     add("I /help command renders the table", /\/dev <task>/.test(helpChat) && /\| Command \|/.test(helpChat));
+    const iPkg = require(path.join(__dirname, "..", "package.json"));
+    const iMissing = iPkg.contributes.chatParticipants[0].commands.map((c) => c.name).filter((n) => n !== "help" && !helpChat.includes("`/" + n));
+    add(`I /help names every panel command${iMissing.length ? ` (missing: ${iMissing.join(", ")})` : ""}`, iMissing.length === 0);
+    add("I /help says one session per chat, as sessionScope defaults", /one ongoing session per chat\b/.test(helpChat) && !/per workspace/.test(helpChat));
 
     const i2 = stream();
     await global.__handler({ prompt: "", command: "new" }, {}, i2.response, i2.token);
@@ -888,9 +874,6 @@ function collectConfigProperties(configuration) {
     });
     const m = await totalsChat();
     add("M /session reports cumulative totals", /2 turn\(s\)/.test(m.chatMarkdown.join("")) && /tokens/.test(m.chatMarkdown.join("")));
-
-    // N: the working list went out with the nerd surface; the setting is gone
-    // too. A capped list has nothing to assert against.
 
     // O: Stop. VS Code drops every chunk a participant sends after Stop
     // (chatServiceImpl.ts progressCallback). v176–v183 wrote "Stopped after…"
@@ -1431,8 +1414,7 @@ function collectConfigProperties(configuration) {
     await global.__handler({ prompt: "this will produce nothing at all" }, {}, cb.response, cb.token);
     const chatCB = cb.chatMarkdown.join("");
     add("CB an empty run still says something", chatCB.trim().length > 0);
-    // add("CB the exit code is surfaced", /exit code \*\*3\*\*/.test(chatCB));
-    // add("CB it points at /ping", /\/ping/.test(chatCB));
+    add("CB its exit code goes to the debug log", logLines.some((l) => / exit code 3\b/.test(l)));
 
     // CC: a CLI error event must reach chat. Before v148 only the SSE path handled
     // session.error; on the CLI path it fell into `default:` and was dropped.
@@ -1504,10 +1486,9 @@ function collectConfigProperties(configuration) {
 
     // CG: timeout policy.
     settings.timeoutMs = 180000;
-    add("CG a positive timeoutMs is used verbatim", ext.__test.planTimeout("plan", "plan").timeoutMs === settings.timeoutMs);
-    const planT = ext.__test.planTimeout("plan", "plan");
-    const buildT = ext.__test.planTimeout("build", "dev");
-    add("CG an editing run gets the same cap as a read-only one", buildT.timeoutMs === planT.timeoutMs);
+    add("CG a positive timeoutMs is used verbatim", ext.__test.planTimeout().timeoutMs === settings.timeoutMs);
+    const planT = ext.__test.planTimeout();
+    add("CG the budget takes no agent or kind: an editing run gets the same cap as a read-only one", ext.__test.planTimeout.length === 0);
     add("CG idle cap is carried alongside the wall clock", planT.idleTimeoutMs === settings.idleTimeoutMs);
 
     // v167: the wall clock is opt-in. 0 means no cap at all, and the idle cap
@@ -1515,12 +1496,12 @@ function collectConfigProperties(configuration) {
     const savedCgTimeout = settings.timeoutMs;
     settings.timeoutMs = 0;
     settings.idleTimeoutMs = 90000;
-    const zero = ext.__test.planTimeout("build", "dev");
+    const zero = ext.__test.planTimeout();
     add("CG timeoutMs 0 means no wall-clock cap", zero.timeoutMs === 0);
     add("CG the idle cap survives a zero wall clock", zero.idleTimeoutMs === 90000);
     add(
         "CG the no-cap plan says so rather than naming a number",
-        /no wall-clock cap/.test(ext.__test.planTimeout("plan", "plan").reason)
+        /no wall-clock cap/.test(ext.__test.planTimeout().reason)
     );
     settings.idleTimeoutMs = 0;
     settings.timeoutMs = savedCgTimeout;
@@ -2134,66 +2115,6 @@ function collectConfigProperties(configuration) {
         /const state = resolveSessionState\(context, cwd\);/.test(srcText)
     );
 
-    // GB: the consequence of GA. One session per chat means SEVERAL are live at
-    // once, but the folder pointer still names only the most recent.
-    add(
-        "GB a completed turn registers its session as live",
-        /liveSessions\.mark\(cwd, sessionId\)/.test(srcText)
-    );
-    // The palette command cleared the folder pointer only, which under thread
-    // scope does nothing to the chat in front of you while claiming otherwise.
-    // v190: New Session opens a new chat — a new thread is a new session —
-    // instead of submitting /new; checked by behaviour in group NS.
-    add(
-        "GB a thread's session is held out of retention as soon as it is seen",
-        /if \(state\.id\) \{\s*\n\s*liveSessions\.mark\(cwd, state\.id\);/.test(srcText)
-    );
-
-    // A1: the v160 live set was add-only — nothing ever removed an id, so a window
-    // that drove 60 threads protected 60 sessions and sessionMaxCount could never
-    // fire, while the set being process-global let an id under folder A protect
-    // folder B. v164: bounded, folder-scoped, recency-aware.
-    // v165: the tracker survives (it is in-memory and still marks live chats); the
-    // prune-outcome half is disabled with the session files it acted on.
-    const trackerTime = { t: Date.now() };
-    const a1Clock = () => trackerTime.t;
-    const a1Tracker = new ext.__test.LiveSessionTracker(5, a1Clock);
-    add("A1 the live session store starts empty", a1Tracker.size === 0);
-    a1Tracker.mark("cwdA", "s1");
-    a1Tracker.mark("cwdA", "s2");
-    add("A1 marking sessions grows the store", a1Tracker.size === 2);
-    // Keyed by folder: s3 under folder B must not protect s3 under folder A.
-    a1Tracker.mark("cwdB", "s3");
-    const a1S3UnderA = new ext.__test.LiveSessionTracker(5, a1Clock);
-    a1S3UnderA.mark("cwdA", "s3");
-    add("A1 folder A's live id cannot protect folder B", !a1S3UnderA.isLive("cwdB", "s3", 99999999));
-    add("A1 the same id is safe in its own folder", a1S3UnderA.isLive("cwdA", "s3", 99999999));
-    // Recency: advance the injected clock past the grace window and the entry dies.
-    trackerTime.t += 121 * 60000;
-    add("A1 a session past the grace window becomes prunable", !a1Tracker.isLive("cwdA", "s1", 120 * 60000));
-    // re-mark inside the window and it is protected again
-    trackerTime.t = Date.now();
-    a1Tracker.mark("cwdA", "s1");
-    add("A1 a session re-marked inside the window is protected", a1Tracker.isLive("cwdA", "s1", 120 * 60000));
-    // Drop (the /new path): an explicitly dropped id is prunable immediately.
-    a1Tracker.drop("cwdA", "s1");
-    add("A1 a /new drop makes the old session prunable immediately", !a1Tracker.isLive("cwdA", "s1", 120 * 60000));
-    // Cap: 300 inserts keep the store at the cap and survive the most-recent ones.
-    const a1Bounded = new ext.__test.LiveSessionTracker(200, a1Clock);
-    for (let n = 1; n <= 300; n++) a1Bounded.mark("cwd", `x${n}`);
-    a1Bounded.mark("cwd", "newest");
-    add("A1 the map stays at its cap under churn", a1Bounded.size === 200);
-    add("A1 the newest entry survives the cap", a1Bounded.isLive("cwd", "newest", 99999999));
-    add("A1 the oldest entries are evicted", !a1Bounded.isLive("cwd", "x1", 99999999));
-    // The tracker is what the source actually uses; the old add-only Set is gone.
-    add("A1 the add-only Set is gone", !/liveSessionIds/.test(srcText));
-    memento.clear();
-
-    // A1D: the observable outcome. v165: nothing is written, so the outcome is
-    // that the session directory never appears at all — asserted in group A/W.
-    // const a1Dir = path.join(work, "sessions");
-    // ... (seed + prune removed with the retention subsystem)
-
     memento.clear();
 
     // GC: things that were unbounded, unpersisted, or unguarded. Each is asserted
@@ -2701,11 +2622,9 @@ function collectConfigProperties(configuration) {
     // detail)` — a linear scan per event that also merged two genuine
     // `read src/login.ts` calls into a single step, fusing their timings and byte
     // counts. The server path already keyed on part.id. Same stream, same records.
-    // v165: the step count was read out of the metrics footer, which is disabled.
-    // The dedup itself is still live in extension.ts but no longer observable from
-    // chat output; restoring the footer restores these two checks unchanged.
-    const jfSteps = (chatBody) => {
-        const m = /🤓 (\d+) steps/.exec(chatBody);
+    // The step count is read from the run's metrics line in the debug log.
+    const jfSteps = (from) => {
+        const m = [...logLines.slice(from).join("\n").matchAll(/ metrics first byte: .*? · steps: (\d+) /g)].pop();
         return m ? Number(m[1]) : -1;
     };
     const jfEvents = [
@@ -2716,9 +2635,10 @@ function collectConfigProperties(configuration) {
     settings.executable = writeFake("fake-dup.js", jfEvents);
     memento.clear();
     const jfCli = stream();
+    const jfCliFrom = logLines.length;
     await global.__handler({ prompt: "read the same file twice" }, {}, jfCli.response, jfCli.token);
-    const jfCliSteps = jfSteps(jfCli.chatMarkdown.join(""));
-    // add("JF two distinct calls to the same file stay two steps", jfCliSteps === 2);
+    const jfCliSteps = jfSteps(jfCliFrom);
+    add("JF two distinct calls to the same file stay two steps", jfCliSteps === 2);
 
     let jfSse;
     const jfOrder = [];
@@ -2765,8 +2685,9 @@ function collectConfigProperties(configuration) {
     settings.serverPort = jfServer.address().port;
     memento.clear();
     const jfSrv = stream();
+    const jfSrvFrom = logLines.length;
     await global.__handler({ prompt: "read the same file twice" }, {}, jfSrv.response, jfSrv.token);
-    const jfSrvSteps = jfSteps(jfSrv.chatMarkdown.join(""));
+    const jfSrvSteps = jfSteps(jfSrvFrom);
     settings.transport = "cli";
     settings.serverPort = 4096;
     if (jfSse) {
@@ -2777,11 +2698,7 @@ function collectConfigProperties(configuration) {
     }
     await new Promise((r) => jfServer.close(r));
 
-    // Both step counts are now -1 (no footer to read), so this would pass without
-    // proving anything — commented rather than left as a check that cannot fail.
-    // add("JF the server transport reduces the same stream the same way", jfSrvSteps === jfCliSteps);
-    void jfSrvSteps;
-    void jfCliSteps;
+    add("JF the server transport reduces the same stream the same way", jfSrvSteps === jfCliSteps);
     // Invariant, not a timing assertion: the subscription must reach the server
     // before the prompt does, or the first events of a run are posted into a
     // stream nobody is listening to yet.
@@ -3123,7 +3040,6 @@ const lbProvider = (global.__participant || {}).followupProvider;
             return send(200, {});
         });
         await new Promise((r) => ltServer.listen(0, "127.0.0.1", r));
-        const ltBase = `http://127.0.0.1:${ltServer.address().port}`;
         // A fake attached CLI: reports its spawn (and model) to the server, then
         // behaves per mode. `--attach <url>` tells it where the server is.
         const ltFake = (name, body) =>
@@ -3980,7 +3896,7 @@ const lbProvider = (global.__participant || {}).followupProvider;
 
     // TK (v184): the live line names what is running. v183 dropped a tool
     // whose first report had no input yet — a 40s `sleep` showed nothing until
-    // it ended (reproduced with the real CLI: REFS "Stop leaves a spinner").
+    // it ended (reproduced with the real CLI: REFS "What VS Code does after Stop").
     {
         const tkH = hostStream();
         const tk = ext.__test.startHeartbeat(tkH.response, "tk", 0);
@@ -4412,7 +4328,6 @@ const lbProvider = (global.__participant || {}).followupProvider;
             });
         });
         await new Promise((r) => v5Server.listen(0, "127.0.0.1", r));
-        const v5Base = `http://127.0.0.1:${v5Server.address().port}`;
         const v5Saved = { ...settings };
         Object.assign(settings, {
             transport: "server",
@@ -4946,37 +4861,11 @@ const lbProvider = (global.__participant || {}).followupProvider;
         add(`LK bash allows only inspect commands (${lkAllowed.length})`, lkAllowed.length >= 10 && lkAllowed.every((c) => LK_BASH.has(c)));
     }
 
-    // The usage write is debounced 400ms behind an unref'd timer, so a window
-    // closed right after a run exits before it fires. v165: usage tracking is
-    // disabled, so there is no deferred write to settle. deactivate() is still
-    // called last, because nothing may run a turn after teardown.
-    // v179: this block sat mid-file through v178, so KA…MA ran turns against a
-    // torn-down extension. It is now genuinely last.
+    // deactivate() runs near the end (AGENTS.md §5): the groups after it must not
+    // start a server (KA…MA once ran turns against a torn-down extension).
     globalMemento.delete("opencode.usage.v1");
-    // ext.__test.recordUsage(
-    //     {
-    //         cost: 0.4242,
-    //         tokens: { input: 11, output: 7, reasoning: 0, total: 18, cache: { read: 0, write: 0 } },
-    //         totalMs: 5,
-    //         steps: [],
-    //         reasoning: "",
-    //         usageKnown: true
-    //     },
-    //     "gc/flush-probe",
-    //     "plan"
-    // );
-    // add("GC the usage write is genuinely deferred", globalMemento.get("opencode.usage.v1") === undefined);
     ext.deactivate();
     add("GC deactivate does not resurrect the usage store", globalMemento.get("opencode.usage.v1") === undefined);
-    // const gcPersisted = globalMemento.get("opencode.usage.v1");
-    // add(
-    //     "GC deactivate settles the pending usage write",
-    //     Array.isArray(gcPersisted) && gcPersisted.some((e) => e.model === "gc/flush-probe")
-    // );
-    // add(
-    //     "GC the settled entry keeps the run's cost",
-    //     Array.isArray(gcPersisted) && gcPersisted.some((e) => e.model === "gc/flush-probe" && e.cost === 0.4242)
-    // );
 
     // IL (v186): @opencode in inline chat (Ctrl+I). The manifest half guards the
     // stable-host trap measured in chatParticipant.contribution.ts (main): a
@@ -5480,6 +5369,19 @@ const lbProvider = (global.__participant || {}).followupProvider;
         const rmFlowy = stream();
         await global.__handler({ prompt: "/flowchart of the auth module" }, {}, rmFlowy.response, rmFlowy.token);
         add("RM only the exact word is retired: `/flowchart …` still runs", fs.existsSync(path.join(work, "fake-ok.js.argv")));
+    }
+
+    // ==================== v197 ====================
+    // ES: no if/else/loop block with nothing in it, not even a comment. The
+    // /flow removal deleted the one statement of `if (metrics) { … }` (0.0.196).
+    {
+        const esRe = /\b(?:if|for|while)\s*\((?:[^()]|\([^()]*\))*\)\s*\{\s*\}|\belse\s*\{\s*\}/g;
+        const esHits = fs.readdirSync(path.join(repoDir, "src")).filter((f) => f.endsWith(".ts")).flatMap((f) => {
+            const s = fs.readFileSync(path.join(repoDir, "src", f), "utf8");
+            return [...s.matchAll(esRe)].map((m) => `${f}:${s.slice(0, m.index).split("\n").length}`);
+        });
+        add(`ES no empty if/else/loop block in src${esHits.length ? ` (${esHits.join(", ")})` : ""}`, esHits.length === 0);
+        add("ES the tripwire sees one: `if (metrics) {\\n}`", [..."if (metrics) {\n        }".matchAll(esRe)].length === 1 && [..."catch {\n // why\n}".matchAll(esRe)].length === 0);
     }
 
     // ==================== v190 ====================

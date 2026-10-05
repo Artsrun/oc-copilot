@@ -8,7 +8,7 @@ import { config, logChannel, mdText, stamp, truncate } from "./core";
 import { mark } from "./followups";
 import { ensureServer } from "./net";
 import { ServerSession, archiveSession, busySessions, deleteSession, forkSession, listSessions, sessionExcerpt } from "./sessions";
-import { SessionState, getActiveSession, liveSessions, refreshStatus, setActiveSession } from "./session";
+import { SessionState, getActiveSession, refreshStatus, setActiveSession } from "./session";
 
 export interface SessionsProps {
     cwd: string;
@@ -98,7 +98,6 @@ export async function handleSessions(p: SessionsProps): Promise<vscode.ChatResul
     // This chat's own session is already bound with its counters: re-binding
     // with `turns: 0` would zero its turns and spend (see threadSession).
     const bind = async (id: string): Promise<vscode.ChatResult> => {
-        liveSessions.mark(p.cwd, id);
         if (id === p.state.id) {
             refreshStatus(p.cwd);
             return done();
@@ -138,7 +137,6 @@ export async function handleSessions(p: SessionsProps): Promise<vscode.ChatResul
             }
             case "close":
                 await archiveSession(base, p.cwd, s.id);
-                liveSessions.drop(p.cwd, s.id);
                 p.response.markdown(`${mark("ok")} Closed **${titleMd(s)}** (\`${s.id}\`): archived, messages kept.` + (mine ? " This chat starts a fresh session with its next message." : ""));
                 return await unbind();
             case "delete": {
@@ -152,7 +150,6 @@ export async function handleSessions(p: SessionsProps): Promise<vscode.ChatResul
                     return done();
                 }
                 await deleteSession(base, p.cwd, s.id);
-                liveSessions.drop(p.cwd, s.id);
                 p.response.markdown(`${mark("ok")} Deleted **${titleMd(s)}** (\`${s.id}\`).` + (mine ? " This chat starts a fresh session with its next message." : ""));
                 return await unbind();
             }

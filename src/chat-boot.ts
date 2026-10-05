@@ -503,7 +503,7 @@ export function isKindCommand(declared: string): boolean {
 
 export function helpMarkdown(): string {
     return [
-        "**OpenCode bridge** — one ongoing session per workspace.",
+        "**OpenCode bridge** — one ongoing session per chat.",
         "",
         "| Command | What it does |",
         "| --- | --- |",
@@ -516,6 +516,8 @@ export function helpMarkdown(): string {
         "| `/stop` | Stop a run still going on the server (closing the chat does not) |",
         "| `/new` | Start a fresh session |",
         "| `/model` | Show and change the model chain |",
+        "| `/ping` | Connectivity check — no model call, no cost |",
+        "| `/env` | What OpenCode loaded: config, plugins, hooks, MCP, skills |",
         "",
         "Inline prefixes still work: `dev:`, `model:provider/id` — or a short name, `model:tundra`.",
         "Lanes split on `|`, `;;` or a `---` line. Per lane: `/parallel m:tundra review auth | m:oasis read the logs`. One task on several models: `/parallel models:tundra,oasis,aspen review auth`.",
@@ -551,8 +553,8 @@ interface LaneResult {
 // Lanes split on `|`, `;;` or a `---` line; `||` (a shell OR) is text. Inside
 // backticks or a table row they are text too: with no lane cap, a stray split
 // is a paid run. An unclosed backtick guards to the end. Line endings are
-// normalised first: in 0.0.188 a `---` line never matched a CRLF prompt (a
-// Windows paste; reproduced: 4 lanes with LF, 1 with CRLF).
+// normalised first: a CRLF prompt (a Windows paste) never matched a `---` line
+// (reproduced: 4 lanes with LF, 1 with CRLF).
 const LANE_MASK: Record<string, string> = { "|": "\u0001", ";": "\u0002", "-": "\u0003" };
 const LANE_UNMASK: Record<string, string> = { "\u0001": "|", "\u0002": ";", "\u0003": "-" };
 const maskLane = (s: string) => s.replace(/[|;-]/g, (c) => LANE_MASK[c]);

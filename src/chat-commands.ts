@@ -11,7 +11,6 @@ import { cachedModelInfo, getModelCatalog, modelLabel, pinLevel } from "./models
 import {
     SessionState,
     getActiveSession,
-    liveSessions,
     refreshStatus,
     setActiveSession,
     threadScopeActive
@@ -20,8 +19,8 @@ import { runCapture } from "./commands";
 import { helpMarkdown } from "./chat-boot";
 import { handleSessions } from "./chat-sessions";
 
-// The "/help", "/new", "/model", "/ping", "/env", and "/session" control
-// commands. Each answers from local state and never touches the model, so they
+// The control commands (SLASH_COMMANDS in ./chat-boot). Each answers from local
+// state or the server and never touches the model, so they
 // are cheap, self-contained, and share no state with the running of a turn.
 // Returns a ChatResult when `control` names one of them, otherwise undefined so
 // the caller continues on to the real task.
@@ -70,10 +69,6 @@ export async function handleControlCommand(p: ControlProps): Promise<vscode.Chat
             return { metadata: { kind: "stop" } };
         }
         case "new":
-            // An explicit walk-away: the previous session is no longer live.
-            if (p.state.id) {
-                liveSessions.drop(p.cwd, p.state.id);
-            }
             await setActiveSession(p.cwd, { turns: 0 });
             refreshStatus(p.cwd);
             // `/new` resets our session, not the Copilot thread on screen: one
@@ -178,7 +173,7 @@ export async function handleControlCommand(p: ControlProps): Promise<vscode.Chat
                 .map((k) => `${env.filter((i) => i.kind === k).length} ${k}`)
                 .join(" · ");
             rows.push(`| environment | ${counts} — see \`/env\` |`);
-            const tp = planTimeout("plan", "plan");
+            const tp = planTimeout();
             rows.push(
                 `| timeout | ${tp.timeoutMs > 0 ? `${Math.round(tp.timeoutMs / 1000)}s wall clock` : "no wall-clock cap"} · ${tp.idleTimeoutMs ? `${Math.round(tp.idleTimeoutMs / 1000)}s idle` : "no idle cap"
                 } _(${tp.reason})_ |`

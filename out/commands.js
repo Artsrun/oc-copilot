@@ -115,7 +115,6 @@ async function diagnose() {
         ? String(settings.get("timeoutMs", 0))
         : "0 — _no wall-clock cap; idleTimeoutMs is the only cap armed_"));
     lines.push(row("workspace", cwd));
-    lines.push(row("session log dir", "_not used — this build writes nothing to the workspace_"));
     const state = folder ? (0, session_1.getActiveSession)(cwd) : { turns: 0 };
     lines.push(row("active session", state.id ? `\`${state.id}\` · ${state.turns} turn(s)` : "_none — send an @opencode message_"));
     lines.push(row("session scope", settings.get("sessionScope", "thread") === "workspace"

@@ -47,9 +47,6 @@ async function handleControlCommand(p) {
             return { metadata: { kind: "stop" } };
         }
         case "new":
-            if (p.state.id) {
-                session_1.liveSessions.drop(p.cwd, p.state.id);
-            }
             await (0, session_1.setActiveSession)(p.cwd, { turns: 0 });
             (0, session_1.refreshStatus)(p.cwd);
             p.response.markdown((p.state.id ? `${(0, followups_1.mark)("ok")} Started a fresh OpenCode session — \`${p.state.id}\` is closed. ` : (0, followups_1.mark)("ok") + " Started a fresh OpenCode session. ") +
@@ -129,7 +126,7 @@ async function handleControlCommand(p) {
                 .map((k) => `${env.filter((i) => i.kind === k).length} ${k}`)
                 .join(" · ");
             rows.push(`| environment | ${counts} — see \`/env\` |`);
-            const tp = (0, prompt_1.planTimeout)("plan", "plan");
+            const tp = (0, prompt_1.planTimeout)();
             rows.push(`| timeout | ${tp.timeoutMs > 0 ? `${Math.round(tp.timeoutMs / 1000)}s wall clock` : "no wall-clock cap"} · ${tp.idleTimeoutMs ? `${Math.round(tp.idleTimeoutMs / 1000)}s idle` : "no idle cap"} _(${tp.reason})_ |`);
             p.response.markdown(`${healthy ? "**Bridge is reachable.**" : "**Bridge cannot reach OpenCode.**"}\n\n${rows.join("\n")}\n\n_No model was called, so this cost nothing._`);
             if (!healthy) {

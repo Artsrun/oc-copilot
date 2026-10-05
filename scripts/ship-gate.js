@@ -66,7 +66,6 @@ const ALLOWED = [
     // here as allowed would state the opposite intent — AGENTS.md rule 7
     // is that these two controls agree, not merely that neither fails.
     "extension/media/icon.png",
-    "extension/media/logo.svg",
     "extension/scripts/start-parallel-agents.sh",
     "extension/scripts/start-parallel-agents.ps1"
 ];
@@ -223,20 +222,11 @@ function checkList(listed) {
     const leaks = [];
     // Everything git would commit is public, not only what ships: the suite's
     // fixtures held the employer's gateway ids while this scan read only the
-    // package. Without a git checkout (a tar of the tree), every file is scanned:
-    // the 0.0.195 tar's .vscode/settings.json named the gateway and a scan of
-    // the packaged files alone passed it.
+    // package. Without a git checkout (a tar of the tree) the same list comes
+    // from walking the tree under .gitignore: a scan of the packaged files alone
+    // passed the 0.0.195 tar's .vscode/settings.json, which named the gateway.
     const tracked = spawnSync("git", ["ls-files", "-co", "--exclude-standard"], { cwd: root, encoding: "utf8" });
-    const walk = (rel) =>
-        fs.readdirSync(path.join(root, rel), { withFileTypes: true }).flatMap((e) => {
-            const r = rel ? `${rel}/${e.name}` : e.name;
-            if (e.isDirectory()) {
-                return ["node_modules", ".git", "dist"].includes(e.name) ? [] : walk(r);
-            }
-            // The .gitignore'd outputs: logs and packages are never committed.
-            return e.isFile() && !/\.(log|vsix|tgz)$/.test(e.name) ? [r] : [];
-        });
-    const scanned = tracked.status === 0 ? tracked.stdout.split(/\r?\n/).filter(Boolean) : walk("");
+    const scanned = tracked.status === 0 ? tracked.stdout.split(/\r?\n/).filter(Boolean) : committable(root);
     for (const rel of scanned) {
         if (rel === "scripts/ship-gate.js") {
             continue; // holds the generic patterns themselves
@@ -486,6 +476,33 @@ function simulatePackageList(dir) {
     };
     walk(dir, "");
     return out;
+}
+
+// What git would commit, without git: the tree minus .gitignore. Covers the
+// pattern forms that file uses — `dir/`, `*.ext`, and a path with a `/`, which
+// is anchored at the root — and nothing more (no `!`, no `**`).
+function committable(dir) {
+    const ignorePath = path.join(dir, ".gitignore");
+    const rules = (fs.existsSync(ignorePath) ? fs.readFileSync(ignorePath, "utf8") : "")
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .filter((l) => l && !l.startsWith("#") && !l.startsWith("!"))
+        .map((l) => {
+            const dirOnly = l.endsWith("/");
+            const body = l.replace(/\/$/, "").replace(/^\//, "");
+            const glob = body.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[^/]*").replace(/\?/g, "[^/]");
+            return { dirOnly, re: new RegExp(body.includes("/") ? `^${glob}$` : `(^|/)${glob}$`) };
+        });
+    const ignored = (rel, isDir) => rules.some((r) => (isDir || !r.dirOnly) && r.re.test(rel));
+    const walk = (rel) =>
+        fs.readdirSync(path.join(dir, rel), { withFileTypes: true }).flatMap((e) => {
+            const r = rel ? `${rel}/${e.name}` : e.name;
+            if (e.name === ".git" || ignored(r, e.isDirectory())) {
+                return [];
+            }
+            return e.isDirectory() ? walk(r) : e.isFile() ? [r] : [];
+        });
+    return walk("");
 }
 
 // ---------------------------------------------------------------------------

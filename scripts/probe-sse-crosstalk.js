@@ -15,7 +15,6 @@ const Module = require("node:module");
 const work = fs.mkdtempSync(path.join(os.tmpdir(), "oc-sse-"));
 const PORT = 45097;
 const MINE = "ses_mine";
-const OTHER = "ses_other";
 
 let sseRes;
 const server = http.createServer((req, res) => {

@@ -5,4 +5,5 @@ node_modules/
 *.tgz
 *.log
 dist/
+.vscode/settings.json
 out/*.map

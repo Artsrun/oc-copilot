@@ -11,8 +11,8 @@ import { openCodeConfigModel } from "./env";
 // ---------------------------------------------------------------------------
 //
 // `opencode models` spawns a process and can take seconds, so it must not be
-// paid on every model picker and every autocompaction. Tiers, in order:
-//   1. live      — spawn `opencode models`
+// paid on every model picker and every turn that names a model. Tiers, in order:
+//   1. live      — a running server's GET /config/providers, else `opencode models --verbose`
 //   2. cached    — snapshot in globalState, fresh within the TTL
 //   3. stale     — the same snapshot past its TTL, clearly labelled
 //   4. configured— `model` + `fallbackModels` from settings
@@ -235,9 +235,8 @@ export function catalogAge(catalog: ResolvedCatalog): string {
 }
 
 // Bounded like every other spawn in the bridge. `opencode models` reaches a
-// gateway, so a hung request used to hang whatever awaited the catalog — /ping,
-// /diagnose, the model picker, and the autocompaction that runs every
-// autoCompactEveryTurns turns, which is a chat turn the user is watching.
+// gateway, and a hung request would hang whatever awaits the catalog: /ping,
+// Diagnose, the model picker, the composer and a turn resolving `model:`.
 const MODELS_TIMEOUT_MS = 15000;
 
 function listModels(executable: string, cwd: string, verbose: boolean): Promise<string> {

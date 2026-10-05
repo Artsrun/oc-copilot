@@ -29,10 +29,9 @@ REFS.md
 # nobody reads 0.0.13's notes from an installed extension. Keep BOTH out of the
 # package and keep the readme's changelog section to the last five releases.
 CHANGELOG.md
-V162-TASK.md
-v164-task-instructions.md
 
-# the extension's own session output, written when this repo is a workspace
+# session output of builds that still wrote one (nothing writes it now), in
+# case an old folder is still on disk
 .opencode-bridge/**
 # the opencode CLI's own node_modules, installed into the workspace when a
 # plugin/SDK is fetched here — never part of the shipped extension
@@ -57,3 +56,5 @@ scripts/mac-setup.sh
 # OS junk
 **/.DS_Store
 **/Thumbs.db
+# Not referenced by the manifest, README or code: the icon is media/icon.png.
+media/logo.svg

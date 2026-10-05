@@ -42,7 +42,7 @@ export interface RunMetrics {
     stderr?: string;
     exitCode?: number;
     signal?: string;
-    /** Wall-clock cap actually applied to this run, after adaptive sizing. */
+    /** Wall-clock cap applied to this run (0: none). */
     appliedTimeoutMs?: number;
     /** True when the run was killed for going quiet, not for exceeding the cap. */
     idleTimeout?: boolean;

@@ -104,7 +104,6 @@ async function handleSessions(p) {
         return done();
     }
     const bind = async (id) => {
-        session_1.liveSessions.mark(p.cwd, id);
         if (id === p.state.id) {
             (0, session_1.refreshStatus)(p.cwd);
             return done();
@@ -140,7 +139,6 @@ async function handleSessions(p) {
             }
             case "close":
                 await (0, sessions_1.archiveSession)(base, p.cwd, s.id);
-                session_1.liveSessions.drop(p.cwd, s.id);
                 p.response.markdown(`${(0, followups_1.mark)("ok")} Closed **${titleMd(s)}** (\`${s.id}\`): archived, messages kept.` + (mine ? " This chat starts a fresh session with its next message." : ""));
                 return await unbind();
             case "delete": {
@@ -150,7 +148,6 @@ async function handleSessions(p) {
                     return done();
                 }
                 await (0, sessions_1.deleteSession)(base, p.cwd, s.id);
-                session_1.liveSessions.drop(p.cwd, s.id);
                 p.response.markdown(`${(0, followups_1.mark)("ok")} Deleted **${titleMd(s)}** (\`${s.id}\`).` + (mine ? " This chat starts a fresh session with its next message." : ""));
                 return await unbind();
             }

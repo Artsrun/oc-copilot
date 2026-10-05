@@ -38,9 +38,6 @@ async function handleChat(request, context, rawResponse, token, turn = {}) {
         return { metadata: { kind: "idle" } };
     }
     const state = (0, session_1.resolveSessionState)(context, cwd);
-    if (state.id) {
-        session_1.liveSessions.mark(cwd, state.id);
-    }
     const declared = request.command?.toLowerCase() ?? "";
     const control = (0, chat_boot_1.controlCommand)(declared, (0, chat_boot_1.typedSlash)(prompt));
     const answered = await (0, chat_commands_1.handleControlCommand)({
@@ -210,7 +207,7 @@ async function handleChat(request, context, rawResponse, token, turn = {}) {
     const handoffReturn = (0, session_1.takeHandoffReturn)(state.id, agentKey, Boolean(pinned));
     const model = pinned ?? handoffReturn;
     const chain = (0, session_1.handoffChain)(model, fallbackModels);
-    const tPlan = (0, prompt_1.planTimeout)(agentLabel, kind);
+    const tPlan = (0, prompt_1.planTimeout)();
     timeoutMs = tPlan.timeoutMs;
     const idleTimeoutMs = tPlan.idleTimeoutMs;
     const continuing = Boolean(state.id);
@@ -482,7 +479,6 @@ async function handleChat(request, context, rawResponse, token, turn = {}) {
         let turns = baseline.turns;
         if (sessionId) {
             turns += 1;
-            session_1.liveSessions.mark(cwd, sessionId);
             await (0, session_1.setActiveSession)(cwd, {
                 id: sessionId,
                 turns,

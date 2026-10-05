@@ -330,6 +330,14 @@ All under `opencodeCopilotBridge.`.
 
 The last five releases; the full history is `CHANGELOG.md` in the repository.
 
+### 0.0.197
+
+- **`/help` lists every command**, `/ping` and `/env` included.
+- The repo stops tracking `.vscode/settings.json`: a model picked in this
+  repo went into it. Picks go to User settings.
+- Dead code removed (a write-only session tracker, unused parameters, a stale
+  Diagnose row); four checks that asserted nothing assert again.
+
 ### 0.0.196
 
 - **Removed `/flow`** (and `/f`); typed from habit, it runs nothing.
@@ -354,9 +362,3 @@ boot.
 Follow-up chip fixes: "the docs updated or the tests added" and "Next steps:
 A, B, and C" give one chip per action; long paths are cut after a `/`; a chip
 bug can no longer mark a finished turn as failed.
-
-### 0.0.192
-
-Review fixes: `/sessions` keeps a chat's counters, cleans up a failed fork,
-and reports server errors; the composer keeps model ids with a colon and the
-model you chose. Run lanes and Compose… are chips.

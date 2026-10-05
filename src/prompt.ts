@@ -1,10 +1,9 @@
-// How a prompt becomes a run plan: the timeout budget for the agent/kind in
-// front of it, and the "is this worth a full model run at all" vague-prompt
-// gate. These share only `config`, so they are a file of their own rather than
-// more of the runner.
+// How a prompt becomes a run plan: the timeout budget (the same for every agent
+// and kind), and the "is this worth a full model run at all" vague-prompt gate.
+// These share only `config`, so they are a file of their own rather than more
+// of the runner.
 
 import { config } from "./core";
-import { ChatKind } from "./metrics";
 
 export interface TimeoutPlan {
     timeoutMs: number;
@@ -12,7 +11,7 @@ export interface TimeoutPlan {
     reason: string;
 }
 
-export function planTimeout(agentLabel: string, kind: ChatKind): TimeoutPlan {
+export function planTimeout(): TimeoutPlan {
     const settings = config();
     // `timeoutMs` defaults to 0 — no wall-clock cap. A run that is still
     // streaming is by definition not hung, so `idleTimeoutMs` is the cap that
@@ -53,8 +52,7 @@ export function insistedOn(prompt: string): boolean {
 // Deliberately narrower than "two words or fewer": `run tests`, `fix build`
 // and `review PR` are all actionable. Only a BARE SINGLE WORD qualifies — at
 // most 12 characters, no whitespace, and nothing that marks a symbol or a
-// filename (. / \ @ # : ( ) _ - or a digit). One regex, one pass — it
-// was a split, a filter, a length check and a second regex.
+// filename (. / \ @ # : ( ) _ - or a digit).
 const BARE_WORD = /^[^\s./\\@#:()_\-\d]{1,12}$/;
 
 export function isVaguePrompt(task: string): boolean {

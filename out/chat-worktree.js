@@ -27,7 +27,7 @@ async function handleWorktree(p) {
     core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] worktree ${wt.path} on ${wt.branch} from ${wt.baseRef}@${wt.baseSha.slice(0, 7)}`);
     response.markdown(`> ${(0, followups_1.mark)("worktree")} Isolated run in \`${wt.path}\` on branch \`${wt.branch}\` ` +
         `(from \`${wt.baseRef}\` @ \`${wt.baseSha.slice(0, 7)}\`). Your checkout is not touched.\n\n`);
-    const tPlan = (0, prompt_1.planTimeout)("dev", "dev");
+    const tPlan = (0, prompt_1.planTimeout)();
     const devAgent = settings.get("devAgent", "build").trim() || "build";
     const transport = settings.get("transport", "auto");
     let attachUrl;

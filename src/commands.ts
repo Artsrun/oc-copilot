@@ -86,10 +86,6 @@ export async function diagnose(): Promise<void> {
     );
     lines.push(row("workspace", cwd));
 
-    // Diagnostics must not touch the workspace (AGENTS.md §2 rule 5), so there
-    // is no log dir to probe.
-    lines.push(row("session log dir", "_not used — this build writes nothing to the workspace_"));
-
     const state = folder ? getActiveSession(cwd) : { turns: 0 };
     lines.push(
         row(

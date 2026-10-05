@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.liveSessions = exports.LiveSessionTracker = exports.OWN_PARTICIPANTS = exports.INLINE_PARTICIPANT_ID = exports.PARTICIPANT_ID = void 0;
+exports.OWN_PARTICIPANTS = exports.INLINE_PARTICIPANT_ID = exports.PARTICIPANT_ID = void 0;
 exports.getActiveSession = getActiveSession;
 exports.setActiveSession = setActiveSession;
 exports.threadSession = threadSession;
@@ -59,45 +59,6 @@ function getActiveSession(cwd) {
 function setActiveSession(cwd, value) {
     return core_1.extensionContext.workspaceState.update(sessionStateKey(cwd), value);
 }
-class LiveSessionTracker {
-    cap;
-    now;
-    entries = new Map();
-    constructor(cap = 200, now = () => Date.now()) {
-        this.cap = cap;
-        this.now = now;
-    }
-    key(cwd, sessionId) {
-        return `${cwd}\0${sessionId}`;
-    }
-    mark(cwd, sessionId) {
-        const k = this.key(cwd, sessionId);
-        this.entries.delete(k);
-        this.entries.set(k, { lastSeenMs: this.now() });
-        this.enforceCap();
-    }
-    drop(cwd, sessionId) {
-        this.entries.delete(this.key(cwd, sessionId));
-    }
-    isLive(cwd, sessionId, graceMs) {
-        const e = this.entries.get(this.key(cwd, sessionId));
-        return !!e && this.now() - e.lastSeenMs <= graceMs;
-    }
-    get size() {
-        return this.entries.size;
-    }
-    enforceCap() {
-        while (this.entries.size > this.cap) {
-            const oldest = this.entries.keys().next();
-            if (oldest.done) {
-                break;
-            }
-            this.entries.delete(oldest.value);
-        }
-    }
-}
-exports.LiveSessionTracker = LiveSessionTracker;
-exports.liveSessions = new LiveSessionTracker();
 function threadSession(history, cwd) {
     for (let i = history.length - 1; i >= 0; i--) {
         const turn = history[i];

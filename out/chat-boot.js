@@ -419,7 +419,7 @@ function isKindCommand(declared) {
 }
 function helpMarkdown() {
     return [
-        "**OpenCode bridge** — one ongoing session per workspace.",
+        "**OpenCode bridge** — one ongoing session per chat.",
         "",
         "| Command | What it does |",
         "| --- | --- |",
@@ -432,6 +432,8 @@ function helpMarkdown() {
         "| `/stop` | Stop a run still going on the server (closing the chat does not) |",
         "| `/new` | Start a fresh session |",
         "| `/model` | Show and change the model chain |",
+        "| `/ping` | Connectivity check — no model call, no cost |",
+        "| `/env` | What OpenCode loaded: config, plugins, hooks, MCP, skills |",
         "",
         "Inline prefixes still work: `dev:`, `model:provider/id` — or a short name, `model:tundra`.",
         "Lanes split on `|`, `;;` or a `---` line. Per lane: `/parallel m:tundra review auth | m:oasis read the logs`. One task on several models: `/parallel models:tundra,oasis,aspen review auth`.",
