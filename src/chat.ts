@@ -679,8 +679,6 @@ export async function handleChat(
 
         // The model that answered: reported by the run, else the one named.
         const answeredBy = metrics?.model ?? chain[lastAttempt];
-        if (metrics) {
-        }
         if (lastAttempt > 0 && !settingPin && firstModel && sessionId) {
             rememberHandoffReturn(sessionId, firstModel, agentKey);
             logChannel.appendLine(`[${stamp()}] handed off to ${answeredBy ?? "a fallback"}; the next ${agentLabel} turn goes back to ${firstModel}`);

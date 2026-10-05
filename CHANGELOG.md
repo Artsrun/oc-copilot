@@ -19,7 +19,7 @@ catches two more kinds of drift. No setting was removed.
   `includeChatReferences: false` still keeps lanes bare. Checks `J`.
 - **Gate: without git, every file is scanned for internal names.** The 0.0.195
   tar's `.vscode/settings.json` pinned a model on a private gateway, and the
-  fallback scan read only the packaged files; that file is kept as committed.
+  fallback scan read only the packaged files; the pin now names a public model.
 - **Gate: `package-lock.json` must carry the manifest's version** (it said
   0.0.194 in 0.0.195, as it said 0.0.187 in 0.0.189).
 

@@ -475,8 +475,6 @@ async function handleChat(request, context, rawResponse, token, turn = {}) {
             response.button({ command: "opencodeCopilotBridge.showLog", title: "Show debug log" });
         }
         const answeredBy = metrics?.model ?? chain[lastAttempt];
-        if (metrics) {
-        }
         if (lastAttempt > 0 && !settingPin && firstModel && sessionId) {
             (0, session_1.rememberHandoffReturn)(sessionId, firstModel, agentKey);
             core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] handed off to ${answeredBy ?? "a fallback"}; the next ${agentLabel} turn goes back to ${firstModel}`);

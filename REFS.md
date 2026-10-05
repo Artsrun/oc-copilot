@@ -316,8 +316,8 @@ mark and puts a zero-width space between a pill and a backtick (0.0.188).
 Chat draws a ```` ```mermaid ```` block from any participant through the
 built-in `mermaid-markdown-features` renderer (microsoft/vscode main@4b24360).
 Mermaid takes `%%{…}%%` inside a quoted label as a directive and rejects
-`[""]`; label escaping and the Chromium probe are in git at `23ef0f2`
-(`src/flow.ts`, `scripts/probe-mermaid-flow.js`).
+`[""]`; label escaping and the Chromium probe are in git at `7a784ee`
+(`src/flow.ts`, `scripts/probe-mermaid-flow.js`), the last commit holding them.
 
 ## OpenCode's session store over HTTP (1.18.33)
 
