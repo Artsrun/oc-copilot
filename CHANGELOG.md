@@ -3,6 +3,34 @@
 Full release history, newest first; releases before the last one are condensed
 to their summary and headlines. The README ships the last five.
 
+### 0.0.198
+
+Fixes from a Copilot review of 0.0.197, and four write-only fields found by
+the same sweep. No setting was removed.
+
+- **Fixed: `/constructor …` and `/__proto__ …` were refused** as aliases "set
+  to `/function Object() { [native code] }`": the alias and retired-command
+  lookups found inherited object keys. Both use `Object.hasOwn` now; the task
+  runs. Checks `RM`.
+- **Fixed: `/help`** had no row for `/help` (the README calls it "this table"),
+  and said "one session per chat" under `sessionScope: workspace`; it says
+  "per folder" there. The row check is bounded, so a `/sessions` row no longer
+  stands in for `/session`. Checks `I`.
+- **Gate: a tracked file that `.gitignore` names fails the gate.** Ignoring a
+  tracked file does not untrack it: a checkout made from the 0.0.197 tar
+  without `git rm --cached` kept `.vscode/settings.json` committed.
+- **Gate: the no-git walk (`committable()`) is compared with git's own list
+  on every run.** A green run on a checkout never executed it.
+- **Removed, write-only:** `RunMetrics.usageKnown` (its reader went with the
+  usage store), `RunMetrics.signal`, `SessionState.lastAgent`, and the `alias`
+  that `resolveAlias` returned. The exit-code log line's signal suffix never
+  printed: Node's `close` reports a code or a signal, never both.
+- **Checks for paths no check executed**: the 1 s floor on `timeoutMs` (a
+  1 ms setting shows `1s wall clock` in `/ping`), and id-less tool parts kept
+  apart by tool and input on both transports. Checks `CE`, `JF`.
+- REFS points at the mermaid code by a command that works in any clone, not a
+  hash that only GitHub's history has.
+
 ### 0.0.197
 
 A dead-code and stale-comment sweep, `/help` that lists every command, and
@@ -32,8 +60,9 @@ the repo stops tracking `.vscode/settings.json`. No setting was removed.
   empty if/else/loop block in `src/` (the `/flow` removal left one). Checks
   `ES`.
 - **Gate: without git, the leak scan reads the tree under `.gitignore`** —
-  the same 76 files `git ls-files` lists — instead of a hand-kept skip list.
-  `media/logo.svg`, referenced by nothing, no longer ships (34 files).
+  the same list `git ls-files` gives on this checkout — instead of a hand-kept
+  skip list. `media/logo.svg`, referenced by nothing, no longer ships (32 files
+  listed, 34 entries in the .vsix).
 - Stale comments corrected: catalog tiers, the status tooltip, the SSE ask
   watcher, a REFS section cited by a name it never had.
 

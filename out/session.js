@@ -82,7 +82,6 @@ function threadSession(history, cwd) {
             tokensIn: meta.tokensIn,
             tokensOut: meta.tokensOut,
             cost: meta.cost,
-            lastAgent: meta.agent,
             lastModel: meta.model
         };
     }

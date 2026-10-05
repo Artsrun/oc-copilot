@@ -11,7 +11,6 @@ export interface SessionState {
     tokensIn?: number;
     tokensOut?: number;
     cost?: number;
-    lastAgent?: string;
     lastModel?: string;
 }
 
@@ -93,7 +92,6 @@ export function threadSession(history: readonly unknown[], cwd: string): Session
             tokensIn: meta.tokensIn,
             tokensOut: meta.tokensOut,
             cost: meta.cost,
-            lastAgent: meta.agent,
             lastModel: meta.model
         };
     }

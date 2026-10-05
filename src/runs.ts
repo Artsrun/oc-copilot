@@ -240,12 +240,6 @@ export function runOpenCode(options: RunOptions): Promise<RunMetrics> {
                         metrics.tokens.cache.write += tokens.cache?.write ?? 0;
                     }
                     metrics.cost += (part?.cost as number) ?? 0;
-                    // Only usage that carries a number (an aborted step reports cost 0).
-                    const anyTokens =
-                        (tokens?.input ?? 0) + (tokens?.output ?? 0) + (tokens?.total ?? 0) > 0;
-                    if (anyTokens || ((part?.cost as number) ?? 0) > 0) {
-                        metrics.usageKnown = true;
-                    }
                     logChannel.appendLine(
                         `[${stamp()}] ${mark("step")} step finish (${reason}) ` +
                         `in=${tokens?.input ?? 0} out=${tokens?.output ?? 0} ` +
@@ -437,11 +431,10 @@ export function runOpenCode(options: RunOptions): Promise<RunMetrics> {
             sse?.close();
             reject(err);
         });
-        child.on("close", (code, signal) => {
+        child.on("close", (code) => {
             metrics.exitCode = code ?? undefined;
-            metrics.signal = signal ?? undefined;
             if (code !== 0 && code !== null) {
-                logChannel.appendLine(`[${stamp()}] exit code ${code}${signal ? ` (${signal})` : ""}`);
+                logChannel.appendLine(`[${stamp()}] exit code ${code}`);
             }
             finish(false);
         });
@@ -993,7 +986,6 @@ export async function runOpenCodeServer(options: RunOptions): Promise<RunMetrics
         }
         const tk = resp.info?.tokens;
         if (tk) {
-            metrics.usageKnown = true;
             metrics.tokens.input += tk.input ?? 0;
             metrics.tokens.output += tk.output ?? 0;
             metrics.tokens.reasoning += tk.reasoning ?? 0;
@@ -1002,7 +994,6 @@ export async function runOpenCodeServer(options: RunOptions): Promise<RunMetrics
             metrics.tokens.cache.write += tk.cache?.write ?? 0;
         }
         if (resp.info?.cost !== undefined) {
-            metrics.usageKnown = true;
             metrics.cost += resp.info.cost ?? 0;
         }
 

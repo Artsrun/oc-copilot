@@ -216,10 +216,6 @@ function runOpenCode(options) {
                         metrics.tokens.cache.write += tokens.cache?.write ?? 0;
                     }
                     metrics.cost += part?.cost ?? 0;
-                    const anyTokens = (tokens?.input ?? 0) + (tokens?.output ?? 0) + (tokens?.total ?? 0) > 0;
-                    if (anyTokens || (part?.cost ?? 0) > 0) {
-                        metrics.usageKnown = true;
-                    }
                     core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] ${(0, followups_1.mark)("step")} step finish (${reason}) ` +
                         `in=${tokens?.input ?? 0} out=${tokens?.output ?? 0} ` +
                         `cache_read=${tokens?.cache?.read ?? 0}`);
@@ -368,11 +364,10 @@ function runOpenCode(options) {
             sse?.close();
             reject(err);
         });
-        child.on("close", (code, signal) => {
+        child.on("close", (code) => {
             metrics.exitCode = code ?? undefined;
-            metrics.signal = signal ?? undefined;
             if (code !== 0 && code !== null) {
-                core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] exit code ${code}${signal ? ` (${signal})` : ""}`);
+                core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] exit code ${code}`);
             }
             finish(false);
         });
@@ -748,7 +743,6 @@ async function runOpenCodeServer(options) {
         }
         const tk = resp.info?.tokens;
         if (tk) {
-            metrics.usageKnown = true;
             metrics.tokens.input += tk.input ?? 0;
             metrics.tokens.output += tk.output ?? 0;
             metrics.tokens.reasoning += tk.reasoning ?? 0;
@@ -757,7 +751,6 @@ async function runOpenCodeServer(options) {
             metrics.tokens.cache.write += tk.cache?.write ?? 0;
         }
         if (resp.info?.cost !== undefined) {
-            metrics.usageKnown = true;
             metrics.cost += resp.info.cost ?? 0;
         }
         (resp.parts ?? []).forEach((part, i) => {

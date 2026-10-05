@@ -454,7 +454,7 @@ export function commandAliases(user: unknown = config().get<unknown>("commandAli
 export function resolveAlias(
     prompt: string,
     table: Record<string, string> = commandAliases()
-): { prompt: string; alias?: string; problem?: string } {
+): { prompt: string; problem?: string } {
     const m = prompt.match(/^\/(\S+)(?=\s|$)/);
     if (!m) {
         return { prompt };
@@ -464,7 +464,7 @@ export function resolveAlias(
     if (commands.includes(word) || word === "par") {
         return { prompt };
     }
-    const target = table[word];
+    const target = Object.hasOwn(table, word) ? table[word] : undefined;
     if (!target) {
         return { prompt };
     }
@@ -476,7 +476,7 @@ export function resolveAlias(
                 `Commands: ${commands.map((c) => `\`/${c}\``).join(" ")}.`
         };
     }
-    return { prompt: `/${target}${prompt.slice(m[0].length)}`, alias: word };
+    return { prompt: `/${target}${prompt.slice(m[0].length)}` };
 }
 
 export function kindChoice(declared: string, parsedKind: ChatKind): ChatKind {
@@ -493,7 +493,7 @@ const RETIRED: Readonly<Record<string, string>> = { flow: "0.0.196", f: "0.0.196
 
 export function retiredCommand(prompt: string): string | undefined {
     const word = prompt.match(/^\/(\S+)(?=\s|$)/)?.[1]?.toLowerCase() ?? "";
-    const since = Object.prototype.hasOwnProperty.call(RETIRED, word) ? RETIRED[word] : undefined;
+    const since = Object.hasOwn(RETIRED, word) ? RETIRED[word] : undefined;
     return since ? `\`/${word}\` was removed in ${since}, so nothing was run. \`/help\` lists the commands.` : undefined;
 }
 
@@ -503,7 +503,7 @@ export function isKindCommand(declared: string): boolean {
 
 export function helpMarkdown(): string {
     return [
-        "**OpenCode bridge** — one ongoing session per chat.",
+        `**OpenCode bridge** — one ongoing session per ${config().get<string>("sessionScope", "thread") === "workspace" ? "folder" : "chat"}.`,
         "",
         "| Command | What it does |",
         "| --- | --- |",
@@ -518,6 +518,7 @@ export function helpMarkdown(): string {
         "| `/model` | Show and change the model chain |",
         "| `/ping` | Connectivity check — no model call, no cost |",
         "| `/env` | What OpenCode loaded: config, plugins, hooks, MCP, skills |",
+        "| `/help` | This table |",
         "",
         "Inline prefixes still work: `dev:`, `model:provider/id` — or a short name, `model:tundra`.",
         "Lanes split on `|`, `;;` or a `---` line. Per lane: `/parallel m:tundra review auth | m:oasis read the logs`. One task on several models: `/parallel models:tundra,oasis,aspen review auth`.",

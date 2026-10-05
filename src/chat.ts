@@ -689,7 +689,6 @@ export async function handleChat(
                 tokensIn: baseline.tokensIn + (metrics?.tokens.input ?? 0),
                 tokensOut: baseline.tokensOut + (metrics?.tokens.output ?? 0),
                 cost: baseline.cost + (metrics?.cost ?? 0),
-                lastAgent: agentLabel,
                 lastModel: answeredBy
             });
         }

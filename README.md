@@ -330,6 +330,14 @@ All under `opencodeCopilotBridge.`.
 
 The last five releases; the full history is `CHANGELOG.md` in the repository.
 
+### 0.0.198
+
+- `/constructor …` and `/__proto__ …` run as tasks; they were refused as
+  broken aliases.
+- `/help` lists itself and names the session scope you set.
+- The ship gate fails on a tracked file that `.gitignore` names, and checks its
+  no-git file walk against git on every run.
+
 ### 0.0.197
 
 - **`/help` lists every command**, `/ping` and `/env` included.
@@ -356,9 +364,3 @@ boot.
 - **Files open on click**: a workspace file the answer names in inline code
   (`src/cart.ts:42`) is a pill that opens it at that line; an accordion row
   that read or edited one file opens it too.
-
-### 0.0.193
-
-Follow-up chip fixes: "the docs updated or the tests added" and "Next steps:
-A, B, and C" give one chip per action; long paths are cut after a `/`; a chip
-bug can no longer mark a finished turn as failed.

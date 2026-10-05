@@ -227,6 +227,25 @@ function checkList(listed) {
     // passed the 0.0.195 tar's .vscode/settings.json, which named the gateway.
     const tracked = spawnSync("git", ["ls-files", "-co", "--exclude-standard"], { cwd: root, encoding: "utf8" });
     const scanned = tracked.status === 0 ? tracked.stdout.split(/\r?\n/).filter(Boolean) : committable(root);
+    if (tracked.status === 0) {
+        // `.gitignore` does not untrack a file: a tracked, ignored file is still
+        // committed, and committable() skips it. A 0.0.197 checkout made from the
+        // tar without `git rm --cached` kept .vscode/settings.json exactly so.
+        const trackedIgnored = spawnSync("git", ["ls-files", "-i", "-c", "--exclude-standard"], { cwd: root, encoding: "utf8" })
+            .stdout.split(/\r?\n/).filter(Boolean);
+        results.push([`4/4 no tracked file is git-ignored${trackedIgnored.length ? ` (${trackedIgnored.join(", ")})` : ""}`, trackedIgnored.length === 0]);
+        // committable() is the no-git path, so a green run on a checkout never
+        // executed it: compare it with git's own list here.
+        const onDisk = scanned.filter((f) => fs.existsSync(path.join(root, f)) && fs.lstatSync(path.join(root, f)).isFile()).sort();
+        const walked = committable(root).sort();
+        const walkOnly = walked.filter((f) => !onDisk.includes(f));
+        const gitOnly = onDisk.filter((f) => !walked.includes(f));
+        results.push([
+            `4/4 the no-git scan lists what git would commit (${walked.length} files${walkOnly.length || gitOnly.length ? `; walk only: ${walkOnly.slice(0, 5).join(", ")}; git only: ${gitOnly.slice(0, 5).join(", ")}` : ""})`,
+            walkOnly.length === 0 && gitOnly.length === 0
+        ]);
+        failed += (trackedIgnored.length ? 1 : 0) + (walkOnly.length || gitOnly.length ? 1 : 0);
+    }
     for (const rel of scanned) {
         if (rel === "scripts/ship-gate.js") {
             continue; // holds the generic patterns themselves

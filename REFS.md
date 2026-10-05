@@ -316,8 +316,10 @@ mark and puts a zero-width space between a pill and a backtick (0.0.188).
 Chat draws a ```` ```mermaid ```` block from any participant through the
 built-in `mermaid-markdown-features` renderer (microsoft/vscode main@4b24360).
 Mermaid takes `%%{…}%%` inside a quoted label as a directive and rejects
-`[""]`; label escaping and the Chromium probe are in git at `23ef0f2`
-(`src/flow.ts`, `scripts/probe-mermaid-flow.js`), the last commit holding them.
+`[""]`. Label escaping (`src/flow.ts`) and the Chromium probe
+(`scripts/probe-mermaid-flow.js`) are in the parent of the commit that deleted
+them, whatever its hash in your clone:
+`git show "$(git log -1 --diff-filter=D --format=%h -- src/flow.ts)^:src/flow.ts"`.
 
 ## OpenCode's session store over HTTP (1.18.33)
 

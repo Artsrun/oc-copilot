@@ -390,7 +390,7 @@ function resolveAlias(prompt, table = commandAliases()) {
     if (commands.includes(word) || word === "par") {
         return { prompt };
     }
-    const target = table[word];
+    const target = Object.hasOwn(table, word) ? table[word] : undefined;
     if (!target) {
         return { prompt };
     }
@@ -401,7 +401,7 @@ function resolveAlias(prompt, table = commandAliases()) {
                 `Commands: ${commands.map((c) => `\`/${c}\``).join(" ")}.`
         };
     }
-    return { prompt: `/${target}${prompt.slice(m[0].length)}`, alias: word };
+    return { prompt: `/${target}${prompt.slice(m[0].length)}` };
 }
 function kindChoice(declared, parsedKind) {
     return KIND_COMMANDS[declared] ?? parsedKind;
@@ -411,7 +411,7 @@ exports.ROUTED_COMMANDS = ["worktree"];
 const RETIRED = { flow: "0.0.196", f: "0.0.196" };
 function retiredCommand(prompt) {
     const word = prompt.match(/^\/(\S+)(?=\s|$)/)?.[1]?.toLowerCase() ?? "";
-    const since = Object.prototype.hasOwnProperty.call(RETIRED, word) ? RETIRED[word] : undefined;
+    const since = Object.hasOwn(RETIRED, word) ? RETIRED[word] : undefined;
     return since ? `\`/${word}\` was removed in ${since}, so nothing was run. \`/help\` lists the commands.` : undefined;
 }
 function isKindCommand(declared) {
@@ -419,7 +419,7 @@ function isKindCommand(declared) {
 }
 function helpMarkdown() {
     return [
-        "**OpenCode bridge** — one ongoing session per chat.",
+        `**OpenCode bridge** — one ongoing session per ${(0, core_1.config)().get("sessionScope", "thread") === "workspace" ? "folder" : "chat"}.`,
         "",
         "| Command | What it does |",
         "| --- | --- |",
@@ -434,6 +434,7 @@ function helpMarkdown() {
         "| `/model` | Show and change the model chain |",
         "| `/ping` | Connectivity check — no model call, no cost |",
         "| `/env` | What OpenCode loaded: config, plugins, hooks, MCP, skills |",
+        "| `/help` | This table |",
         "",
         "Inline prefixes still work: `dev:`, `model:provider/id` — or a short name, `model:tundra`.",
         "Lanes split on `|`, `;;` or a `---` line. Per lane: `/parallel m:tundra review auth | m:oasis read the logs`. One task on several models: `/parallel models:tundra,oasis,aspen review auth`.",

@@ -743,9 +743,14 @@ function collectConfigProperties(configuration) {
     const helpChat = i1.chatMarkdown.join("");
     add("I /help command renders the table", /\/dev <task>/.test(helpChat) && /\| Command \|/.test(helpChat));
     const iPkg = require(path.join(__dirname, "..", "package.json"));
-    const iMissing = iPkg.contributes.chatParticipants[0].commands.map((c) => c.name).filter((n) => n !== "help" && !helpChat.includes("`/" + n));
-    add(`I /help names every panel command${iMissing.length ? ` (missing: ${iMissing.join(", ")})` : ""}`, iMissing.length === 0);
-    add("I /help says one session per chat, as sessionScope defaults", /one ongoing session per chat\b/.test(helpChat) && !/per workspace/.test(helpChat));
+    const iRowless = iPkg.contributes.chatParticipants[0].commands.map((c) => c.name).filter((n) => !new RegExp("^\\| `/" + n + "[ `]", "m").test(helpChat));
+    add(`I /help gives every panel command its own row${iRowless.length ? ` (missing: ${iRowless.join(", ")})` : ""}`, iRowless.length === 0);
+    add("I /help says one session per chat under the default sessionScope", /one ongoing session per chat\b/.test(helpChat) && !/per folder|per workspace/.test(helpChat));
+    settings.sessionScope = "workspace";
+    const iWs = stream();
+    await global.__handler({ prompt: "", command: "help" }, {}, iWs.response, iWs.token);
+    settings.sessionScope = "thread";
+    add("I …and one per folder under sessionScope: workspace", /one ongoing session per folder\b/.test(iWs.chatMarkdown.join("")) && !/per chat\b/.test(iWs.chatMarkdown.join("")));
 
     const i2 = stream();
     await global.__handler({ prompt: "", command: "new" }, {}, i2.response, i2.token);
@@ -1428,8 +1433,8 @@ function collectConfigProperties(configuration) {
     const chatCC = cc.chatMarkdown.join("");
     add("CC a CLI session.error reaches chat", /401 Unauthorized/.test(chatCC));
 
-    // CD: usageKnown must not be flipped by an aborted step reporting cost 0 —
-    // that is what made the bug report say "usageKnown: true, 0 tokens".
+    // CD: an aborted step reporting cost 0 and no tokens is a run with no output,
+    // not one with known usage.
     const zeroFake = writeFake("fake-zero.js", [
         { type: "step_finish", sessionID: "ses_z", part: { reason: "abort", cost: 0, tokens: { input: 0, output: 0, reasoning: 0, total: 0, cache: { read: 0, write: 0 } } } }
     ]);
@@ -1462,6 +1467,10 @@ function collectConfigProperties(configuration) {
     const ceCap = stream();
     await global.__handler({ prompt: "", command: "ping" }, {}, ceCap.response, ceCap.token);
     add("CE /ping names an explicit wall clock", /180s wall clock/.test(ceCap.chatMarkdown.join("")));
+    settings.timeoutMs = 1;
+    const ceFloor = stream();
+    await global.__handler({ prompt: "", command: "ping" }, {}, ceFloor.response, ceFloor.token);
+    add("CE a 1 ms timeoutMs is floored to 1s, as /ping shows", /\b1s wall clock/.test(ceFloor.chatMarkdown.join("")));
     settings.timeoutMs = savedCeTimeout;
 
     // CF: vague-prompt clarification, and the narrowness that the harness forced.
@@ -2639,8 +2648,21 @@ function collectConfigProperties(configuration) {
     await global.__handler({ prompt: "read the same file twice" }, {}, jfCli.response, jfCli.token);
     const jfCliSteps = jfSteps(jfCliFrom);
     add("JF two distinct calls to the same file stay two steps", jfCliSteps === 2);
+    // Without a part id the key falls back to tool + input: two files, two steps.
+    const jfBare = [
+        { type: "tool_use", sessionID: "ses_dup", part: { tool: "read", state: { input: { filePath: "src/login.ts" }, output: "a", time: { start: 0, end: 5 } } } },
+        { type: "tool_use", sessionID: "ses_dup", part: { tool: "read", state: { input: { filePath: "src/cart.ts" }, output: "b", time: { start: 0, end: 9 } } } },
+        { type: "text", sessionID: "ses_dup", part: { text: "Read both." } }
+    ];
+    settings.executable = writeFake("fake-bare-steps.js", jfBare);
+    memento.clear();
+    const jfB = stream();
+    const jfBFrom = logLines.length;
+    await global.__handler({ prompt: "read two files" }, {}, jfB.response, jfB.token);
+    add("JF id-less tool parts are keyed by tool and input: two files stay two steps", jfSteps(jfBFrom) === 2);
 
     let jfSse;
+    let jfServed = jfEvents;
     const jfOrder = [];
     const jfServer = http.createServer((req, res) => {
         const url = req.url || "";
@@ -2657,7 +2679,7 @@ function collectConfigProperties(configuration) {
         if (req.method === "POST" && /\/session\/[^/]+\/message/.test(url)) {
             jfOrder.push("post");
             setTimeout(() => {
-                for (const ev of jfEvents) {
+                for (const ev of jfServed) {
                     jfSse &&
                         jfSse.write(
                             `data: ${JSON.stringify({
@@ -2688,6 +2710,12 @@ function collectConfigProperties(configuration) {
     const jfSrvFrom = logLines.length;
     await global.__handler({ prompt: "read the same file twice" }, {}, jfSrv.response, jfSrv.token);
     const jfSrvSteps = jfSteps(jfSrvFrom);
+    jfServed = jfBare;
+    memento.clear();
+    const jfSrvB = stream();
+    const jfSrvBFrom = logLines.length;
+    await global.__handler({ prompt: "read two files" }, {}, jfSrvB.response, jfSrvB.token);
+    const jfSrvBSteps = jfSteps(jfSrvBFrom);
     settings.transport = "cli";
     settings.serverPort = 4096;
     if (jfSse) {
@@ -2699,6 +2727,7 @@ function collectConfigProperties(configuration) {
     await new Promise((r) => jfServer.close(r));
 
     add("JF the server transport reduces the same stream the same way", jfSrvSteps === jfCliSteps);
+    add("JF …and id-less parts the same way: two files, two steps", jfSrvBSteps === 2);
     // Invariant, not a timing assertion: the subscription must reach the server
     // before the prompt does, or the first events of a run are posted into a
     // stream nobody is listening to yet.
@@ -5369,6 +5398,15 @@ const lbProvider = (global.__participant || {}).followupProvider;
         const rmFlowy = stream();
         await global.__handler({ prompt: "/flowchart of the auth module" }, {}, rmFlowy.response, rmFlowy.token);
         add("RM only the exact word is retired: `/flowchart …` still runs", fs.existsSync(path.join(work, "fake-ok.js.argv")));
+        // An object lookup also finds inherited keys: `/constructor` was refused
+        // as an alias "set to `/function Object() { [native code] }`".
+        for (const typed of ["/constructor rewrite the parser", "/__proto__ dump the chain"]) {
+            fs.rmSync(path.join(work, "fake-ok.js.argv"), { force: true });
+            const rmProto = stream();
+            await global.__handler({ prompt: typed }, {}, rmProto.response, rmProto.token);
+            const said = rmProto.chatMarkdown.join("");
+            add(`RM \`${typed.split(" ")[0]} …\` is no alias or retired command: it runs`, fs.existsSync(path.join(work, "fake-ok.js.argv")) && !/commandAliases|was removed/.test(said));
+        }
     }
 
     // ==================== v197 ====================

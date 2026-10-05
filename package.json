@@ -2,7 +2,7 @@
   "name": "opencode-copilot-bridge",
   "displayName": "OpenCode Copilot Bridge",
   "description": "Delegate research, planning, and development to OpenCode from GitHub Copilot Chat.",
-  "version": "0.0.197",
+  "version": "0.0.198",
   "publisher": "local",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -194,22 +194,43 @@
         "command": "workbench.action.chat.open",
         "key": "ctrl+alt+o",
         "mac": "cmd+alt+o",
-        "args": { "query": "@opencode ", "isPartialQuery": true }
+        "args": {
+          "query": "@opencode ",
+          "isPartialQuery": true
+        }
       },
       {
         "command": "workbench.action.chat.open",
         "key": "ctrl+alt+shift+o",
         "mac": "cmd+alt+shift+o",
-        "args": { "query": "@opencode /dev ", "isPartialQuery": true }
+        "args": {
+          "query": "@opencode /dev ",
+          "isPartialQuery": true
+        }
       }
     ],
     "menus": {
       "commandPalette": [
-        { "command": "opencodeCopilotBridge.worktreeDiff", "when": "false" },
-        { "command": "opencodeCopilotBridge.worktreeOpen", "when": "false" },
-        { "command": "opencodeCopilotBridge.worktreeRemove", "when": "false" },
-        { "command": "opencodeCopilotBridge.retryLast", "when": "false" },
-        { "command": "opencodeCopilotBridge.newChat", "when": "false" }
+        {
+          "command": "opencodeCopilotBridge.worktreeDiff",
+          "when": "false"
+        },
+        {
+          "command": "opencodeCopilotBridge.worktreeOpen",
+          "when": "false"
+        },
+        {
+          "command": "opencodeCopilotBridge.worktreeRemove",
+          "when": "false"
+        },
+        {
+          "command": "opencodeCopilotBridge.retryLast",
+          "when": "false"
+        },
+        {
+          "command": "opencodeCopilotBridge.newChat",
+          "when": "false"
+        }
       ],
       "editor/title": [
         {
@@ -255,7 +276,10 @@
           },
           "opencodeCopilotBridge.busySessionPolicy": {
             "type": "string",
-            "enum": ["abort", "queue"],
+            "enum": [
+              "abort",
+              "queue"
+            ],
             "default": "abort",
             "description": "What to do when a message is sent to a session that is still busy with an earlier run nobody is watching. 'abort' stops that run first (and says so). 'queue' sends anyway: the message waits behind the old run, which is what made chat turns crawl in v176."
           },

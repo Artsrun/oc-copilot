@@ -33,7 +33,6 @@ export interface RunMetrics {
     hadOutput: boolean;
     sessionId: string | undefined;
     reasoning: string;
-    usageKnown?: boolean;
     toolOutputBytes?: number;
     /** Surfaced from `session.error` events and non-zero exits. */
     error?: string;
@@ -41,7 +40,6 @@ export interface RunMetrics {
     /** Evidence for a run that produced no assistant text. */
     stderr?: string;
     exitCode?: number;
-    signal?: string;
     /** Wall-clock cap applied to this run (0: none). */
     appliedTimeoutMs?: number;
     /** True when the run was killed for going quiet, not for exceeding the cap. */
