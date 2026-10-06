@@ -1,9 +1,9 @@
 import * as vscode from "vscode";
-import { config, extensionContext, logChannel, resolveFolder, stamp } from "./core";
+import { config, extensionContext, logChannel, own, resolveFolder, stamp } from "./core";
 import { mark } from "./followups";
 import { killTree, spawnOpenCode } from "./proc";
 import { uniqueModels } from "./context";
-import { httpGetJson, withDirectory } from "./net";
+import { httpGetJson, knownServerBase, withDirectory } from "./net";
 import { openCodeConfigModel } from "./env";
 
 // ---------------------------------------------------------------------------
@@ -30,6 +30,9 @@ export interface ModelInfo {
     provider: string;
     providerName: string;
     context?: number;
+    /** OpenCode's variant names (reasoning effort: `low`, `high`, `max`…).
+     * Names only: a variant's body is provider options. Undefined: unknown. */
+    variants?: string[];
 }
 
 interface ModelCatalog {
@@ -60,11 +63,88 @@ export const cachedModelInfo = (): Record<string, ModelInfo> => readCache()?.inf
 
 /** `Tundra (Model-1, …) · \`acme-gateway/Tundra\`` when the name is known and says more. */
 export const modelLabel = (id: string, info: Record<string, ModelInfo> = cachedModelInfo()): string => {
-    const name = info[id]?.name;
+    const name = own(info, id)?.name;
     return name && name !== id && name !== id.split("/").slice(1).join("/") ? `${name} · \`${id}\`` : `\`${id}\``;
 };
 
 const ID_LINE = /^[\w.@-]+\/\S+$/;
+
+// A model's `variants` is `{ name: providerOptions }` (provider.ts, 1.18.34);
+// a `disabled: true` entry is dropped there too. Not an object: unknown.
+const variantNames = (raw: unknown): string[] | undefined =>
+    raw && typeof raw === "object" && !Array.isArray(raw)
+        ? Object.entries(raw as Record<string, unknown>)
+            .filter(([, v]) => !(v && typeof v === "object" && (v as { disabled?: unknown }).disabled === true))
+            .map(([k]) => k)
+        : undefined;
+
+// Lowest to highest, as providers name them (ProviderTransform.variants).
+const EFFORT_ORDER = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
+const effortRank = (name: string): number => {
+    const i = EFFORT_ORDER.indexOf(name.toLowerCase());
+    return i < 0 ? EFFORT_ORDER.length : i;
+};
+
+export type EffortChoice = { variant?: string; problem?: string };
+
+/**
+ * The variant to send for `requested` on `model`. OpenCode looks the name up in
+ * the model's variants and silently ignores a miss (session/llm/request.ts), so
+ * a level the catalog knows is missing is caught here: `strict` (an inline
+ * `effort:`) refuses the turn, a setting is dropped with a note. A model the
+ * catalog does not describe gets the name as asked. claim:effort
+ */
+export function effortFor(
+    model: string | undefined,
+    requested: string | undefined,
+    strict: boolean,
+    info: Record<string, ModelInfo> = cachedModelInfo()
+): EffortChoice {
+    const want = (requested ?? "").trim();
+    if (!want) {
+        return {};
+    }
+    const levels = model ? own(info, model)?.variants : undefined;
+    if (!levels) {
+        return { variant: want };
+    }
+    const hit = levels.find((l) => l.toLowerCase() === want.toLowerCase());
+    if (hit) {
+        return { variant: hit };
+    }
+    const list = levels.length ? `Its levels: ${sortEfforts(levels).map((l) => `\`${l}\``).join(", ")}.` : "It has no effort levels.";
+    return {
+        problem: strict
+            ? `\`effort:${want}\` is not a level of \`${model}\`. ${list}`
+            : `\`effort: ${want}\` is not a level of \`${model}\`, so it ran at its default. ${list}`
+    };
+}
+
+/** `context 42k of 200k (21%)` after the last turn; the window only when the catalog knows it. */
+export function contextNote(tokens: number | undefined, model: string | undefined, info: Record<string, ModelInfo> = cachedModelInfo()): string {
+    if (!tokens) {
+        return "";
+    }
+    const k = (n: number): string => (n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
+    const limit = model ? own(info, model)?.context : undefined;
+    return limit ? `context ${k(tokens)} of ${k(limit)} (${Math.round((tokens / limit) * 100)}%)` : `context ${k(tokens)}`;
+}
+
+export const sortEfforts = (levels: readonly string[]): string[] => [...levels].sort((a, b) => effortRank(a) - effortRank(b));
+
+/** The next level above `current` that `model` offers (or its highest, from the
+ * default); undefined when the catalog does not describe it or it is at the top. */
+export function higherEffort(model: string | undefined, current: string | undefined, info: Record<string, ModelInfo> = cachedModelInfo()): string | undefined {
+    const levels = model ? sortEfforts(own(info, model)?.variants ?? []) : [];
+    if (!levels.length) {
+        return undefined;
+    }
+    if (!current) {
+        return levels.find((l) => l.toLowerCase() === "high") ?? levels[levels.length - 1];
+    }
+    const rank = effortRank(current);
+    return levels.find((l) => effortRank(l) > rank && EFFORT_ORDER.includes(l.toLowerCase()));
+}
 
 /**
  * `opencode models --verbose`: each `provider/model` line is followed by that
@@ -91,7 +171,8 @@ export function parseVerboseModels(raw: string): Record<string, ModelInfo> {
             name: typeof m.name === "string" && m.name.trim() ? m.name.trim() : id,
             provider,
             providerName: provider,
-            context: typeof limit?.context === "number" && limit.context > 0 ? limit.context : undefined
+            context: typeof limit?.context === "number" && limit.context > 0 ? limit.context : undefined,
+            variants: variantNames(m.variants)
         };
     };
     for (const line of raw.split(/\r?\n/)) {
@@ -132,7 +213,8 @@ export function parseProviders(raw: unknown): Record<string, ModelInfo> {
                 name: typeof m?.name === "string" && m.name.trim() ? m.name.trim() : id,
                 provider,
                 providerName,
-                context: typeof limit?.context === "number" && limit.context > 0 ? limit.context : undefined
+                context: typeof limit?.context === "number" && limit.context > 0 ? limit.context : undefined,
+                variants: variantNames(m?.variants)
             };
         }
     }
@@ -149,8 +231,10 @@ async function catalogFromServer(cwd: string, base?: string): Promise<Record<str
     if (!base && settings.get<string>("transport", "auto") === "cli") {
         return undefined;
     }
-    const url =
-        base ?? `http://${settings.get<string>("serverHostname", "127.0.0.1")}:${settings.get<number>("serverPort", 4096)}`;
+    const url = base ?? knownServerBase();
+    if (!url) {
+        return undefined;
+    }
     try {
         const info = parseProviders(await httpGetJson<unknown>(withDirectory(`${url}/config/providers`, cwd), PROVIDERS_TIMEOUT_MS));
         return Object.keys(info).length ? info : undefined;
@@ -304,7 +388,7 @@ export async function setDefaultModel(): Promise<void> {
 
     // Say what "OpenCode default" means here; show names, not ids.
     const set = folder ? openCodeConfigModel(folder.uri.fsPath) : undefined;
-    const defaultNote = set ? `${catalog.info[set.model]?.name ?? set.model}, from ${set.from}` : "OpenCode picks";
+    const defaultNote = set ? `${own(catalog.info, set.model)?.name ?? set.model}, from ${set.from}` : "OpenCode picks";
     type ModelItem = vscode.QuickPickItem & { modelId?: string; action?: "clear" | "refresh" };
     const models = current && !catalog.models.includes(current) ? [current, ...catalog.models] : catalog.models;
     const items: ModelItem[] = [
@@ -314,14 +398,18 @@ export async function setDefaultModel(): Promise<void> {
             action: "clear"
         },
         ...models.map((id): ModelItem => {
-            const info = catalog.info[id];
+            const info = own(catalog.info, id);
             const listed = catalog.models.includes(id);
             return {
-                label: info?.name ?? id,
+                label: `$(chip) ${info?.name ?? id}`,
                 description: [info?.name && info.name !== id ? id : "", id === current ? "$(check) pinned — chat only" : "", listed ? "" : "(not listed)"]
                     .filter(Boolean)
                     .join(" · "),
-                detail: info ? [info.providerName, info.context ? `${Math.round(info.context / 1000)}k context` : ""].filter(Boolean).join(" · ") : undefined,
+                detail: info
+                    ? [info.providerName, info.context ? `${Math.round(info.context / 1000)}k context` : "", info.variants?.length ? `effort ${sortEfforts(info.variants).join("/")}` : ""]
+                        .filter(Boolean)
+                        .join(" · ")
+                    : undefined,
                 modelId: id
             };
         }),

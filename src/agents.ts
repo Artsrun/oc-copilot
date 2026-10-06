@@ -187,3 +187,28 @@ export function planAgentNotice(choice: PlanAgentChoice | undefined, cwd: string
             return `Couldn't list OpenCode's agents to confirm ${name} — ran as the built-in \`plan\`, which is read-only by instruction only.`;
     }
 }
+
+/**
+ * claim:lane-agents — why a lane cannot run as `a:<name>`, or undefined. Lanes run through
+ * `opencode run`, which runs an unknown or subagent-mode `--agent` as BUILD
+ * (it edits) with only a stderr warning (1.18.32 `cli/cmd/run.ts`): such a lane
+ * is refused before anything runs. A subagent is for the lane's own agent to
+ * call, through the task tool.
+ */
+export function laneAgentProblem(name: string, agents: AgentInfo[] | undefined): string | undefined {
+    const shown = `\`${name}\``;
+    if (!agents) {
+        return `Couldn't list OpenCode's agents to confirm ${shown} — not run (an unconfirmed name runs as \`build\`).`;
+    }
+    const found = agents.find((a) => a.name === name);
+    if (!found) {
+        return `No ${shown} agent in OpenCode for this folder — not run. \`opencode agent list\` shows the agents it loads.`;
+    }
+    if (found.mode === "subagent") {
+        return `${shown} is a subagent — not run: \`opencode run\` would run it as \`build\`. Give it \`mode: all\`, or ask the lane's agent to use it.`;
+    }
+    if (found.hidden) {
+        return `${shown} is a hidden agent — not run.`;
+    }
+    return undefined;
+}

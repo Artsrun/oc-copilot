@@ -33,9 +33,9 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.followupsProblems = exports.badgeMarks = exports.createBadger = exports.badge = exports.naturalText = exports.chipOf = exports.chipLabel = exports.prompt = exports.mark = exports.NATURAL_MAX_LABEL = exports.CASES = exports.MARKS = exports.PROMPTS = exports.TAIL = exports.CHIP_COMMANDS = void 0;
+exports.followupsProblems = exports.badgeMarks = exports.createBadger = exports.badge = exports.naturalText = exports.chipOf = exports.chipLabel = exports.mergeRunId = exports.fillPrompt = exports.prompt = exports.mark = exports.NATURAL_MAX_LABEL = exports.CASES = exports.MARKS = exports.PROMPTS = exports.TAIL = exports.CHIP_COMMANDS = void 0;
 const data = __importStar(require("./followups.json"));
-exports.CHIP_COMMANDS = ["dev", "plan", "new", "ping", "parallel"];
+exports.CHIP_COMMANDS = ["dev", "plan", "new", "ping", "parallel", "compact"];
 exports.TAIL = data.tail;
 const fill = (template, vars = {}) => template.replace(/\{(\w+)\}/g, (all, key) => (key === "tail" ? exports.TAIL : vars[key] ?? all)).trim();
 exports.PROMPTS = Object.fromEntries(Object.entries(data.prompts).map(([k, v]) => [k, fill(v)]));
@@ -46,6 +46,11 @@ const mark = (key) => exports.MARKS[key];
 exports.mark = mark;
 const prompt = (key) => exports.PROMPTS[key];
 exports.prompt = prompt;
+const fillPrompt = (key, vars) => fill(data.prompts[key], vars);
+exports.fillPrompt = fillPrompt;
+const MERGE_RUN = new RegExp(`^\\s*${exports.PROMPTS.MERGE_LANES.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace("\\{run\\}", "([A-Za-z0-9]{4,32})")}`);
+const mergeRunId = (text) => text.match(MERGE_RUN)?.[1];
+exports.mergeRunId = mergeRunId;
 const chipLabel = (key) => {
     const def = data.chips[key];
     return `${def.kao} ${def.label}`;
@@ -186,6 +191,9 @@ exports.badgeMarks = badgeMarks;
 const followupsProblems = (d = data) => {
     const problems = [];
     const prompts = d.prompts;
+    if (!prompts.MERGE_LANES?.includes("{run}")) {
+        problems.push(`prompts.MERGE_LANES has no {run}: mergeRunId would never match`);
+    }
     const commands = ["@kind", ...exports.CHIP_COMMANDS];
     for (const [k, def] of Object.entries(d.chips)) {
         if (def.prompt && !(def.prompt in prompts)) {

@@ -39,6 +39,16 @@ const ALLOWED = [
     "extension/out/session.js",
     "extension/out/models.js",
     "extension/out/runs.js",
+    // v203: runs.ts split by transport.
+    "extension/out/run-cli.js",
+    "extension/out/run-server.js",
+    "extension/out/run-steps.js",
+    "extension/out/asks.js",
+    "extension/out/server-session.js",
+    // v204: chat-boot.ts split.
+    "extension/out/heartbeat.js",
+    "extension/out/lanes.js",
+    "extension/out/chips.js",
     "extension/out/commands.js",
     "extension/out/chat-boot.js",
     "extension/out/chat.js",
@@ -225,20 +235,29 @@ function checkList(listed) {
     // package. Without a git checkout (a tar of the tree) the same list comes
     // from walking the tree under .gitignore: a scan of the packaged files alone
     // passed the 0.0.195 tar's .vscode/settings.json, which named the gateway.
-    const tracked = spawnSync("git", ["ls-files", "-co", "--exclude-standard"], { cwd: root, encoding: "utf8" });
+    const tracked = spawnSync("git", ["-c", "core.quotepath=false", "ls-files", "-co", "--exclude-standard"], { cwd: root, encoding: "utf8" });
     const scanned = tracked.status === 0 ? tracked.stdout.split(/\r?\n/).filter(Boolean) : committable(root);
     if (tracked.status === 0) {
         // `.gitignore` does not untrack a file: a tracked, ignored file is still
         // committed, and committable() skips it. A 0.0.197 checkout made from the
         // tar without `git rm --cached` kept .vscode/settings.json exactly so.
-        const trackedIgnored = spawnSync("git", ["ls-files", "-i", "-c", "--exclude-standard"], { cwd: root, encoding: "utf8" })
+        const trackedIgnored = spawnSync("git", ["-c", "core.quotepath=false", "ls-files", "-i", "-c", "--exclude-standard"], { cwd: root, encoding: "utf8" })
             .stdout.split(/\r?\n/).filter(Boolean);
         results.push([`4/4 no tracked file is git-ignored${trackedIgnored.length ? ` (${trackedIgnored.join(", ")})` : ""}`, trackedIgnored.length === 0]);
         // committable() is the no-git path, so a green run on a checkout never
-        // executed it: compare it with git's own list here.
-        const onDisk = scanned.filter((f) => fs.existsSync(path.join(root, f)) && fs.lstatSync(path.join(root, f)).isFile()).sort();
+        // executed it: compare it with git's own list here. The tracked-ignored
+        // files are left out, or one defect would fail both checks and print
+        // "2 BLOCKER(S)" for a single cause (measured, 0.0.198).
+        const ignoredTracked = new Set(trackedIgnored);
+        const onDisk = scanned
+            .filter((f) => !ignoredTracked.has(f) && fs.existsSync(path.join(root, f)) && fs.lstatSync(path.join(root, f)).isFile())
+            .sort();
         const walked = committable(root).sort();
-        const walkOnly = walked.filter((f) => !onDisk.includes(f));
+        // committable() reads the root .gitignore alone, while --exclude-standard
+        // also honours .git/info/exclude, the global core.excludesFile and nested
+        // .gitignore files. Without this, a global ignore rule matching any repo
+        // file fails the gate on that machine only.
+        const walkOnly = notIgnored(root, walked.filter((f) => !onDisk.includes(f)));
         const gitOnly = onDisk.filter((f) => !walked.includes(f));
         results.push([
             `4/4 the no-git scan lists what git would commit (${walked.length} files${walkOnly.length || gitOnly.length ? `; walk only: ${walkOnly.slice(0, 5).join(", ")}; git only: ${gitOnly.slice(0, 5).join(", ")}` : ""})`,
@@ -495,6 +514,20 @@ function simulatePackageList(dir) {
     };
     walk(dir, "");
     return out;
+}
+
+// Which of these git would NOT ignore, by any source --exclude-standard reads.
+// Exit 1 means it ignored none; anything but 0 or 1 is an error, so trust the walk.
+function notIgnored(root, files) {
+    if (!files.length) {
+        return files;
+    }
+    const r = spawnSync("git", ["check-ignore", "--stdin"], { cwd: root, encoding: "utf8", input: files.join("\n") });
+    if (r.status !== 0) {
+        return files;
+    }
+    const ignored = new Set(r.stdout.split(/\r?\n/).filter(Boolean));
+    return files.filter((f) => !ignored.has(f));
 }
 
 // What git would commit, without git: the tree minus .gitignore. Covers the

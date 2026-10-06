@@ -21,13 +21,16 @@ import { NATURAL_MAX_LABEL, naturalText } from "./followups";
 export interface NaturalChip {
     label: string;
     prompt: string;
-    command: "dev" | "plan";
+    command: "dev" | "plan" | "parallel";
 }
 
 export interface AnswerFacts {
     agent: string;
     answer: string;
     steps: ReadonlyArray<{ tool: string; detail?: string; filePath?: string }>;
+    /** The next effort level the answering model offers above this turn's
+     * (models.higherEffort); unset when unknown or already at the top. */
+    nextEffort?: string;
 }
 
 // Verbs that change the checkout run under /dev; reading verbs under plan.
@@ -178,8 +181,11 @@ const actionsFromOffer = (body: string): string[] => {
 
 const participleAction = (np: string): string | undefined => {
     const m = np.match(/^(.+?)\s+([a-z]+)(\s+(?:through|out|up|down|over|in))?(?:\s+(?:too|as well|also))?$/i);
-    const verb = m && PARTICIPLES[m[2].toLowerCase()];
-    return verb ? `${verb}${m[3] ?? ""} ${m[1]}` : undefined;
+    // `Object.hasOwn`, not a bare lookup: "the parser constructor" found the
+    // inherited key and offered "function Object() { [native code] } the parser".
+    const word = m ? m[2].toLowerCase() : "";
+    const verb = Object.hasOwn(PARTICIPLES, word) ? PARTICIPLES[word] : undefined;
+    return m && verb ? `${verb}${m[3] ?? ""} ${m[1]}` : undefined;
 };
 
 // "the docs updated or the tests added" is two offers; a part that is not a
@@ -217,6 +223,14 @@ const choicesOf = (sentence: string): string[] => {
 const EDIT_TOOLS = /^(?:edit|write|patch|multiedit|apply_patch)$/i;
 const RECOMMENDS = /my recommendation|i(?:'d| would)? recommend|recommended:/i;
 const PLAN_REFUSAL = /plan mode|read-only mode|exit plan mode|can(?:'|no)t (?:execute|make|apply) (?:edits|changes)/i;
+// "3 failing", "2 tests failed", "tests are still failing" — never "0 failed".
+const TESTS_FAILED = /\b(?:[1-9]\d*) (?:tests? |specs? |checks? )?(?:fail(?:ed|ing|ures?)?)\b|\b(?:tests?|specs?|checks?) (?:are |is |still |now )*fail(?:ed|ing|s)?\b|\bfailing (?:tests?|specs?|checks?)\b/i;
+// "0 tests failed", "No tests failed", "no checks are failing": the second
+// TESTS_FAILED alternative has no leading count, so a negation must veto it.
+const NO_FAILURES = /\b(?:no|zero|0)\s+(?:\d+\s+)?(?:tests?|specs?|checks?)\s+(?:are |is |were |still |now )*(?:fail(?:ed|ing|s|ures?)?)\b/i;
+// The agent saying it could not settle the question: worth one more look at a
+// higher reasoning effort, when the model has one.
+const UNCERTAIN = /\b(?:i(?:'m| am) not (?:sure|certain)|(?:couldn't|could not|can't|cannot) (?:determine|confirm|verify|tell|find out)|unclear (?:whether|why|if|how)|not enough (?:information|context)|hard to say|without (?:more|further) (?:context|information)|i(?:'m| am) guessing)\b/i;
 const TESTS_PASSED = /\b(?:all )?(?:\d+ )?(?:tests?|checks?|specs?) (?:now )?(?:pass(?:ed|es|ing)?|are green|green)\b|\b\d+ passing\b/i;
 const ISSUE = /\b(?:bug|issue|problem|incorrect|wrong|broken|fails?|failing|error|off-by-one|missing|leak|race|regression|skips?)\b/i;
 const UNFINISHED = /\b(?:i'll (?:now |next )?(?:continue|proceed|move on)|next,? i(?:'ll| will)|remaining (?:steps|items|work)|still (?:need|left) to|to be continued|(?:stopping|stopped) here for now|ran out of (?:time|context|budget))\b/i;
@@ -235,18 +249,55 @@ const firstOfNumbered = (markdown: string): string | undefined => {
     return undefined;
 };
 
-export function naturalFollowups(input: AnswerFacts, max = 3): NaturalChip[] {
+// The first contiguous numbered run that starts at 1, fences out.
+const NUMBERED_ALL = /^[ \t]*(\d{1,3})[).][ \t]+(\S.*)$/;
+const numberedList = (markdown: string): string[] => {
+    const items: string[] = [];
+    for (const line of markdown.replace(/```[\s\S]*?```/g, "\n").split("\n")) {
+        const m = line.match(NUMBERED_ALL);
+        if (!m) {
+            continue;
+        }
+        if (Number(m[1]) === items.length + 1) {
+            items.push(m[2]);
+        } else if (items.length) {
+            break;
+        }
+    }
+    return items;
+};
+
+const LANE_TARGET = /[\w.-]+\/[\w.-]+|\b[\w-]+\.[a-z]{1,5}\b|\b\w+\(\)/i;
+const BARE_BACKREF = /^[a-z]+\s+(?:it|them|this|that|these|those)\b/i;
+
+/** 2-5 read-only steps, each with a concrete target, that the lane splitter
+ * keeps as one lane apiece. `splits` is injected: natural may not import chat-boot.
+ * The same rule reads a plan answer (the "Run N as lanes" chip) and, under
+ * `autoParallel: auto`, the user's own prompt. */
+export const laneItems = (markdown: string, splits: (task: string) => string[]): string[] | undefined => {
+    const raw = numberedList(markdown);
+    if (raw.length < 2 || raw.length > 5) {
+        return undefined;
+    }
+    const items = raw.map((r) => plainText(r).replace(/[\s.:;]+$/, "").trim());
+    const ok = items.every(
+        (i) => i.length >= 8 && i.length <= 200 && READ_VERBS.has(firstWord(i)) && LANE_TARGET.test(i) && !BARE_BACKREF.test(i) && splits(i).length === 1
+    );
+    return ok && splits(items.join("\n---\n")).length === items.length ? items : undefined;
+};
+
+export function naturalFollowups(input: AnswerFacts, max = 3, splits?: (task: string) => string[]): NaturalChip[] {
     const turnKind: "dev" | "plan" = input.agent === "dev" ? "dev" : "plan";
     const answer = input.answer ?? "";
     const text = plainText(answer);
     const tail = sentencesOf(text.slice(-900)).slice(-4);
     const chips: NaturalChip[] = [];
-    const push = (label: string, promptText: string, command: "dev" | "plan", kao = ""): void => {
+    const push = (label: string, promptText: string, command: NaturalChip["command"], kao = ""): void => {
         if (chips.length < max && label && !chips.some((c) => c.prompt === promptText)) {
             chips.push({ label: kao ? `${kao} ${labelOf(label)}` : labelOf(label), prompt: promptText, command });
         }
     };
-    const pushT = (t: { kao: string; label: string; prompt: string }, command: "dev" | "plan"): void =>
+    const pushT = (t: { kao: string; label: string; prompt: string }, command: NaturalChip["command"]): void =>
         push(t.label, t.prompt, command, t.kao);
 
     // 1. The agent's own offer, newest sentence first — and inside a sentence,
@@ -280,7 +331,7 @@ export function naturalFollowups(input: AnswerFacts, max = 3): NaturalChip[] {
     // An offer that already means "do all of it" would make the fixAll and
     // apply chips (followups.json) the same click twice.
     const offersAll = chips.some((c) =>
-        /^(?:apply|implement|fix|make|do|proceed|go ahead|address)\b(?:.*\b(?:these|them|this|it|all|those|everything|fixes|changes|steps?|plan)\b)?/i.test(c.label)
+        /^(?:apply|implement|fix|make|do|proceed|go ahead|address)\b(?:\s*[.!?]*$|.*\b(?:these|them|this|it|all|those|everything|fixes|changes|steps?|plan)\b)/i.test(c.label)
     );
 
     // 2. A closing either/or question: quick replies in the user's words.
@@ -321,6 +372,10 @@ export function naturalFollowups(input: AnswerFacts, max = 3): NaturalChip[] {
                 pushT(naturalText("fixAll"), "dev");
             }
         }
+        const lanes = splits ? laneItems(answer, splits) : undefined;
+        if (lanes) {
+            pushT(naturalText("lanes", { n: String(lanes.length), lanes: lanes.join("\n---\n") }), "parallel");
+        }
         if (RECOMMENDS.test(tailText) && /\?/.test(tailText)) {
             pushT(naturalText("recommend"), "dev");
         }
@@ -332,9 +387,16 @@ export function naturalFollowups(input: AnswerFacts, max = 3): NaturalChip[] {
         const file = edited.length === 1 ? edited[0].split(/[\\/]/).pop() ?? edited[0] : "";
         pushT(file ? naturalText("review1", { file }) : naturalText("reviewN", { n: String(edited.length) }), "plan");
         const ranTests = input.steps.some((s) => /\btest/i.test(s.detail ?? "") && /bash|shell|run/i.test(s.tool));
-        if (!ranTests && !TESTS_PASSED.test(tailText)) {
+        if (TESTS_FAILED.test(tailText) && !NO_FAILURES.test(tailText)) {
+            pushT(naturalText("fixTests"), "dev");
+        } else if (!ranTests && !TESTS_PASSED.test(tailText)) {
             pushT(naturalText("tests"), "dev");
         }
+    }
+    // An unsettled answer, and a level above this turn's: one more look, harder.
+    if (input.nextEffort && /^[A-Za-z][\w-]{0,23}$/.test(input.nextEffort) && UNCERTAIN.test(tailText)) {
+        const t = naturalText("deeper", { effort: input.nextEffort });
+        pushT({ ...t, prompt: `effort:${input.nextEffort} ${t.prompt}` }, turnKind);
     }
     return chips;
 }

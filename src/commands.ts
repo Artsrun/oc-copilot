@@ -5,7 +5,7 @@ import { platform } from "node:process";
 import { config, resolveFolder, truncate } from "./core";
 import { mark } from "./followups";
 import { killTree, resolveExecutable, spawnOpenCode } from "./proc";
-import { httpGetJson } from "./net";
+import { httpGetJson, knownServerBase } from "./net";
 import { getActiveSession } from "./session";
 import { catalogAge, getModelCatalog } from "./models";
 import { discoverOpenCodeEnv, summariseEnv } from "./env";
@@ -45,8 +45,6 @@ export async function diagnose(): Promise<void> {
     const executable = settings.get<string>("executable", "opencode");
     const folder = resolveFolder()?.folder;
     const cwd = folder?.uri.fsPath ?? process.cwd();
-    const host = settings.get<string>("serverHostname", "127.0.0.1");
-    const port = settings.get<number>("serverPort", 4096);
 
     const lines: string[] = ["# OpenCode bridge diagnostics", "", `_${new Date().toISOString()}_`, ""];
     const row = (k: string, v: string): string => `| ${k} | ${v} |`;
@@ -65,12 +63,15 @@ export async function diagnose(): Promise<void> {
         lines.push(row("version", `\`${truncate(version, 80)}\``));
     }
 
-    let serverState = "not running";
-    try {
-        const health = await httpGetJson<{ healthy?: boolean }>(`http://${host}:${port}/global/health`);
-        serverState = health.healthy === true ? `${mark("ok")} healthy on ${host}:${port}` : `${mark("warn")} responded, unhealthy`;
-    } catch {
-        serverState = `not running on ${host}:${port} (started on demand)`;
+    let serverState = "not running (started on demand)";
+    const serverBase = knownServerBase();
+    if (serverBase) {
+        try {
+            const health = await httpGetJson<{ healthy?: boolean }>(`${serverBase}/global/health`);
+            serverState = health.healthy === true ? `${mark("ok")} healthy on ${serverBase}` : `${mark("warn")} responded, unhealthy`;
+        } catch {
+            serverState = `not running on ${serverBase} (started on demand)`;
+        }
     }
     lines.push(row("server", serverState));
     lines.push(row("transport", settings.get<string>("transport", "auto")));

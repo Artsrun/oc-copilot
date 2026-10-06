@@ -342,6 +342,10 @@ export interface ParsedChat {
     kind: ChatKind;
     model?: string;
     task: string;
+    /** `effort:<variant>`: OpenCode's reasoning-effort variant for this turn. */
+    effort?: string;
+    /** A `plan:` / `dev:` / `parallel:` prefix was typed (autoParallel leaves it alone). */
+    explicitKind?: boolean;
 }
 
 /** A lane's own `m:<model>` / `model:<model>` prefix, and the rest. */
@@ -351,6 +355,36 @@ export function splitModelPrefix(raw: string): { model?: string; task: string } 
     const m = raw.trim().match(/^(?:model|m)\s*[:=]\s*([^\s,]+)(?:,|\s|$)\s*([\s\S]*)$/i);
     const model = m?.[1].replace(/:$/, "");
     return m && model ? { model, task: m[2].trim() } : { task: raw.trim() };
+}
+
+/**
+ * A lane's own prefixes, in either order: `m:<model>` and `a:<agent>`
+ * (`agent:` / `model:` spelled out). An agent name may be nested
+ * (`team/look`); a trailing colon is punctuation, as in `a:look: review`.
+ * `a:` takes no space (`a: the bug` is prose), as `e:` does.
+ */
+export function splitLanePrefixes(raw: string): { model?: string; agent?: string; task: string } {
+    let rest = raw.trim();
+    let model: string | undefined;
+    let agent: string | undefined;
+    for (let i = 0; i < 2; i += 1) {
+        const a = agent ? undefined : rest.match(/^(?:agent\s*[:=]\s*|a[:=])([A-Za-z0-9_][\w./-]{0,63}?):?(?:,|\s|$)\s*([\s\S]*)$/i);
+        if (a) {
+            agent = a[1];
+            rest = a[2].trim();
+            continue;
+        }
+        if (!model) {
+            const m = splitModelPrefix(rest);
+            if (m.model) {
+                model = m.model;
+                rest = m.task;
+                continue;
+            }
+        }
+        break;
+    }
+    return { model, agent, task: rest };
 }
 
 /** `/parallel models:a,b,c <task>`: one task, one lane per model (claim:parallel-models). */
@@ -363,9 +397,13 @@ export function parseChatPrompt(raw: string): ParsedChat {
     let rest = raw.trim();
     let kind: ChatKind = "plan";
     let model: string | undefined;
-    for (let i = 0; i < 4 && rest; i += 1) {
+    let effort: string | undefined;
+    let explicitKind = false;
+    // `effort:high` (or `e:high`, no space after the colon: "e: the bug" is
+    // prose) sends OpenCode's reasoning-effort variant for this turn.
+    for (let i = 0; i < 5 && rest; i += 1) {
         const match = rest.match(
-            /^(?:(plan|dev|parallel|par)\s*:|(?:model|m)\s*[:=]\s*(\S+)\s*:?)\s*/i
+            /^(?:(plan|dev|parallel|par)\s*:|(?:model|m)\s*[:=]\s*(\S+)\s*:?|(?:effort\s*[:=]\s*|e[:=])([A-Za-z][\w-]{0,23})(?=\s|$))\s*/i
         );
         if (!match) {
             break;
@@ -373,13 +411,17 @@ export function parseChatPrompt(raw: string): ParsedChat {
         if (match[1]) {
             const word = match[1].toLowerCase();
             kind = (word === "par" ? "parallel" : word) as ChatKind;
+            explicitKind = true;
         }
         if (match[2]) {
             model = match[2].replace(/,$/, "");
         }
+        if (match[3]) {
+            effort = match[3];
+        }
         rest = rest.slice(match[0].length).trim();
     }
-    return { kind, model, task: rest };
+    return { kind, model, task: rest, effort, explicitKind };
 }
 
 export function uniqueModels(candidates: Array<string | undefined>, cap = 4): string[] {

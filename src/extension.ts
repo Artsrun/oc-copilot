@@ -2,11 +2,11 @@ import * as vscode from "vscode";
 
 import { logChannel, resolveFolder, setExtensionContext, setLogChannel } from "./core";
 import { expandShimVar, readShimTarget, resolveExecutable, tokenizeCmdLine } from "./proc";
-import { httpGetJson, httpPostJson, stopServer, withDirectory } from "./net";
+import { httpGetJson, httpPostJson, lastServeLine, setStartupDeadline, stopServer, withDirectory } from "./net";
 import { toolFilePath } from "./metrics";
 import { discoverOpenCodeEnv, openCodeConfigModel, readJsonc, summariseEnv } from "./env";
 import { isVaguePrompt, planTimeout } from "./prompt";
-import { createFileLinker, parseChatPrompt, splitModelPrefix, splitModelsFanout } from "./context";
+import { createFileLinker, parseChatPrompt, splitLanePrefixes, splitModelPrefix, splitModelsFanout } from "./context";
 import {
     INLINE_PARTICIPANT_ID,
     PARTICIPANT_ID,
@@ -15,14 +15,14 @@ import {
     resolveSessionState,
     threadSession
 } from "./session";
-import { getModelCatalog, modelLabel, parseModelList, parseProviders, parseVerboseModels, resolveModelRef } from "./models";
-import { compactSession, emitKeyedDelta, isMissingSessionError, isMissingSessionRun, safeSessionId, sessionPath, sessionRoot } from "./runs";
+import { contextNote, effortFor, getModelCatalog, higherEffort, modelLabel, parseModelList, parseProviders, parseVerboseModels, resolveModelRef } from "./models";
+import { compactSession, emitKeyedDelta, isMissingSessionError, isMissingSessionRun, safeSessionId, sessionPath, sessionRoot, stepDetail, turnPermission } from "./runs";
 import { laneProblem } from "./compose";
-import { parseAgentList } from "./agents";
-import { GROUP_MAX_ROWS, KIND_COMMAND_NAMES, SETTLE_MS, chatStream, commandAliases, resolveAlias, ROUTED_COMMANDS, followupsFor, nextMilestone, splitLanes, startHeartbeat, stepLabel, supportsTaskProgress, suggestFollowups, thoughtLine, SLASH_COMMANDS } from "./chat-boot";
+import { laneAgentProblem, parseAgentList } from "./agents";
+import { GROUP_MAX_ROWS, KIND_COMMAND_NAMES, LANE_ANSWER_CAP, LANE_STORE_CAP, SETTLE_MS, chatStream, commandAliases, recallLanes, rememberLanes, resolveAlias, retryLanesPrompt, ROUTED_COMMANDS, followupsFor, nextMilestone, splitLanes, startHeartbeat, stepLabel, supportsTaskProgress, suggestFollowups, thoughtLine, SLASH_COMMANDS } from "./chat-boot";
 import { handleChat } from "./chat";
 import { badge, badgeMarks, chipOf, createBadger, followupsProblems } from "./followups";
-import { naturalFollowups } from "./natural";
+import { laneItems, naturalFollowups } from "./natural";
 import { registerCommands } from "./commands-registry";
 import { slugify } from "./worktree";
 
@@ -111,7 +111,12 @@ export const __test = {
     GROUP_MAX_ROWS,
     badge,
     badgeMarks,
-    naturalFollowups,
+    naturalFollowups: (input: Parameters<typeof naturalFollowups>[0], max?: number) => naturalFollowups(input, max, splitLanes),
+    laneItems,
+    effortFor,
+    higherEffort,
+    contextNote,
+    stepDetail,
     createFileLinker,
     chatStream,
     SETTLE_MS,
@@ -130,7 +135,17 @@ export const __test = {
     resolveAlias,
     commandAliases,
     laneProblem,
-    sessionRoot
+    rememberLanes,
+    recallLanes,
+    LANE_STORE_CAP,
+    LANE_ANSWER_CAP,
+    sessionRoot,
+    splitLanePrefixes,
+    laneAgentProblem,
+    retryLanesPrompt,
+    turnPermission,
+    lastServeLine,
+    setStartupDeadline
 };
 
 export function deactivate(): void {

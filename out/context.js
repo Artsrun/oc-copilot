@@ -41,6 +41,7 @@ exports.createFileLinker = createFileLinker;
 exports.emitAnswerParts = emitAnswerParts;
 exports.stepUris = stepUris;
 exports.splitModelPrefix = splitModelPrefix;
+exports.splitLanePrefixes = splitLanePrefixes;
 exports.splitModelsFanout = splitModelsFanout;
 exports.parseChatPrompt = parseChatPrompt;
 exports.uniqueModels = uniqueModels;
@@ -329,6 +330,29 @@ function splitModelPrefix(raw) {
     const model = m?.[1].replace(/:$/, "");
     return m && model ? { model, task: m[2].trim() } : { task: raw.trim() };
 }
+function splitLanePrefixes(raw) {
+    let rest = raw.trim();
+    let model;
+    let agent;
+    for (let i = 0; i < 2; i += 1) {
+        const a = agent ? undefined : rest.match(/^(?:agent\s*[:=]\s*|a[:=])([A-Za-z0-9_][\w./-]{0,63}?):?(?:,|\s|$)\s*([\s\S]*)$/i);
+        if (a) {
+            agent = a[1];
+            rest = a[2].trim();
+            continue;
+        }
+        if (!model) {
+            const m = splitModelPrefix(rest);
+            if (m.model) {
+                model = m.model;
+                rest = m.task;
+                continue;
+            }
+        }
+        break;
+    }
+    return { model, agent, task: rest };
+}
 function splitModelsFanout(raw) {
     const m = raw.trim().match(/^models\s*[:=]\s*(\S+)\s*([\s\S]*)$/i);
     return m ? { models: m[1].split(",").map((x) => x.trim()).filter(Boolean), task: m[2].trim() } : undefined;
@@ -337,21 +361,27 @@ function parseChatPrompt(raw) {
     let rest = raw.trim();
     let kind = "plan";
     let model;
-    for (let i = 0; i < 4 && rest; i += 1) {
-        const match = rest.match(/^(?:(plan|dev|parallel|par)\s*:|(?:model|m)\s*[:=]\s*(\S+)\s*:?)\s*/i);
+    let effort;
+    let explicitKind = false;
+    for (let i = 0; i < 5 && rest; i += 1) {
+        const match = rest.match(/^(?:(plan|dev|parallel|par)\s*:|(?:model|m)\s*[:=]\s*(\S+)\s*:?|(?:effort\s*[:=]\s*|e[:=])([A-Za-z][\w-]{0,23})(?=\s|$))\s*/i);
         if (!match) {
             break;
         }
         if (match[1]) {
             const word = match[1].toLowerCase();
             kind = (word === "par" ? "parallel" : word);
+            explicitKind = true;
         }
         if (match[2]) {
             model = match[2].replace(/,$/, "");
         }
+        if (match[3]) {
+            effort = match[3];
+        }
         rest = rest.slice(match[0].length).trim();
     }
-    return { kind, model, task: rest };
+    return { kind, model, task: rest, effort, explicitKind };
 }
 function uniqueModels(candidates, cap = 4) {
     const out = [];

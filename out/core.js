@@ -40,6 +40,7 @@ exports.config = config;
 exports.stamp = stamp;
 exports.debugLine = debugLine;
 exports.truncate = truncate;
+exports.own = own;
 exports.secs = secs;
 exports.formatBytes = formatBytes;
 exports.normLine = normLine;
@@ -76,6 +77,9 @@ function debugLine(text) {
 function truncate(text, max = 160) {
     const oneLine = text.replace(/\s+/g, " ").trim();
     return oneLine.length > max ? `${oneLine.slice(0, max)}…` : oneLine;
+}
+function own(table, key) {
+    return Object.hasOwn(table, key) ? table[key] : undefined;
 }
 function secs(ms) {
     return `${(ms / 1000).toFixed(1)}s`;

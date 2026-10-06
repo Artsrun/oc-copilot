@@ -81,8 +81,6 @@ async function diagnose() {
     const executable = settings.get("executable", "opencode");
     const folder = (0, core_1.resolveFolder)()?.folder;
     const cwd = folder?.uri.fsPath ?? process.cwd();
-    const host = settings.get("serverHostname", "127.0.0.1");
-    const port = settings.get("serverPort", 4096);
     const lines = ["# OpenCode bridge diagnostics", "", `_${new Date().toISOString()}_`, ""];
     const row = (k, v) => `| ${k} | ${v} |`;
     lines.push("| Check | Result |", "| --- | --- |");
@@ -99,13 +97,16 @@ async function diagnose() {
         const version = await runCapture(executable, ["--version"], cwd);
         lines.push(row("version", `\`${(0, core_1.truncate)(version, 80)}\``));
     }
-    let serverState = "not running";
-    try {
-        const health = await (0, net_1.httpGetJson)(`http://${host}:${port}/global/health`);
-        serverState = health.healthy === true ? `${(0, followups_1.mark)("ok")} healthy on ${host}:${port}` : `${(0, followups_1.mark)("warn")} responded, unhealthy`;
-    }
-    catch {
-        serverState = `not running on ${host}:${port} (started on demand)`;
+    let serverState = "not running (started on demand)";
+    const serverBase = (0, net_1.knownServerBase)();
+    if (serverBase) {
+        try {
+            const health = await (0, net_1.httpGetJson)(`${serverBase}/global/health`);
+            serverState = health.healthy === true ? `${(0, followups_1.mark)("ok")} healthy on ${serverBase}` : `${(0, followups_1.mark)("warn")} responded, unhealthy`;
+        }
+        catch {
+            serverState = `not running on ${serverBase} (started on demand)`;
+        }
     }
     lines.push(row("server", serverState));
     lines.push(row("transport", settings.get("transport", "auto")));

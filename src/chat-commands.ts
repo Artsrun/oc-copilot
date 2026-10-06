@@ -1,13 +1,13 @@
 import * as vscode from "vscode";
-import { config, formatBytes, truncate } from "./core";
+import { config, formatBytes, logChannel, own, stamp, truncate, untilStop } from "./core";
 import { mark } from "./followups";
 import { resolveExecutable } from "./proc";
-import { ensureServer, httpGetJson, withDirectory } from "./net";
-import { abortServerRun, sessionBusy } from "./runs";
+import { ensureServer, httpGetJson, knownServerBase, withDirectory } from "./net";
+import { abortServerRun, compactSession, sessionBusy } from "./runs";
 import { discoverOpenCodeEnv, openCodeConfigModel, summariseEnv } from "./env";
 import { planTimeout } from "./prompt";
 import { uniqueModels } from "./context";
-import { cachedModelInfo, getModelCatalog, modelLabel, pinLevel } from "./models";
+import { cachedModelInfo, contextNote, getModelCatalog, modelLabel, pinLevel } from "./models";
 import {
     SessionState,
     getActiveSession,
@@ -47,7 +47,7 @@ export async function handleControlCommand(p: ControlProps): Promise<vscode.Chat
             }
             let base: string | undefined;
             try {
-                base = await ensureServer(p.cwd);
+                base = await ensureServer(p.cwd, (text) => p.response.progress(text));
             } catch {
                 base = undefined;
             }
@@ -67,6 +67,32 @@ export async function handleControlCommand(p: ControlProps): Promise<vscode.Chat
                     : `${mark("warn")} Asked \`${p.state.id}\` to stop, but it still reports busy. \`/new\` starts a clean session.`
             );
             return { metadata: { kind: "stop" } };
+        }
+        case "compact": {
+            // The same summarize call autocompact makes, on demand: with the
+            // model the session runs on, through the server (started if needed).
+            if (!p.state.id) {
+                p.response.markdown("Nothing to compact — this chat has no OpenCode session yet.");
+                return { metadata: { kind: "compact" } };
+            }
+            p.response.progress(`Compacting \`${p.state.id}\` — OpenCode summarises the conversation…`);
+            const work = compactSession(p.state.id, p.cwd, p.state.lastModel);
+            const ok = p.token ? await untilStop(work, p.token) : await work;
+            if (ok === undefined) {
+                logChannel.appendLine(`[${stamp()}] /compact: stopped while waiting; the summary may still finish on the server`);
+                return { metadata: { kind: "compact", cancelled: true } };
+            }
+            if (!ok) {
+                p.response.markdown(`${mark("fail")} Could not compact \`${p.state.id}\`. The debug log says why.`);
+                p.response.button({ command: "opencodeCopilotBridge.showLog", title: "Show debug log" });
+                return { metadata: { kind: "compact" } };
+            }
+            p.response.markdown(
+                `${mark("ok")} Compacted \`${p.state.id}\`` +
+                (p.state.context ? ` (context was ${Math.round(p.state.context / 1000)}k)` : "") +
+                ". The next turn continues from OpenCode's summary."
+            );
+            return { metadata: { kind: "compact" } };
         }
         case "new":
             await setActiveSession(p.cwd, { turns: 0 });
@@ -100,7 +126,7 @@ export async function handleControlCommand(p: ControlProps): Promise<vscode.Chat
             const row = (m: string, i: number): string =>
                 `${i + 1}. ${modelLabel(m, info)}` +
                 (m === pin && level ? ` · ${level} settings, chat only` : "") +
-                (listed.length && !info[m] ? " · (not listed)" : "");
+                (listed.length && !own(info, m) ? " · (not listed)" : "");
             const lines = [
                 chain.length
                     ? `Model chain (first wins, rest are timeout fallbacks):\n\n${chain.map(row).join("\n")}`
@@ -139,28 +165,27 @@ export async function handleControlCommand(p: ControlProps): Promise<vscode.Chat
                 healthy = healthy && Boolean(ok);
                 rows.push(`| version | ${ok ? mark("ok") : mark("fail")} \`${truncate(version || "no output", 60)}\` |`);
             }
-            const host = settings.get<string>("serverHostname", "127.0.0.1");
-            const port = settings.get<number>("serverPort", 4096);
+            const serverBase = knownServerBase();
             try {
-                await httpGetJson<{ healthy?: boolean }>(
-                    `http://${host}:${port}/global/health`,
-                    2000
-                );
+                if (!serverBase) {
+                    throw new Error("no server of this window yet");
+                }
+                await httpGetJson<{ healthy?: boolean }>(`${serverBase}/global/health`, 2000);
                 // One server serves many workspaces. The count for THIS directory
                 // is live proof that `?directory=` scoping reaches the server.
                 let scope = "";
                 try {
                     const mine = await httpGetJson<unknown[]>(
-                        withDirectory(`http://${host}:${port}/session`, p.cwd),
+                        withDirectory(`${serverBase}/session`, p.cwd),
                         2500
                     );
                     scope = ` · ${Array.isArray(mine) ? mine.length : 0} session(s) scoped to \`${p.folder.name}\``;
                 } catch {
                     // The list endpoint is advisory here; health already passed.
                 }
-                rows.push(`| server | ${mark("ok")} healthy on ${host}:${port}${scope} |`);
+                rows.push(`| server | ${mark("ok")} healthy on ${serverBase?.replace(/^http:\/\//, "")}${scope} |`);
             } catch {
-                rows.push(`| server | not running on ${host}:${port} _(started on demand)_ |`);
+                rows.push(`| server | not running _(started on demand)_ |`);
             }
             const catalog = await getModelCatalog(exe, p.cwd);
             rows.push(
@@ -207,7 +232,8 @@ export async function handleControlCommand(p: ControlProps): Promise<vscode.Chat
                         : "",
                     p.state.cost ? `$${p.state.cost.toFixed(4)}` : "",
                     p.state.toolOutputBytes ? `${formatBytes(p.state.toolOutputBytes)} tool output` : "",
-                    p.state.lastModel ? `on \`${p.state.lastModel}\`` : ""
+                    p.state.lastModel ? `on \`${p.state.lastModel}\`` : "",
+                    contextNote(p.state.context, p.state.lastModel)
                 ].filter(Boolean);
                 p.response.markdown(
                     `Active session \`${p.state.id}\` · ${totals.join(" · ")}` +

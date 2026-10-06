@@ -120,7 +120,12 @@ exports.__test = {
     GROUP_MAX_ROWS: chat_boot_1.GROUP_MAX_ROWS,
     badge: followups_1.badge,
     badgeMarks: followups_1.badgeMarks,
-    naturalFollowups: natural_1.naturalFollowups,
+    naturalFollowups: (input, max) => (0, natural_1.naturalFollowups)(input, max, chat_boot_1.splitLanes),
+    laneItems: natural_1.laneItems,
+    effortFor: models_1.effortFor,
+    higherEffort: models_1.higherEffort,
+    contextNote: models_1.contextNote,
+    stepDetail: runs_1.stepDetail,
     createFileLinker: context_1.createFileLinker,
     chatStream: chat_boot_1.chatStream,
     SETTLE_MS: chat_boot_1.SETTLE_MS,
@@ -139,7 +144,17 @@ exports.__test = {
     resolveAlias: chat_boot_1.resolveAlias,
     commandAliases: chat_boot_1.commandAliases,
     laneProblem: compose_1.laneProblem,
-    sessionRoot: runs_1.sessionRoot
+    rememberLanes: chat_boot_1.rememberLanes,
+    recallLanes: chat_boot_1.recallLanes,
+    LANE_STORE_CAP: chat_boot_1.LANE_STORE_CAP,
+    LANE_ANSWER_CAP: chat_boot_1.LANE_ANSWER_CAP,
+    sessionRoot: runs_1.sessionRoot,
+    splitLanePrefixes: context_1.splitLanePrefixes,
+    laneAgentProblem: agents_1.laneAgentProblem,
+    retryLanesPrompt: chat_boot_1.retryLanesPrompt,
+    turnPermission: runs_1.turnPermission,
+    lastServeLine: net_1.lastServeLine,
+    setStartupDeadline: net_1.setStartupDeadline
 };
 function deactivate() {
     (0, net_1.stopServer)();

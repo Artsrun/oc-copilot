@@ -225,10 +225,13 @@ const settings = {
     sessionScope: "thread",
     devAgent: "build",
     planAgent: "plan",
+    readOnlySubagents: ["explore"],
     attachDevToServer: true,
     toolQuietMs: 600000,
     busySessionPolicy: "abort",
-    commandAliases: {}
+    commandAliases: {},
+    effort: "",
+    autoParallel: "offer"
 };
 
 const repoDir = path.join(__dirname, "..");
@@ -2991,6 +2994,87 @@ const lbProvider = (global.__participant || {}).followupProvider;
         );
         add("LC a plan turn's Pick-up chip stays on plan", lbCancel.some((f) => f.label === L.CONTINUE && f.command === "plan"));
 
+        // ==================== 0.0.199 ====================
+        // AC: the two outcome chips of a finished /parallel turn. The lane
+        // answers stay in memory behind an id the metadata carries — never the
+        // answers themselves — so a window reload loses them and the merge turn
+        // must say so and run nothing. A lane that never ran is never retried.
+        const acChips = (extra) => lbProvider.provideFollowups({ metadata: { kind: "parallel", lanes: 3, ...extra } }, {}, lbToken);
+        const acLabels = (extra) => acChips(extra).map((f) => f.label);
+        const acLanes = [
+            { task: "review auth", model: "acme/tundra", answer: "Auth looks fine.", timedOut: false, ran: true },
+            { task: "read the logs", model: "acme/oasis", answer: "", error: "boom", timedOut: false, ran: true },
+            { task: "list unused deps", model: "acme/zzz", answer: "", error: "no model matches `zzz`", timedOut: false, ran: false }
+        ];
+        ext.__test.rememberLanes("Lac00001", acLanes);
+        const acRun = { laneRunId: "Lac00001", laneAnswers: 2, laneRetries: 1 };
+
+        add("AC two answered lanes offer Merge lanes", acLabels({ ...acRun, laneRetries: 0 }).includes(L.MERGE_LANES));
+        add("AC one answered lane offers no Merge lanes chip", !acLabels({ ...acRun, laneAnswers: 1 }).includes(L.MERGE_LANES));
+        const acMerge = acChips(acRun).find((f) => f.label === L.MERGE_LANES);
+        add("AC the merge chip runs as a plan turn in this chat's own session", !!acMerge && acMerge.command === "plan");
+        add(
+            "AC the merge chip carries the run id, never a lane answer",
+            !!acMerge && acMerge.prompt.includes("Lac00001") && !/Auth looks fine/.test(acMerge.prompt) && !/\{run\}/.test(acMerge.prompt)
+        );
+
+        // Retry: only lanes that RAN and failed. The unresolved model never ran.
+        const acRetry = acChips(acRun).find((f) => f.label === L.RETRY_LANES);
+        add("AC a lane that ran and failed offers Retry lanes", !!acRetry);
+        add("AC no failed lane, no Retry chip", !acLabels({ ...acRun, laneRetries: 0 }).includes(L.RETRY_LANES));
+        add(
+            "AC the retry chip resends only the failed lane, and never the one whose model did not resolve",
+            !!acRetry && /read the logs/.test(acRetry.prompt) && !/review auth/.test(acRetry.prompt) && !/list unused deps/.test(acRetry.prompt)
+        );
+        add(
+            "AC one failed lane retries as a single turn, not a one-lane /parallel",
+            !!acRetry && acRetry.command !== "parallel" && !acRetry.prompt.includes("---") && /model:acme\/oasis/.test(acRetry.prompt)
+        );
+        ext.__test.rememberLanes("Lac00002", [
+            { task: "a", model: "acme/tundra", answer: "", error: "boom", timedOut: false, ran: true },
+            { task: "b", model: "acme/oasis", answer: "", timedOut: true, ran: true }
+        ]);
+        const acTwo = acChips({ laneRunId: "Lac00002", laneAnswers: 0, laneRetries: 2 }).find((f) => f.label === L.RETRY_LANES);
+        add(
+            "AC two failed lanes retry as a /parallel turn, each with its m: prefix",
+            !!acTwo && acTwo.command === "parallel" && acTwo.prompt.split("\n---\n").length === 2 && /m:acme\/tundra a/.test(acTwo.prompt) && /m:acme\/oasis b/.test(acTwo.prompt)
+        );
+
+        // The turns that must get NO chip — the half that keeps this honest.
+        add("AC a parallel turn with no run id offers neither chip", acChips({ laneAnswers: 3, laneRetries: 2 }).length === 0);
+        add("AC a cancelled parallel turn offers neither chip", acChips({ ...acRun, cancelled: true }).length === 0);
+        add(
+            "AC a parallel turn that ran no lanes still offers only Compose…",
+            lbProvider.provideFollowups({ metadata: { kind: "parallel", lanesMissing: true, ...acRun } }, {}, lbToken).map((f) => f.label).join("|") === L.COMPOSE
+        );
+        add(
+            "AC a composed turn still offers only Run lanes",
+            lbProvider.provideFollowups({ metadata: { kind: "composed", composedLanes: "a\n---\nb" } }, {}, lbToken).map((f) => f.label).join("|") === L.RUN_LANES
+        );
+
+        // The store is bounded like followupStore, and a window reload empties it.
+        for (let i = 0; i < ext.__test.LANE_STORE_CAP + 1; i += 1) {
+            ext.__test.rememberLanes(`Lcap${i}`, acLanes);
+        }
+        add("AC the lane store evicts oldest-first at its cap", !ext.__test.recallLanes("Lcap0") && !!ext.__test.recallLanes(`Lcap${ext.__test.LANE_STORE_CAP}`));
+        add("AC a stored answer is capped, not kept whole", ext.__test.recallLanes("Lcap1")[0].answer.length <= ext.__test.LANE_ANSWER_CAP);
+
+        // A window reload empties the store; the chip's prompt outlives it in the
+        // chat history. Clicking it must cost nothing: no spawn, no model call.
+        const acGoneExe = settings.executable;
+        settings.executable = writeFake("fake-ac-gone.js", [{ type: "text", sessionID: "ses_ac", part: { text: "this must not run" } }]);
+        fs.rmSync(path.join(work, "fake-ac-gone.js.argv"), { force: true });
+        const acGone = stream();
+        const acGoneRes = await global.__handler({ prompt: acMerge ? acMerge.prompt : "merge run Lac00001", command: "plan" }, {}, acGone.response, acGone.token);
+        settings.executable = acGoneExe;
+        add(
+            "AC after a reload the merge turn says the lanes are gone and runs nothing",
+            acGoneRes.metadata.kind === "idle" &&
+                !fs.existsSync(path.join(work, "fake-ac-gone.js.argv")) &&
+                acGone.chatMarkdown.join("").includes(P.LANES_GONE)
+        );
+        add("AC …and that turn offers no chips of its own", lbProvider.provideFollowups({ metadata: acGoneRes.metadata }, {}, lbToken).length === 0);
+
         // LD: answer-aware chips, now phrased naturally and naming what they act on.
         const sf = ext.__test.suggestFollowups;
         const ldRec = sf({
@@ -3709,6 +3793,39 @@ const lbProvider = (global.__participant || {}).followupProvider;
     for (const [what, chips] of nfEmpty) {
         add(`NF no chips for ${what}`, chips.length === 0);
     }
+
+    // 0.0.199: when a plan's first numbered list is 2–5 read-only steps that each
+    // name a concrete target, one chip runs them as lanes. Everything else — an
+    // edit step, a vague step, a step the lane splitter would break — gets none.
+    const laneChipOf = (chips) => chips.find((c) => c.command === "parallel");
+    const nfLanes3 = nf("plan", "Here is where I would look:\n\n1. Review `src/auth.ts` for the missing expiry check.\n2. Trace the redirect in `handleLogin()`.\n3. List every caller of `refreshToken()`.");
+    add("NF a plan's three read-only numbered items become one run-as-lanes chip", laneChipOf(nfLanes3)?.label === NL("lanes", { n: "3" }));
+    add(
+        "NF the lanes chip sends the items joined by a --- line, and the count is in its label",
+        laneChipOf(nfLanes3)?.prompt.split("\n---\n").length === 3 && /^Review src\/auth\.ts/.test(laneChipOf(nfLanes3).prompt)
+    );
+const nfFixAll = (a) => nf("plan", `1. The loop skips the first item: bug in src/a.ts.\n2. Another bug in src/b.ts.\n\n${a}`).map((c) => c.label);
+add("NF a specific Fix offer does not suppress the Fix all chip", nfFixAll("Want me to fix the null check in parse()?").length >= 2);
+add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAll("Want me to apply them all?").length === 2);
+    add("NF two items are enough", !!laneChipOf(nf("plan", "1. Audit `src/net.ts` for unbounded reads.\n2. Compare `src/proc.ts` with it.")));
+    const nfFive = "1. Review `src/a.ts`.\n2. Review `src/b.ts`.\n3. Review `src/c.ts`.\n4. Review `src/d.ts`.\n5. Review `src/e.ts`.";
+    add("NF five items are the upper bound", laneChipOf(nf("plan", nfFive))?.label === NL("lanes", { n: "5" }));
+
+    const nfNoLanes = [
+        ["six items are over the cap", nf("plan", `${nfFive}\n6. Review \`src/f.ts\`.`)],
+        ["a list with no item 2", nf("plan", "1. Review `src/auth.ts` for the missing expiry check.")],
+        ["an item with an edit verb", nf("plan", "1. Review `src/auth.ts`.\n2. Fix `src/cart.ts`.")],
+        ["an item naming no concrete target", nf("plan", "1. Review `src/auth.ts`.\n2. Review the code.")],
+        ["an item that only refers back", nf("plan", "1. Review `src/auth.ts`.\n2. Check it.")],
+        ["an item the lane splitter would break", nf("plan", "1. Review `src/auth.ts`.\n2. Compare src/a.ts | src/b.ts.")],
+        ["the same list on a dev turn", nf("dev", "1. Review `src/auth.ts`.\n2. Trace `handleLogin()`.")],
+        ["a numbered list inside a fence", nf("plan", "```\n1. Review `src/auth.ts`.\n2. Trace `handleLogin()`.\n```")],
+        ["a list that starts at 2", nf("plan", "2. Review `src/auth.ts`.\n3. Trace `handleLogin()`.")],
+        ["a numbered explanation, not a plan", nf("plan", "It runs in three stages:\n1. `subtotal()` sums price × qty.\n2. Tax is applied at 20%.\n3. The discount is applied last.")]
+    ];
+    for (const [what, chips] of nfNoLanes) {
+        add(`NF no run-as-lanes chip for ${what}`, !laneChipOf(chips));
+    }
     // It runs on every finished answer in the extension host: bound it on a
     // 250 KB answer and on inputs shaped to make a regex backtrack.
     const nfBig = "The loop starts at index 1, which skips the first item — e.g. one line, or two. ".repeat(3000) + "\n\nWant me to fix the loop, add a test, or open a PR?";
@@ -4222,7 +4339,7 @@ const lbProvider = (global.__participant || {}).followupProvider;
     // PA (planAgent), HQ (headless asks), DM (which model answers). One fake
     // server records the wire: what the bridge sent, and what it replied.
     {
-        const v5 = { agentCalls: [], sessions: [], messages: [], replies: [], summarize: [], sse: [], asks: [], mode: "answer", sessionMsgs: {}, held: [] };
+        const v5 = { agentCalls: [], sessions: [], messages: [], replies: [], summarize: [], sse: [], asks: [], mode: "answer", sessionMsgs: {}, held: [], patches: [], aborts: [], children: {}, preEmit: [] };
         let v5Next = 0;
         // What GET /agent returns on 1.18.32 (trimmed): name, mode, hidden.
         const V5_AGENTS = [
@@ -4244,7 +4361,7 @@ const lbProvider = (global.__participant || {}).followupProvider;
         const v5Answer = (res, sid, model) => {
             res.writeHead(200, { "content-type": "application/json" });
             res.end(JSON.stringify({
-                info: { sessionID: sid, providerID: model.providerID, modelID: model.modelID, cost: 0, tokens: { input: 5, output: 2, reasoning: 0, total: 7, cache: { read: 0, write: 0 } } },
+                info: { sessionID: sid, providerID: model.providerID, modelID: model.modelID, cost: 0, tokens: v5.tokens ?? { input: 5, output: 2, reasoning: 0, total: 7, cache: { read: 0, write: 0 } } },
                 parts: [{ type: "text", text: `answered by ${model.providerID}/${model.modelID}` }]
             }));
         };
@@ -4255,7 +4372,7 @@ const lbProvider = (global.__participant || {}).followupProvider;
                 res.writeHead(code, { "content-type": "application/json" });
                 res.end(JSON.stringify(payload));
             };
-            if (u.pathname === "/global/health") return send(200, { healthy: true });
+            if (u.pathname === "/global/health") return send(200, v5.version ? { healthy: true, version: v5.version } : { healthy: true });
             if (u.pathname === "/global/event") {
                 res.writeHead(200, { "content-type": "text/event-stream" });
                 res.write(": hi\n\n");
@@ -4300,8 +4417,15 @@ const lbProvider = (global.__participant || {}).followupProvider;
                     v5.summarize.push({ sid: sum[1], body, dir });
                     return send(200, true);
                 }
+                if (req.method === "PATCH") {
+                    v5.patches.push({ path: u.pathname, body, dir });
+                    return send(200, {});
+                }
+                const kids = u.pathname.match(/^\/session\/([^/]+)\/children$/);
+                if (kids && req.method === "GET") return send(200, v5.children[kids[1]] ?? []);
                 const aborted = u.pathname.match(/^\/session\/([^/]+)\/abort$/);
                 if (aborted) {
+                    v5.aborts.push(aborted[1]);
                     // What 1.18.32 does: the prompt loop is cancelled (and reports
                     // MessageAbortedError) before the abort call itself returns.
                     v5Emit({ type: "session.error", properties: { sessionID: aborted[1], error: { name: "MessageAbortedError", data: { message: "Aborted" } } } });
@@ -4322,6 +4446,7 @@ const lbProvider = (global.__participant || {}).followupProvider;
                         // A tool the server reports as running, then only heartbeats.
                         v5Emit({ type: "message.part.updated", properties: { sessionID: sid, part: { id: "prt_ts", sessionID: sid, type: "tool", tool: "bash", state: { status: "running", input: { command: "npm test" }, time: { start: Date.now() } } } } });
                     }
+                    for (const ev of v5.preEmit) v5Emit(JSON.parse(JSON.stringify(ev).replace(/@sid/g, sid)));
                     if (v5.mode === "heartbeat" || v5.mode === "tool-silent") {
                         // Held; the only traffic is what 1.18.32 sends every ~10s
                         // to everyone: server.heartbeat, no session. Gives up at 6s.
@@ -4635,7 +4760,172 @@ const lbProvider = (global.__participant || {}).followupProvider;
         add("DM …also when only the event's info names the session", /attached done/.test(hq4.md) && hq4.result?.metadata?.model === "att/m2");
         Object.assign(settings, { transport: "server", executable: happy });
 
-        // LT7: a server-path run is not kept alive by server.heartbeat. The
+        // ---- RO: a read-only turn's subagents are read-only ones ----
+        // A subagent runs with its own permissions (`general` edits), so a
+        // plan turn's session allows `task` only for readOnlySubagents.
+        Object.assign(settings, { transport: "server", executable: happy, planAgent: "plan" });
+        v5.mode = "answer";
+        const roTask = (rules) => (Array.isArray(rules) ? rules.filter((r) => r.permission === "task").map((r) => `${r.action}:${r.pattern}`) : []);
+        const roFrom = v5.sessions.length;
+        const ro1 = await v5Turn("explain the cart for ro one");
+        const roS1 = v5.sessions[roFrom];
+        add("RO a plan turn's new session denies every subagent but explore (last match wins)", JSON.stringify(roTask(roS1?.body?.permission)) === JSON.stringify(["deny:*", "allow:explore"]) && hqRules(roS1));
+        const roPatch0 = v5.patches.length;
+        const ro2 = await v5Turn("now add the test for ro", { command: "dev" }, v5Hist(ro1));
+        const roP2 = v5.patches.slice(roPatch0);
+        add(
+            "RO the next turn in that session, /dev, PATCHes the headless rules back (subagents unrestricted)",
+            /answered by/.test(ro2.md) && roP2.length === 1 && roP2[0].path === `/session/${roS1.id}` && roP2[0].dir === work &&
+                roTask(roP2[0].body.permission).length === 0 && hqRules({ body: roP2[0].body })
+        );
+        const ro3 = await v5Turn("and explain it again for ro", {}, v5Hist(ro1, ro2));
+        const ro4 = await v5Turn("once more for ro", {}, v5Hist(ro1, ro2, ro3));
+        const roP3 = v5.patches.slice(roPatch0 + 1);
+        add("RO …a plan turn after it restores the read-only rules, and a second plan turn PATCHes nothing", /answered by/.test(ro4.md) && roP3.length === 1 && JSON.stringify(roTask(roP3[0].body.permission)) === JSON.stringify(["deny:*", "allow:explore"]));
+        settings.readOnlySubagents = [];
+        const roFrom2 = v5.sessions.length;
+        await v5Turn("explain the cart for ro none");
+        add("RO readOnlySubagents [] denies every subagent on a read-only turn", JSON.stringify(roTask(v5.sessions[roFrom2]?.body?.permission)) === JSON.stringify(["deny:*"]));
+        settings.readOnlySubagents = ["explore"];
+        add("RO turnPermission(false) is exactly the headless rules", JSON.stringify(ext.__test.turnPermission(false)) === JSON.stringify(v5.sessions[0].body.permission.filter((r) => r.permission !== "task")));
+
+        // ---- SC: what the subagents cost joins the turn ----
+        v5.mode = "asks";
+        const scSid = `ses_v5${v5.sessions.length + 1}`;
+        v5.asks = [
+            { type: "session.created", properties: { info: { id: "ses_sc_kid", parentID: scSid } } },
+            { type: "message.updated", properties: { sessionID: "ses_sc_kid", info: { id: "msg_k1", sessionID: "ses_sc_kid", role: "assistant", cost: 0.01 } }, wait: 1 },
+            { type: "message.updated", properties: { sessionID: "ses_sc_kid", info: { id: "msg_k1", sessionID: "ses_sc_kid", role: "assistant", cost: 0.02 } }, wait: 1 },
+            { type: "message.updated", properties: { sessionID: scSid, info: { id: "msg_root", sessionID: scSid, role: "assistant", cost: 7 } }, wait: 1 },
+            { type: "message.updated", properties: { sessionID: "ses_stranger", info: { id: "msg_x", sessionID: "ses_stranger", role: "assistant", cost: 3 } }, wait: 1 }
+        ];
+        const scLog = logLines.length;
+        const sc1 = await v5Turn("explain with a subagent for sc");
+        const scLine = logLines.slice(scLog).find((l) => /metrics first byte/.test(l)) || "";
+        add(`SC a subagent's cost is counted once per message (last value), never the root's or a stranger's (${scLine.slice(scLine.indexOf("cost:"))})`, /answered by/.test(sc1.md) && /cost: \$0\.0200 \(subagents 1: \$0\.0200\)/.test(scLine));
+        v5.asks = [];
+
+        // ---- AT: stopping a run stops its subagents ----
+        v5.mode = "heartbeat";
+        settings.idleTimeoutMs = 1200;
+        const atSid = `ses_v5${v5.sessions.length + 1}`;
+        v5.preEmit = [{ type: "session.created", properties: { info: { id: "ses_at_kid", parentID: "@sid" } } }];
+        v5.children[atSid] = [{ id: "ses_at_listed" }];
+        v5.aborts.length = 0;
+        await v5Turn("explain slowly for at");
+        await waitFor(() => v5.aborts.includes("ses_at_kid") && v5.aborts.includes("ses_at_listed"), 3000);
+        add(
+            `AT an idle-capped server run aborts its subagent sessions too: seen on the stream and listed by /children (${v5.aborts.join(",")})`,
+            v5.aborts[0] === atSid && v5.aborts.includes("ses_at_kid") && v5.aborts.includes("ses_at_listed")
+        );
+        v5.preEmit = [];
+        settings.idleTimeoutMs = 0;
+        v5.mode = "answer";
+
+        // ---- LA: `a:<agent>` per lane ----
+        add(
+            "LA lane prefixes parse in either order; `a: x` is prose, a nested name is a name",
+            JSON.stringify(ext.__test.splitLanePrefixes("a:look m:tundra read the logs")) === JSON.stringify({ model: "tundra", agent: "look", task: "read the logs" }) &&
+                JSON.stringify(ext.__test.splitLanePrefixes("m:tundra a:team/look: read")) === JSON.stringify({ model: "tundra", agent: "team/look", task: "read" }) &&
+                JSON.stringify(ext.__test.splitLanePrefixes("a: the bug in auth")) === JSON.stringify({ task: "a: the bug in auth" }) &&
+                JSON.stringify(ext.__test.splitLanePrefixes("agent: look review auth")) === JSON.stringify({ agent: "look", task: "review auth" })
+        );
+        Object.assign(settings, { transport: "auto", attachDevToServer: true, executable: happy, planAgent: "plan" });
+        fs.rmSync(path.join(work, "fake-ok.js.argv"), { force: true });
+        const laLog = logLines.length;
+        const la1 = await v5Turn("a:look lane one for la | a:explore lane two for la | a:ghost lane three for la | a:title lane four", { command: "parallel" });
+        const laArgv = lastArgv("fake-ok.js");
+        const laRuns = logLines.slice(laLog).filter((l) => /\$ .*fake-ok\.js run /.test(l));
+        add("LA a listed primary agent runs its lane as itself", laArgv[laArgv.indexOf("--agent") + 1] === "look" && laRuns.length === 1 && /### 1\. lane one for la · look/.test(la1.md));
+        add("LA …and its lane is not auto-approved (only the built-in plan is)", !laArgv.includes("--auto"));
+        add(
+            "LA a subagent, an unknown and a hidden agent are refused before anything runs (the CLI would run them as build)",
+            /`explore` is a subagent — not run/.test(la1.md) && /No `ghost` agent in OpenCode for this folder — not run/.test(la1.md) && /`title` is a hidden agent — not run/.test(la1.md)
+        );
+        add("LA the header says an `a:` lane runs with its agent's permissions", /An `a:` lane runs with its agent's own permissions/.test(la1.md));
+        add(
+            "LA Retry lanes keeps each lane's agent",
+            ext.__test.retryLanesPrompt([{ task: "one", agent: "look", model: "p/m", answer: "", timedOut: true, ran: true }, { task: "two", answer: "", timedOut: true, ran: true }]) === "a:look m:p/m one\n---\ntwo"
+        );
+        add("LA laneAgentProblem: an unlisted folder is never trusted", /not run/.test(ext.__test.laneAgentProblem("look", undefined)) && ext.__test.laneAgentProblem("look", [{ name: "look", mode: "all" }]) === undefined);
+        Object.assign(settings, { transport: "server", executable: happy });
+
+        // ---- RT: a subagent that stopped gets a Resume chip, first ----
+        const chipsOf = (r) => global.__participant.followupProvider.provideFollowups(r, {}, stream().token) || [];
+        v5.mode = "asks";
+        const rtSid = `ses_v5${v5.sessions.length + 1}`;
+        v5.asks = [{
+            type: "message.part.updated",
+            properties: { part: { id: "prt_task1", sessionID: rtSid, type: "tool", tool: "task", state: { status: "error", error: "provider overloaded", input: { subagent_type: "explore", description: "find auth handlers", prompt: "look" }, metadata: { sessionId: "ses_rt_child" }, time: { start: 0, end: 9 } } } },
+            wait: 1
+        }];
+        const rt1 = await v5Turn("explain auth with a subagent for rt");
+        const rtChips = chipsOf(rt1.result);
+        add(
+            `RT a failed task call leaves its agent, description and child session in the metadata (${JSON.stringify(rt1.result?.metadata?.failedTask)})`,
+            JSON.stringify(rt1.result?.metadata?.failedTask) === JSON.stringify({ agent: "explore", description: "find auth handlers", taskId: "ses_rt_child" })
+        );
+        add(
+            `RT …and the first chip resumes it by task_id, under the turn's kind (${rtChips.map((c) => c.label).join(" | ")})`,
+            rtChips.length >= 1 && /Resume explore$/.test(rtChips[0].label) && rtChips[0].command === "plan" &&
+                rtChips[0].prompt === P.RESUME_TASK.replace("{agent}", "explore").replace("{description}", "find auth handlers").replace("{task}", "ses_rt_child")
+        );
+        v5.asks = [];
+        v5.mode = "answer";
+        const rt2 = await v5Turn("explain auth with no subagent for rt");
+        add("RT no failed task, no Resume chip", !rt2.result?.metadata?.failedTask && !chipsOf(rt2.result).some((c) => /Resume/.test(c.label)));
+
+        // ---- CP: /compact, and a Compact chip when autocompact is off ----
+        v5.summarize.length = 0;
+        v5.tokens = { input: 5, output: 2, reasoning: 0, total: 70000, cache: { read: 0, write: 0 } };
+        const cp1 = await v5Turn("explain the cart for cp");
+        const cpChips = chipsOf(cp1.result);
+        add(`CP autocompact off and 70k of context: a Compact chip (${cpChips.map((c) => c.label).join(" | ")})`, cpChips.some((c) => /Compact · 70k$/.test(c.label) && c.command === "compact" && c.prompt === ""));
+        v5.tokens = undefined;
+        const cp2 = await v5Turn("explain the cart small for cp");
+        add("CP …and none with a small context", !chipsOf(cp2.result).some((c) => /Compact/.test(c.label)));
+        const cp3 = await v5Turn("", { command: "compact" }, v5Hist(cp1));
+        add(
+            `CP /compact summarises this chat's session with its model (${JSON.stringify(v5.summarize.map((x) => x.sid))})`,
+            v5.summarize.length === 1 && v5.summarize[0].sid === cp1.result.metadata.sessionId && v5.summarize[0].dir === work &&
+                v5.summarize[0].body.providerID === "oc" && /Compacted `ses_v5\d+` \(context was 70k\)/.test(cp3.md)
+        );
+        const cp4 = await v5Turn("", { command: "compact" });
+        add("CP /compact in a chat with no session runs nothing", /Nothing to compact/.test(cp4.md) && v5.summarize.length === 1);
+        add("CP /compact is a control command, in /help and the manifest", ext.__test.slashCommands.includes("compact") && /`\/compact`/.test(cp4.md === "" ? "" : (await v5Turn("", { command: "help" })).md));
+
+        // ---- SU: a working subagent keeps its parent alive, and is shown ----
+        v5.mode = "asks";
+        settings.idleTimeoutMs = 1200;
+        const suSid = `ses_v5${v5.sessions.length + 1}`;
+        const suKid = { type: "message.part.updated", properties: { part: { id: "prt_k", sessionID: "ses_su_kid", type: "tool", tool: "grep", state: { status: "running", input: { pattern: "redirect" } } } }, wait: 700 };
+        v5.asks = [
+            { type: "message.part.updated", properties: { part: { id: "prt_t", sessionID: suSid, type: "tool", tool: "task", state: { status: "running", input: { subagent_type: "explore", description: "find it" }, metadata: { sessionId: "ses_su_kid" }, time: { start: Date.now() } } } }, wait: 1 },
+            { type: "session.created", properties: { info: { id: "ses_su_kid", parentID: suSid, title: "find it (@explore subagent)" } } },
+            suKid, suKid, suKid
+        ];
+        const su1 = await v5Turn("explain with a long subagent for su");
+        add("SU a parent whose subagent keeps working is not idle-capped (2.1s of child events, 1.2s cap)", /answered by/.test(su1.md) && !su1.result?.metadata?.timedOut);
+        add(
+            `SU …and the live line names the subagent and its tool`,
+            su1.h.main.parts.some((p) => /explore › grep redirect/.test(String(p.content ?? ""))) ||
+                su1.h.main.tasks.some((t) => t && /explore › grep redirect/.test(String(t.title ?? "")))
+        );
+        settings.idleTimeoutMs = 0;
+        v5.asks = [];
+        v5.mode = "answer";
+
+        // ---- VN: a server outside the tested versions says so, once ----
+        v5.version = "1.18.30";
+        const vn0 = await v5Turn("explain the cart for vn tested");
+        v5.version = "1.19.2";
+        const vn1 = await v5Turn("explain the cart for vn new");
+        const vn2 = await v5Turn("explain the cart for vn again");
+        v5.version = undefined;
+        add("VN a version inside the tested range says nothing", !/outside the versions/.test(vn0.md));
+        add("VN …one outside it says so once per window, and the turn runs", /OpenCode 1\.19\.2 is outside the versions this bridge was tested with \(1\.18\.27–1\.18\.34\)/.test(vn1.md) && /answered by/.test(vn1.md) && !/outside the versions/.test(vn2.md));
+
+
         // demux hands unattributed events to every subscriber, and v184 counted
         // them as the run's own: a turn blocked on an ask never hit the idle cap
         // (real 1.18.32: >140s with idleTimeoutMs 60s, killed by hand).
@@ -4746,6 +5036,29 @@ const lbProvider = (global.__participant || {}).followupProvider;
         settings.fallbackModels = [];
 
         for (const r of v5.sse) r.end();
+        // ---- EF/CX on the server transport ----
+        {
+            const efs1 = await v5Turn("effort:high explain the cart for efs one");
+            add("EF server: effort:high is the prompt body's variant", lastMsg().body.variant === "high" && efs1.result?.metadata?.effort === "high");
+            await v5Turn("explain the cart for efs two");
+            add("EF server: no effort sends no variant (OpenCode resets the session to its default)", !("variant" in lastMsg().body));
+            // OpenCode sizes a session by its last step with cache reads in: a
+            // cached 70k context had input 100 and never triggered a compaction.
+            Object.assign(settings, { autoCompact: true, autoCompactEveryTurns: 99 });
+            v5.summarize.length = 0;
+            v5.tokens = { input: 100, output: 50, reasoning: 0, total: 0, cache: { read: 70000, write: 0 } };
+            const cxs1 = await v5Turn("explain the cart for cxs one");
+            await waitFor(() => v5.summarize.length > 0, 2000);
+            add("CX server: a cached 70k context is compacted", v5.summarize.length === 1 && cxs1.result?.metadata?.context === 70150);
+            v5.summarize.length = 0;
+            v5.tokens = { input: 20000, output: 50, reasoning: 0, total: 0, cache: { read: 0, write: 0 } };
+            await v5Turn("explain the cart for cxs two");
+            await new Promise((r) => setTimeout(r, 200));
+            add("CX server: a 20k context is not", v5.summarize.length === 0);
+            delete v5.tokens;
+            Object.assign(settings, { autoCompact: false, autoCompactEveryTurns: 8 });
+        }
+
         v5Server.closeAllConnections?.();
         v5Server.close();
         Object.assign(settings, v5Saved);
@@ -4796,6 +5109,20 @@ const lbProvider = (global.__participant || {}).followupProvider;
         add("DM …and 'Use OpenCode default' clears it there", writes.length === 1 && writes[0][1] === undefined && writes[0][2] === F);
         await pick("Use OpenCode default", {});
         add("DM …and with nothing pinned it writes nothing", writes.length === 0 && /No model was pinned/.test(infos[0] || ""));
+
+        // AE: every model row leads with the same icon the composer uses
+        // (src/compose.ts), so a file-path label can never render its own black
+        // background-image icon and the check mark is the only row that varies.
+        let aeItems = [];
+        scope = { globalValue: "prov/pick" };
+        vscodeStub.window.showQuickPick = async (items) => ((aeItems = items), undefined);
+        await registeredCommands.get("opencodeCopilotBridge.setModel")();
+        const aeRows = aeItems.filter((i) => i.modelId);
+        add("AE the picker lists the catalog's models", aeRows.length >= 2);
+        add("AE every model row's label leads with $(chip)", aeRows.length >= 2 && aeRows.every((i) => i.label.startsWith("$(chip) ")));
+        add("AE the action rows keep their own icons", aeItems.filter((i) => !i.modelId).every((i) => !i.label.startsWith("$(chip) ")));
+        add("AE the pinned row still carries the check mark", aeRows.some((i) => /\$\(check\)/.test(i.description || "")));
+
         vscodeStub.workspace.getConfiguration = realConfig;
         vscodeStub.window.showQuickPick = realPick;
         vscodeStub.window.showInformationMessage = realInfo;
@@ -4888,6 +5215,190 @@ const lbProvider = (global.__participant || {}).followupProvider;
         const LK_BASH = new Set(["ls", "ls *", "pwd", "cat *", "head *", "wc *", "grep *", "rg *", "find *", "git status", "git status *", "git show *", "git log *", "git diff *", "git rev-parse *", "git branch", "git branch --list*"]);
         const lkAllowed = lkBash.filter((r) => r[2] === "allow").map((r) => r[1]);
         add(`LK bash allows only inspect commands (${lkAllowed.length})`, lkAllowed.length >= 10 && lkAllowed.every((c) => LK_BASH.has(c)));
+    }
+
+
+    // ==================== v202 ====================
+    // EF: reasoning effort (OpenCode model variants). OpenCode looks a variant
+    // name up in the model's variants and ignores a miss without a word
+    // (session/llm/request.ts, 1.18.34), so the bridge checks it against the
+    // catalog: inline `effort:` is refused, the setting is dropped with a note.
+    {
+        const efInfo = {
+            "acme/tundra": { id: "acme/tundra", name: "Tundra", provider: "acme", providerName: "Acme", context: 200000, variants: ["low", "medium", "high"] },
+            "acme/plain": { id: "acme/plain", name: "Plain", provider: "acme", providerName: "Acme", context: 32000, variants: [] }
+        };
+        globalMemento.set("opencode.models.v2", { models: Object.keys(efInfo), info: efInfo, fetchedAt: Date.now() });
+        const efLog = path.join(work, "ef-argv.jsonl");
+        const efFake = writeFake(
+            "fake-ef.js",
+            [
+                { type: "text", sessionID: "ses_ef", part: { text: "ef answer" } },
+                { type: "step_finish", sessionID: "ses_ef", part: { reason: "stop", cost: 0, tokens: { input: 10, output: 5, reasoning: 0, total: 15, cache: { read: 0, write: 0 } } } }
+            ],
+            `fs.appendFileSync(${JSON.stringify(efLog)}, JSON.stringify(process.argv) + "\\n");\n`
+        );
+        const efRuns = () =>
+            fs.existsSync(efLog)
+                ? fs.readFileSync(efLog, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((a) => !a.includes("models"))
+                : [];
+        const efVariant = (a) => (a.includes("--variant") ? a[a.indexOf("--variant") + 1] : undefined);
+        const efSaved = { ...settings };
+        Object.assign(settings, { executable: efFake, model: "acme/tundra", effort: "", fallbackModels: [] });
+        const efTurn = async (prompt, extra = {}) => {
+            fs.rmSync(efLog, { force: true });
+            memento.clear();
+            const st = stream();
+            const result = await global.__handler({ prompt, ...extra }, { history: [] }, st.response, st.token);
+            return { md: plain(st.chatMarkdown.join("")), result, runs: efRuns() };
+        };
+        const ef1 = await efTurn("effort:high explain the cart totals");
+        add("EF effort:high reaches the CLI as --variant high", ef1.runs.length === 1 && efVariant(ef1.runs[0]) === "high");
+        add("EF the prefix is not part of the task OpenCode gets", ef1.runs[0] && ef1.runs[0][ef1.runs[0].length - 1] === "explain the cart totals");
+        add("EF the turn says which effort it sent and records it", /effort `high`/.test(ef1.md) && ef1.result?.metadata?.effort === "high");
+        const ef2 = await efTurn("effort:max explain the cart totals");
+        add("EF a level the model lacks is refused before anything runs", ef2.runs.length === 0 && ef2.result?.metadata?.kind === "idle");
+        add("EF the refusal lists the model's levels, lowest first", /`effort:max` is not a level of `acme\/tundra`\. Its levels: `low`, `medium`, `high`\./.test(ef2.md));
+        const ef3 = await efTurn("e:LOW explain the cart totals");
+        add("EF e: is short for effort:, matched without case", efVariant(ef3.runs[0] || []) === "low");
+        const ef4 = await efTurn("explain the cart totals");
+        add("EF no effort: no --variant (the model's default)", ef4.runs.length === 1 && efVariant(ef4.runs[0]) === undefined && ef4.result?.metadata?.effort === undefined);
+        settings.effort = "high";
+        const ef5 = await efTurn("explain the cart totals");
+        add("EF the effort setting applies to every turn", efVariant(ef5.runs[0] || []) === "high" && !/effort `high`/.test(ef5.md));
+        settings.effort = "max";
+        const ef6 = await efTurn("explain the cart totals");
+        add("EF a setting the model lacks runs at its default, with a note", ef6.runs.length === 1 && efVariant(ef6.runs[0]) === undefined && /ran at its default/.test(ef6.md));
+        settings.effort = "";
+        settings.model = "acme/unknown";
+        const ef7 = await efTurn("effort:turbo explain the cart totals");
+        add("EF a model the catalog does not describe gets the level as asked", efVariant(ef7.runs[0] || []) === "turbo");
+        settings.model = "acme/tundra";
+        const P = ext.__test.parseChatPrompt;
+        add("EF 'e: the bug' is prose, not an effort", P("e: the bug in cart.ts").effort === undefined && P("e: the bug in cart.ts").task === "e: the bug in cart.ts");
+        add("EF effort combines with dev: and model:", JSON.stringify(P("dev: effort: high m:tundra fix it")) === JSON.stringify({ kind: "dev", model: "tundra", task: "fix it", effort: "high", explicitKind: true }));
+        const E = (m, want, strict) => ext.__test.effortFor?.(m, want, strict, efInfo) ?? {};
+        add("EF a model with no levels says so", /has no effort levels/.test(E("acme/plain", "high", true).problem || "") && E("acme/plain", "high", true).variant === undefined);
+        add("EF the level keeps the catalog's spelling", E("acme/tundra", "HIGH", true).variant === "high");
+        const H = (m, cur) => (ext.__test.higherEffort ? ext.__test.higherEffort(m, cur, efInfo) : "missing");
+        add("EF the next level up: high from the default, none above the top or when unknown", H("acme/tundra") === "high" && H("acme/tundra", "low") === "medium" && H("acme/tundra", "high") === undefined && H("acme/plain") === undefined && H("acme/nope") === undefined);
+        const efProv = ext.__test.parseProviders({ providers: [{ id: "p", models: { m: { name: "M", variants: { low: { reasoningEffort: "low" }, high: { reasoningEffort: "high", apiKey: "sk-ef-secret" }, max: { disabled: true } } } } }] });
+        add("EF the catalog keeps variant names, drops disabled ones", JSON.stringify(efProv["p/m"]?.variants) === JSON.stringify(["low", "high"]));
+        add("EF a variant's options (credentials) are never kept", !JSON.stringify(efProv).includes("sk-ef-secret"));
+        const efVerbose = ext.__test.parseVerboseModels('p/v\n{"name":"V","variants":{"minimal":{},"max":{"thinking":{"budget":9}}}}\np/none\n{"name":"N"}');
+        add("EF opencode models --verbose: names, or unknown when absent", JSON.stringify(efVerbose["p/v"]?.variants) === JSON.stringify(["minimal", "max"]) && efVerbose["p/none"]?.variants === undefined);
+        // Lanes: a level is checked per lane; a lane whose model lacks it runs without.
+        fs.rmSync(efLog, { force: true });
+        const efLane = stream();
+        await global.__handler({ prompt: "effort:high m:acme/tundra review src/a.ts | m:acme/plain review src/b.ts", command: "parallel" }, { history: [] }, efLane.response, efLane.token);
+        const efLaneRuns = efRuns();
+        const efOn = (m) => efLaneRuns.find((a) => a.includes(m));
+        add("EF a lane on a model with the level gets --variant", efOn("acme/tundra") && efVariant(efOn("acme/tundra")) === "high");
+        add("EF a lane on a model without it runs at its default, with a note", efOn("acme/plain") && efVariant(efOn("acme/plain")) === undefined && /review src\/b\.ts: `effort: high` is not a level of `acme\/plain`/.test(plain(efLane.chatMarkdown.join(""))));
+
+        // CX: context size. OpenCode sizes a session by the LAST step's tokens
+        // (session/overflow.ts); summing input over steps counted the context
+        // once per step and left out cache reads.
+        const cxFake = writeFake("fake-cx.js", [
+            { type: "text", sessionID: "ses_cx", part: { text: "cx answer" } },
+            { type: "step_finish", sessionID: "ses_cx", part: { reason: "tool-calls", cost: 0, tokens: { input: 25000, output: 100, reasoning: 0, total: 0, cache: { read: 0, write: 0 } } } },
+            { type: "step_finish", sessionID: "ses_cx", part: { reason: "tool-calls", cost: 0, tokens: { input: 300, output: 100, reasoning: 0, total: 0, cache: { read: 25000, write: 0 } } } },
+            { type: "step_finish", sessionID: "ses_cx", part: { reason: "stop", cost: 0, tokens: { input: 400, output: 200, reasoning: 0, total: 0, cache: { read: 25400, write: 0 } } } }
+        ]);
+        Object.assign(settings, { executable: cxFake, model: "acme/tundra" });
+        logLines.length = 0;
+        const cxSt = stream();
+        const cx = await global.__handler({ prompt: "explain the cx cart flow" }, { history: [] }, cxSt.response, cxSt.token);
+        add("CX the turn's context is its last step (input + output + cache), not the sum", cx?.metadata?.context === 26000);
+        add("CX spend still sums every step", cx?.metadata?.tokensIn === 25700);
+        add("CX the metrics log line names the context", logLines.some((l) => /context: 26000/.test(l)));
+        const cxHist = [{ participant: "opencodeCopilotBridge.chat", prompt: "cx", result: cx }];
+        add("CX a reopened chat recovers the context size", ext.__test.threadSession(cxHist, work)?.context === 26000);
+        const cxS = stream();
+        await global.__handler({ prompt: "", command: "session" }, { history: cxHist }, cxS.response, cxS.token);
+        add("CX /session shows the context against the model's window", plain(cxS.chatMarkdown.join("")).includes("context 26k of 200k (13%)"));
+        add("CX without a known window it shows the size alone", ext.__test.contextNote?.(26000, "acme/unknown") === "context 26k" && ext.__test.contextNote?.(0, "acme/tundra") === "");
+
+        // AP: autoParallel. `auto` runs a message that is itself a list of 2-5
+        // read-only steps with concrete targets as lanes; anything typed keeps one turn.
+        const apList = "1. review src/cart.ts for rounding\n2. trace `subtotal()` callers in src/checkout.ts\n3. check src/tax.ts against the spec";
+        Object.assign(settings, { executable: efFake, model: "", autoParallel: "auto" });
+        const apTurn = async (prompt, extra = {}) => {
+            fs.rmSync(efLog, { force: true });
+            memento.clear();
+            const st = stream();
+            const result = await global.__handler({ prompt, ...extra }, { history: [] }, st.response, st.token);
+            return { md: plain(st.chatMarkdown.join("")), result, runs: efRuns() };
+        };
+        const ap1 = await apTurn(apList);
+        add("AP auto: a listed message runs as one lane per step", ap1.runs.length === 3 && ap1.result?.metadata?.kind === "parallel" && ap1.result?.metadata?.autoLanes === true);
+        add("AP auto: each lane gets its own step, and the turn says why", ap1.runs.some((a) => a[a.length - 1] === "trace subtotal() callers in src/checkout.ts") && /`autoParallel`: your 3 listed steps run as 3 lanes/.test(ap1.md));
+        const ap2 = await apTurn(`plan: ${apList}`);
+        add("AP auto: a plan: prefix keeps one turn", ap2.runs.length === 1 && ap2.result?.metadata?.kind === "plan");
+        const ap3 = await apTurn(apList, { command: "plan" });
+        add("AP auto: /plan keeps one turn", ap3.runs.length === 1);
+        const ap4 = await apTurn("1. fix src/cart.ts rounding\n2. review src/tax.ts");
+        add("AP auto: a list with an edit step is one turn", ap4.runs.length === 1);
+        const ap5 = await apTurn("1. review it\n2. check them");
+        add("AP auto: steps without a concrete target are one turn", ap5.runs.length === 1);
+        settings.autoParallel = "offer";
+        const ap6 = await apTurn(apList);
+        add("AP offer (the default): a listed message is one turn", ap6.runs.length === 1 && ap6.result?.metadata?.kind === "plan");
+        const apAnswer = `Plan:\n\n${apList}`;
+        const apChip = (chips) => chips.some((c) => c.command === "parallel");
+        add("AP offer: a lanes-shaped plan answer still gets the lanes chip", apChip(ext.__test.suggestFollowups({ agent: "plan", answer: apAnswer, steps: [] })));
+        settings.autoParallel = "off";
+        add("AP off: no lanes chip either", !apChip(ext.__test.suggestFollowups({ agent: "plan", answer: apAnswer, steps: [] })));
+        add("AP the prompt rule is the chip's rule", JSON.stringify(ext.__test.laneItems?.(apList, ext.__test.splitLanes)) === JSON.stringify(["review src/cart.ts for rounding", "trace subtotal() callers in src/checkout.ts", "check src/tax.ts against the spec"]));
+        settings.autoParallel = "offer";
+
+        // SG: a subagent call (the `task` tool) is labelled by who does it.
+        const D = (...a) => ext.__test.stepDetail?.(...a);
+        add("SG a task call reads 'agent: description'", D({ subagent_type: "explore", description: "find auth handlers", prompt: "long prompt" }) === "explore: find auth handlers");
+        add("SG other tools keep their precedence", D({ command: "npm test", description: "run tests" }) === "npm test" && D({ filePath: "a.ts" }) === "a.ts" && D({}) === "{}" && D(undefined, "") === "");
+        const sgFake = writeFake("fake-sg.js", [
+            { type: "tool_use", sessionID: "ses_sg", part: { tool: "task", state: { input: { description: "find auth handlers", prompt: "Search the repo", subagent_type: "explore" }, output: "found 3", time: { start: 0, end: 50 } } } },
+            { type: "text", sessionID: "ses_sg", part: { text: "sg answer" } },
+            { type: "step_finish", sessionID: "ses_sg", part: { reason: "stop", cost: 0, tokens: { input: 1, output: 1, reasoning: 0, total: 2, cache: { read: 0, write: 0 } } } }
+        ]);
+        settings.executable = sgFake;
+        const sgSt = stream();
+        await global.__handler({ prompt: "where are the auth handlers in sg" }, { history: [] }, sgSt.response, sgSt.token);
+        add("SG the chat row names the subagent", sgSt.progress.concat(sgSt.chatMarkdown).some((l) => /explore: find auth handlers/.test(plain(l))));
+
+        Object.assign(settings, efSaved);
+        globalMemento.clear();
+        memento.clear();
+    }
+
+    // FT: two answer-derived chips. Failing tests named in a dev answer get
+    // "Fix failing tests" instead of "Test it"; an unsettled answer on a model
+    // with a higher level gets one more look at that effort.
+    {
+        const ft = (agent, answer, steps = [], nextEffort) => ext.__test.naturalFollowups({ agent, answer, steps, nextEffort });
+        const FN = FJ.natural;
+        const ftEdit = [{ tool: "edit", detail: "src/cart.ts", filePath: "src/cart.ts" }];
+        const ftLabel = (k, vars = {}) => (FN[k] ? `${FN[k].kao} ${FN[k].label.replace(/\{(\w+)\}/g, (_, v) => vars[v])}` : `(no natural.${k})`);
+        const has = (chips, k, vars) => chips.some((c) => c.label === ftLabel(k, vars));
+        const ft1 = ft("dev", "Updated the rounding in cart.ts.\n\n2 tests failed: cart rounding, tax rounding.", ftEdit);
+        add("FT a dev answer reporting failing tests offers Fix failing tests, not Test it", has(ft1, "fixTests") && !has(ft1, "tests") && ft1.find((c) => c.label === ftLabel("fixTests")).command === "dev");
+        const ft2 = ft("dev", "Updated the rounding in cart.ts. The tests are still failing on the tax case.", ftEdit);
+        add("FT 'tests are still failing' counts", has(ft2, "fixTests"));
+        const ft3 = ft("dev", "Updated the rounding in cart.ts. All 12 tests pass, 0 failed.", ftEdit);
+        add("FT '0 failed' is not a failure; passing tests get neither chip", !has(ft3, "fixTests") && !has(ft3, "tests"));
+        const ft3b = ft("dev", "Updated the rounding in cart.ts. 0 tests failed.", ftEdit);
+        const ft3c = ft("dev", "Updated the rounding in cart.ts. No tests failed.", ftEdit);
+        add("FT '0 tests failed' is not a failure", !has(ft3b, "fixTests"));
+        add("FT 'No tests failed' is not a failure", !has(ft3c, "fixTests"));
+        const ft4 = ft("plan", "The checkout flow calls subtotal() twice. 3 tests failed in CI last week.");
+        add("FT a plan answer never gets Fix failing tests", !has(ft4, "fixTests"));
+        const ft5 = ft("plan", "The rounding happens in subtotal(). I'm not sure whether tax.ts rounds again before the total.", [], "high");
+        const ftDeep = ft5.find((c) => c.label === ftLabel("deeper", { effort: "high" }));
+        add("FT an unsure answer with a higher level gets Dig deeper", Boolean(ftDeep) && ftDeep.command === "plan");
+        add("FT Dig deeper sends its effort as a prefix the next turn parses", ftDeep && ext.__test.parseChatPrompt(ftDeep.prompt).effort === "high" && ext.__test.parseChatPrompt(ftDeep.prompt).task === FN.deeper?.prompt.replace("{tail}", FJ.tail));
+        add("FT no higher level: no Dig deeper", !ft("plan", "I'm not sure whether tax.ts rounds again.", []).some((c) => /Dig deeper/.test(c.label)));
+        add("FT a settled answer: no Dig deeper", !ft("plan", "The rounding happens in subtotal() and nowhere else.", [], "high").some((c) => /Dig deeper/.test(c.label)));
+        add("FT a strange level name never reaches a prompt", !ft("plan", "I'm not sure why it fails.", [], "high; rm -rf").some((c) => /Dig deeper/.test(c.label)));
     }
 
     // deactivate() runs near the end (AGENTS.md §5): the groups after it must not
@@ -5141,11 +5652,11 @@ const lbProvider = (global.__participant || {}).followupProvider;
         fs.writeFileSync(ocJson, JSON.stringify({ model: "acme-gateway/Tundra" }));
         settings.model = "";
         mnWhere = {};
-        await mnPick((items) => items.find((i) => i.label.startsWith("Oasis (")));
+        await mnPick((items) => items.find((i) => i.label.startsWith("$(chip) Oasis (")));
         const mnTundra = mnItems.find((i) => i.modelId === "acme-gateway/Tundra");
         add(
             "MN the picker shows names, the id beside them, provider and context below",
-            mnTundra?.label === "Tundra (Model-1, Code generation & refactors)" && mnTundra.description.includes("acme-gateway/Tundra") && mnTundra.detail === "Acme · 200k context"
+            mnTundra?.label === "$(chip) Tundra (Model-1, Code generation & refactors)" && mnTundra.description.includes("acme-gateway/Tundra") && mnTundra.detail === "Acme · 200k context"
         );
         add("MN picking by name pins the id", mnWrites.length === 1 && mnWrites[0][1] === "acme-gateway/Oasis");
         add("MN 'Use OpenCode default' names what OpenCode picks", /Use OpenCode default \(Tundra \(Model-1, Code generation & refactors\), from opencode\.json\)/.test(mnItems[0].label));
@@ -5718,6 +6229,157 @@ const lbProvider = (global.__participant || {}).followupProvider;
         settings.transport = bootSaved.transport;
         settings.serverPort = bootSaved.port;
         add("RV Stop during a parallel turn's cold server boot ends the turn within the second", bootTook < 1300);
+
+        // SV: a fixed serverPort held by a listener that accepts and never
+        // answers (a hung server left by another window). Reported live:
+        // `serve exited (1)` then `did not become healthy on …:53200` — every
+        // turn and compaction lost 20 s. Now: a server of this window's own on
+        // a free port, and the squatter is sent nothing but the health probe.
+        const svSeen = [];
+        const svSquat = http.createServer((req) => svSeen.push(req.url)); // never answers
+        await new Promise((r) => svSquat.listen(0, "127.0.0.1", r));
+        const svPort = svSquat.address().port;
+        const svFake = writeFake(
+            "fake-sv-serve.js",
+            [],
+            "const i = process.argv.indexOf('--port'); if (process.argv.includes('serve') && i > 0) require('http').createServer((q, s) => { s.setHeader('content-type', 'application/json'); s.end(JSON.stringify({ healthy: true })); }).listen(Number(process.argv[i + 1]), '127.0.0.1');\n"
+        );
+        const svSaved = { exe: settings.executable, transport: settings.transport, port: settings.serverPort, poll: settings.serverStartupPollMs };
+        Object.assign(settings, { executable: svFake, transport: "server", serverPort: svPort, serverStartupPollMs: 50 });
+        ext.deactivate();
+        const svLog = logLines.length;
+        const svT0 = Date.now();
+        const svStream = stream();
+        await global.__handler({ prompt: "a for sv | b for sv", command: "parallel" }, {}, svStream.response, svStream.token);
+        const svMs = Date.now() - svT0;
+        const svArgv = JSON.parse(fs.readFileSync(path.join(work, "fake-sv-serve.js.argv"), "utf8"));
+        const svAttach = Number((svArgv[svArgv.indexOf("--attach") + 1] || "").split(":").pop());
+        add(
+            `SV a fixed port held by a listener that never answers: this window starts its own server on a free port (${svMs}ms)`,
+            Number.isInteger(svAttach) && svAttach > 0 && svAttach !== svPort && svMs < 12000 &&
+                logLines.slice(svLog).some((l) => new RegExp(`port ${svPort} accepts connections but did not answer /global/health`).test(l))
+        );
+        add(`SV …and the squatter receives only the health probe (${svSeen.join(",")})`, svSeen.length >= 1 && svSeen.every((u) => u === "/global/health"));
+        ext.deactivate();
+        await new Promise((r) => svSquat.close(r));
+        svSquat.closeAllConnections?.();
+
+        // A server that exits names why, even when the last health poll was the
+        // one waiting at the deadline.
+        const svDie = writeFake("fake-sv-die.js", [], "if (process.argv.includes('serve')) { process.stderr.write('Error: listen EADDRINUSE: address already in use 127.0.0.1:1\\n'); process.exit(1); }\n");
+        const svFree = await new Promise((resolve) => {
+            const probe = http.createServer().listen(0, "127.0.0.1", () => {
+                const p = probe.address().port;
+                probe.close(() => resolve(p));
+            });
+        });
+        Object.assign(settings, { executable: svDie, serverPort: svFree });
+        const svDieStream = stream();
+        await global.__handler({ prompt: "explain the cart for sv die" }, {}, svDieStream.response, svDieStream.token);
+        const svDieText = plain(svDieStream.chatMarkdown.join(""));
+        add(
+            "SV a server that exits says its code and its own last error line",
+            /exited \(code 1\): Error: listen EADDRINUSE/.test(svDieText) || logLines.some((l) => /exited \(code 1\): Error: listen EADDRINUSE/.test(l))
+        );
+        add(
+            "SV lastServeLine picks the error line, not the banner after it",
+            ext.__test.lastServeLine("opencode v1\nError: listen EADDRINUSE :53200\nbye\n") === "Error: listen EADDRINUSE :53200" && ext.__test.lastServeLine("") === ""
+        );
+        ext.deactivate();
+        Object.assign(settings, { executable: svSaved.exe, transport: svSaved.transport, serverPort: svSaved.port, serverStartupPollMs: svSaved.poll });
+
+        // SB: a server this window starts may take most of a minute on a first
+        // boot. Reported on 0.0.203: `/sessions` → `did not become healthy on
+        // …:61930 within 20 s` with the process alive, and /ping healthy a moment
+        // later. The wait says so, Stop does not wait it out, and the deadline
+        // error names a live process and what it last printed.
+        const sbPort = async () =>
+            new Promise((resolve) => {
+                const probe = http.createServer().listen(0, "127.0.0.1", () => {
+                    const p = probe.address().port;
+                    probe.close(() => resolve(p));
+                });
+            });
+        const sbServe = (name, readyMs) =>
+            writeFake(
+                name,
+                [],
+                "const i = process.argv.indexOf('--port');\n" +
+                "if (process.argv.includes('serve') && i > 0) {\n" +
+                "  const t0 = Date.now(); process.stdout.write('loading plugins\\n');\n" +
+                "  require('http').createServer((q, s) => {\n" +
+                "    if (Date.now() - t0 < " + readyMs + ") return; // booting: accepts, never answers\n" +
+                "    s.setHeader('content-type', 'application/json');\n" +
+                "    s.end(q.url.startsWith('/global/health') ? JSON.stringify({ healthy: true }) : q.url.startsWith('/session') ? '[]' : '{}');\n" +
+                "  }).listen(Number(process.argv[i + 1]), '127.0.0.1');\n" +
+                "}\n"
+            );
+        const sbSaved = { exe: settings.executable, port: settings.serverPort, poll: settings.serverStartupPollMs };
+        ext.deactivate();
+        Object.assign(settings, { executable: sbServe("fake-sb-slow.js", 2200), serverPort: await sbPort(), serverStartupPollMs: 100 });
+        const sbLog = logLines.length;
+        const sb1 = stream();
+        await global.__handler({ prompt: "", command: "sessions" }, { history: [] }, sb1.response, sb1.token);
+        add(
+            "SB a slow first boot is waited for, and the wait says so",
+            sb1.progress.some((t) => /Starting the OpenCode server/.test(t)) && /No OpenCode sessions in/.test(sb1.chatMarkdown.join(""))
+        );
+        add("SB …and the log says how long the start took", logLines.slice(sbLog).some((l) => /serve on http:\/\/127\.0\.0\.1:\d+ answered after \d+\.\ds/.test(l)));
+        ext.deactivate();
+
+        ext.__test.setStartupDeadline(2000);
+        Object.assign(settings, { executable: sbServe("fake-sb-hung.js", 600000), serverPort: await sbPort() });
+        const sb2 = stream();
+        await global.__handler({ prompt: "", command: "sessions" }, { history: [] }, sb2.response, sb2.token);
+        add(
+            "SB past the deadline: a live process, what it last printed, and no claim that it failed",
+            /within 2 s; the process is still running \(it last printed: loading plugins\)/.test(sb2.chatMarkdown.join("").replace(/'/g, "`"))
+        );
+        ext.__test.setStartupDeadline();
+        ext.deactivate();
+
+        Object.assign(settings, { executable: sbServe("fake-sb-stop.js", 600000), serverPort: await sbPort() });
+        const sb3 = stream();
+        const sb3T0 = Date.now();
+        const sb3Run = global.__handler({ prompt: "", command: "sessions" }, { history: [] }, sb3.response, sb3.token);
+        setTimeout(() => sb3.token.cancel(), 300);
+        const sb3Res = await sb3Run;
+        add(`SB Stop during a server boot ends /sessions inside the second (${Date.now() - sb3T0}ms)`, Date.now() - sb3T0 < 1300 && sb3Res?.metadata?.cancelled === true);
+        ext.deactivate();
+        Object.assign(settings, { executable: sbSaved.exe, serverPort: sbSaved.port, serverStartupPollMs: sbSaved.poll });
+
+        // SA: serverPort 0 (the default) starts the server on a free port of the
+        // bridge's choosing and never adopts a listener it did not start. The
+        // decoy answers {"healthy":true}; it must see nothing. deactivate()
+        // kills the fake server at the end of the run.
+        const saSeen = [];
+        const saDecoy = http.createServer((req, res) => {
+            saSeen.push(req.url);
+            res.setHeader("content-type", "application/json");
+            res.end(JSON.stringify({ healthy: true }));
+        });
+        await new Promise((r) => saDecoy.listen(0, "127.0.0.1", r));
+        const saDecoyPort = saDecoy.address().port;
+        const saFake = writeFake(
+            "fake-own-serve.js",
+            [],
+            "const i = process.argv.indexOf('--port'); if (process.argv.includes('serve') && i > 0) require('http').createServer((q, s) => { s.setHeader('content-type', 'application/json'); s.end(JSON.stringify({ healthy: true })); }).listen(Number(process.argv[i + 1]), '127.0.0.1');\n"
+        );
+        const saSaved = { exe: settings.executable, transport: settings.transport, port: settings.serverPort };
+        settings.executable = saFake;
+        settings.transport = "server";
+        settings.serverPort = 0;
+        const saStream = stream();
+        await global.__handler({ prompt: "a | b", command: "parallel" }, {}, saStream.response, saStream.token);
+        const saArgv = JSON.parse(fs.readFileSync(path.join(work, "fake-own-serve.js.argv"), "utf8"));
+        const saPort = Number((saArgv[saArgv.indexOf("--attach") + 1] || "").split(":").pop());
+        settings.executable = saSaved.exe;
+        settings.transport = saSaved.transport;
+        settings.serverPort = saSaved.port;
+        await new Promise((r) => saDecoy.close(r));
+        ext.deactivate();
+        add("SA serverPort 0 starts serve on a free port the bridge chose", Number.isInteger(saPort) && saPort > 0 && saPort !== 4096 && saPort !== saDecoyPort);
+        add("SA a listener the bridge did not start receives nothing at port 0", saSeen.length === 0);
 
         vscodeStub.commands.executeCommand = realExec;
         globalMemento.clear();

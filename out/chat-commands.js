@@ -26,7 +26,7 @@ async function handleControlCommand(p) {
             }
             let base;
             try {
-                base = await (0, net_1.ensureServer)(p.cwd);
+                base = await (0, net_1.ensureServer)(p.cwd, (text) => p.response.progress(text));
             }
             catch {
                 base = undefined;
@@ -45,6 +45,28 @@ async function handleControlCommand(p) {
                 ? `${(0, followups_1.mark)("stop")} Stopped the run in \`${p.state.id}\`. The session is kept; your next message continues it.`
                 : `${(0, followups_1.mark)("warn")} Asked \`${p.state.id}\` to stop, but it still reports busy. \`/new\` starts a clean session.`);
             return { metadata: { kind: "stop" } };
+        }
+        case "compact": {
+            if (!p.state.id) {
+                p.response.markdown("Nothing to compact — this chat has no OpenCode session yet.");
+                return { metadata: { kind: "compact" } };
+            }
+            p.response.progress(`Compacting \`${p.state.id}\` — OpenCode summarises the conversation…`);
+            const work = (0, runs_1.compactSession)(p.state.id, p.cwd, p.state.lastModel);
+            const ok = p.token ? await (0, core_1.untilStop)(work, p.token) : await work;
+            if (ok === undefined) {
+                core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] /compact: stopped while waiting; the summary may still finish on the server`);
+                return { metadata: { kind: "compact", cancelled: true } };
+            }
+            if (!ok) {
+                p.response.markdown(`${(0, followups_1.mark)("fail")} Could not compact \`${p.state.id}\`. The debug log says why.`);
+                p.response.button({ command: "opencodeCopilotBridge.showLog", title: "Show debug log" });
+                return { metadata: { kind: "compact" } };
+            }
+            p.response.markdown(`${(0, followups_1.mark)("ok")} Compacted \`${p.state.id}\`` +
+                (p.state.context ? ` (context was ${Math.round(p.state.context / 1000)}k)` : "") +
+                ". The next turn continues from OpenCode's summary.");
+            return { metadata: { kind: "compact" } };
         }
         case "new":
             await (0, session_1.setActiveSession)(p.cwd, { turns: 0 });
@@ -66,7 +88,7 @@ async function handleControlCommand(p) {
             const level = (0, models_1.pinLevel)(settings);
             const row = (m, i) => `${i + 1}. ${(0, models_1.modelLabel)(m, info)}` +
                 (m === pin && level ? ` · ${level} settings, chat only` : "") +
-                (listed.length && !info[m] ? " · (not listed)" : "");
+                (listed.length && !(0, core_1.own)(info, m) ? " · (not listed)" : "");
             const lines = [
                 chain.length
                     ? `Model chain (first wins, rest are timeout fallbacks):\n\n${chain.map(row).join("\n")}`
@@ -102,21 +124,23 @@ async function handleControlCommand(p) {
                 healthy = healthy && Boolean(ok);
                 rows.push(`| version | ${ok ? (0, followups_1.mark)("ok") : (0, followups_1.mark)("fail")} \`${(0, core_1.truncate)(version || "no output", 60)}\` |`);
             }
-            const host = settings.get("serverHostname", "127.0.0.1");
-            const port = settings.get("serverPort", 4096);
+            const serverBase = (0, net_1.knownServerBase)();
             try {
-                await (0, net_1.httpGetJson)(`http://${host}:${port}/global/health`, 2000);
+                if (!serverBase) {
+                    throw new Error("no server of this window yet");
+                }
+                await (0, net_1.httpGetJson)(`${serverBase}/global/health`, 2000);
                 let scope = "";
                 try {
-                    const mine = await (0, net_1.httpGetJson)((0, net_1.withDirectory)(`http://${host}:${port}/session`, p.cwd), 2500);
+                    const mine = await (0, net_1.httpGetJson)((0, net_1.withDirectory)(`${serverBase}/session`, p.cwd), 2500);
                     scope = ` · ${Array.isArray(mine) ? mine.length : 0} session(s) scoped to \`${p.folder.name}\``;
                 }
                 catch {
                 }
-                rows.push(`| server | ${(0, followups_1.mark)("ok")} healthy on ${host}:${port}${scope} |`);
+                rows.push(`| server | ${(0, followups_1.mark)("ok")} healthy on ${serverBase?.replace(/^http:\/\//, "")}${scope} |`);
             }
             catch {
-                rows.push(`| server | not running on ${host}:${port} _(started on demand)_ |`);
+                rows.push(`| server | not running _(started on demand)_ |`);
             }
             const catalog = await (0, models_1.getModelCatalog)(exe, p.cwd);
             rows.push(`| models | ${catalog.models.length ? (0, followups_1.mark)("ok") : (0, followups_1.mark)("warn")} ${catalog.models.length} via the **${catalog.source}** tier |`);
@@ -150,7 +174,8 @@ async function handleControlCommand(p) {
                         : "",
                     p.state.cost ? `$${p.state.cost.toFixed(4)}` : "",
                     p.state.toolOutputBytes ? `${(0, core_1.formatBytes)(p.state.toolOutputBytes)} tool output` : "",
-                    p.state.lastModel ? `on \`${p.state.lastModel}\`` : ""
+                    p.state.lastModel ? `on \`${p.state.lastModel}\`` : "",
+                    (0, models_1.contextNote)(p.state.context, p.state.lastModel)
                 ].filter(Boolean);
                 p.response.markdown(`Active session \`${p.state.id}\` · ${totals.join(" · ")}` +
                     ((0, session_1.threadScopeActive)(p.context) ? " — scoped to this chat." : "."));

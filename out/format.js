@@ -66,7 +66,8 @@ function metricsLogLine(metrics) {
     const cost = metrics.cost > 0 ? `$${metrics.cost.toFixed(4)}` : "$0";
     return (`[${(0, core_1.stamp)()}] metrics first byte: ${firstByte} · total: ${metrics.totalMs} ms · ` +
         `steps: ${metrics.steps.length} · tokens in/out: ${t.input}/${t.output} · ` +
-        `cache read: ${t.cache.read} · cost: ${cost}` +
+        `cache read: ${t.cache.read} · context: ${metrics.context ?? "n/a"} · cost: ${cost}` +
+        (metrics.subagents ? ` (subagents ${metrics.subagents.count}: $${metrics.subagents.cost.toFixed(4)})` : "") +
         (metrics.timedOut ? " · timed out (partial)" : ""));
 }
 //# sourceMappingURL=format.js.map

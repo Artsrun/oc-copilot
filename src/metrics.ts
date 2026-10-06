@@ -54,7 +54,22 @@ export interface RunMetrics {
      * the server's reply or a message.updated event (server transport and
      * attached runs). A cold CLI run never names it. */
     model?: string;
+    /** Tokens the last step sent and got back — the session's context size as
+     * OpenCode measures it for compaction (session/overflow.ts: total, else
+     * input + output + cache read + cache write). Per-step sums overcount it. */
+    context?: number;
+    /** Subagent sessions the run started (the task tool) and what they cost,
+     * already included in `cost`. Server and attached runs only: a cold CLI
+     * run never shows a child session. */
+    subagents?: { count: number; cost: number };
+    /** `task` calls that ended in an error or were interrupted, with the child
+     * session to resume (1.18.20: a failed subagent's task_id is resumable). */
+    failedTasks?: Array<{ agent: string; description: string; sessionId?: string }>;
 }
+
+/** OpenCode's own context count for one step's tokens. */
+export const contextOf = (t: Partial<TokenUsage> | undefined): number =>
+    t ? t.total || (t.input ?? 0) + (t.output ?? 0) + (t.cache?.read ?? 0) + (t.cache?.write ?? 0) : 0;
 
 export interface RunOptions {
     executable: string;
@@ -83,9 +98,13 @@ export interface RunOptions {
      * before the run counts as hung (a Jira/MCP call is silent until it ends). */
     toolQuietMs?: number;
     thinking: boolean;
+    /** OpenCode's model variant (reasoning effort): `--variant`, or `variant` in the prompt body. */
+    variant?: string;
     onText?: (text: string) => void;
     onStep?: (step: StepRecord) => void;
     onReasoning?: (text: string) => void;
+    /** A subagent's current tool, as one short line. */
+    onSubagent?: (text: string) => void;
     token?: vscode.CancellationToken;
 }
 

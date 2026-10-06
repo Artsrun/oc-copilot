@@ -16,7 +16,7 @@ export type MarkKey = keyof typeof data.marks;
 export type Outcome = keyof typeof data.cases;
 export type NaturalKey = Exclude<keyof typeof data.natural, "maxLabel">;
 /** The commands a chip may name besides "@kind" — one table for the type and the check. */
-export const CHIP_COMMANDS = ["dev", "plan", "new", "ping", "parallel"] as const;
+export const CHIP_COMMANDS = ["dev", "plan", "new", "ping", "parallel", "compact"] as const;
 export type ChipCommand = (typeof CHIP_COMMANDS)[number];
 
 /** The one phrase every sent prompt ends with. */
@@ -34,6 +34,19 @@ export const NATURAL_MAX_LABEL: number = data.natural.maxLabel;
 
 export const mark = (key: MarkKey): string => MARKS[key];
 export const prompt = (key: PromptKey): string => PROMPTS[key];
+
+/** A prompt template with its own placeholders filled (`{run}`), tail included. */
+export const fillPrompt = (key: PromptKey, vars: Record<string, string>): string => fill(data.prompts[key], vars);
+
+// The Merge-lanes chip sends the run id inside its sentence, because a chip
+// carries only a prompt and a command — no metadata travels with it. The
+// matcher is built from the same template, so the words stay in the JSON.
+const MERGE_RUN = new RegExp(
+    `^\\s*${PROMPTS.MERGE_LANES.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace("\\{run\\}", "([A-Za-z0-9]{4,32})")}`
+);
+
+/** The lane-run id a merge prompt names, or undefined. */
+export const mergeRunId = (text: string): string | undefined => text.match(MERGE_RUN)?.[1];
 
 /** `ᕦ(ò‸ó)ᕤ Retry` — recovery chips lead with a kaomoji. */
 export const chipLabel = (key: ChipKey): string => {
@@ -214,6 +227,9 @@ export const badgeMarks = (markdown: string): string => createBadger()(markdown)
 export const followupsProblems = (d: typeof data = data): string[] => {
     const problems: string[] = [];
     const prompts = d.prompts as Record<string, string>;
+    if (!prompts.MERGE_LANES?.includes("{run}")) {
+        problems.push(`prompts.MERGE_LANES has no {run}: mergeRunId would never match`);
+    }
     const commands: readonly string[] = ["@kind", ...CHIP_COMMANDS];
     for (const [k, def] of Object.entries(d.chips as Record<string, { prompt: string; command: string }>)) {
         if (def.prompt && !(def.prompt in prompts)) {

@@ -1,5 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.laneItems = void 0;
 exports.naturalFollowups = naturalFollowups;
 const followups_1 = require("./followups");
 const EDIT_VERBS = new Set(("add address apply align branch build bump change checkout clean clone close commit complete confirm continue convert " +
@@ -111,8 +112,9 @@ const actionsFromOffer = (body) => {
 };
 const participleAction = (np) => {
     const m = np.match(/^(.+?)\s+([a-z]+)(\s+(?:through|out|up|down|over|in))?(?:\s+(?:too|as well|also))?$/i);
-    const verb = m && PARTICIPLES[m[2].toLowerCase()];
-    return verb ? `${verb}${m[3] ?? ""} ${m[1]}` : undefined;
+    const word = m ? m[2].toLowerCase() : "";
+    const verb = Object.hasOwn(PARTICIPLES, word) ? PARTICIPLES[word] : undefined;
+    return m && verb ? `${verb}${m[3] ?? ""} ${m[1]}` : undefined;
 };
 const participleActions = (np) => {
     const parts = np.replace(NOT_AN_ACTION, "").split(/,\s*(?:or|and)\s+|\s+or\s+|,\s+/).map((p) => p.trim()).filter(Boolean);
@@ -141,6 +143,9 @@ const choicesOf = (sentence) => {
 const EDIT_TOOLS = /^(?:edit|write|patch|multiedit|apply_patch)$/i;
 const RECOMMENDS = /my recommendation|i(?:'d| would)? recommend|recommended:/i;
 const PLAN_REFUSAL = /plan mode|read-only mode|exit plan mode|can(?:'|no)t (?:execute|make|apply) (?:edits|changes)/i;
+const TESTS_FAILED = /\b(?:[1-9]\d*) (?:tests? |specs? |checks? )?(?:fail(?:ed|ing|ures?)?)\b|\b(?:tests?|specs?|checks?) (?:are |is |still |now )*fail(?:ed|ing|s)?\b|\bfailing (?:tests?|specs?|checks?)\b/i;
+const NO_FAILURES = /\b(?:no|zero|0)\s+(?:\d+\s+)?(?:tests?|specs?|checks?)\s+(?:are |is |were |still |now )*(?:fail(?:ed|ing|s|ures?)?)\b/i;
+const UNCERTAIN = /\b(?:i(?:'m| am) not (?:sure|certain)|(?:couldn't|could not|can't|cannot) (?:determine|confirm|verify|tell|find out)|unclear (?:whether|why|if|how)|not enough (?:information|context)|hard to say|without (?:more|further) (?:context|information)|i(?:'m| am) guessing)\b/i;
 const TESTS_PASSED = /\b(?:all )?(?:\d+ )?(?:tests?|checks?|specs?) (?:now )?(?:pass(?:ed|es|ing)?|are green|green)\b|\b\d+ passing\b/i;
 const ISSUE = /\b(?:bug|issue|problem|incorrect|wrong|broken|fails?|failing|error|off-by-one|missing|leak|race|regression|skips?)\b/i;
 const UNFINISHED = /\b(?:i'll (?:now |next )?(?:continue|proceed|move on)|next,? i(?:'ll| will)|remaining (?:steps|items|work)|still (?:need|left) to|to be continued|(?:stopping|stopped) here for now|ran out of (?:time|context|budget))\b/i;
@@ -157,7 +162,36 @@ const firstOfNumbered = (markdown) => {
     }
     return undefined;
 };
-function naturalFollowups(input, max = 3) {
+const NUMBERED_ALL = /^[ \t]*(\d{1,3})[).][ \t]+(\S.*)$/;
+const numberedList = (markdown) => {
+    const items = [];
+    for (const line of markdown.replace(/```[\s\S]*?```/g, "\n").split("\n")) {
+        const m = line.match(NUMBERED_ALL);
+        if (!m) {
+            continue;
+        }
+        if (Number(m[1]) === items.length + 1) {
+            items.push(m[2]);
+        }
+        else if (items.length) {
+            break;
+        }
+    }
+    return items;
+};
+const LANE_TARGET = /[\w.-]+\/[\w.-]+|\b[\w-]+\.[a-z]{1,5}\b|\b\w+\(\)/i;
+const BARE_BACKREF = /^[a-z]+\s+(?:it|them|this|that|these|those)\b/i;
+const laneItems = (markdown, splits) => {
+    const raw = numberedList(markdown);
+    if (raw.length < 2 || raw.length > 5) {
+        return undefined;
+    }
+    const items = raw.map((r) => plainText(r).replace(/[\s.:;]+$/, "").trim());
+    const ok = items.every((i) => i.length >= 8 && i.length <= 200 && READ_VERBS.has(firstWord(i)) && LANE_TARGET.test(i) && !BARE_BACKREF.test(i) && splits(i).length === 1);
+    return ok && splits(items.join("\n---\n")).length === items.length ? items : undefined;
+};
+exports.laneItems = laneItems;
+function naturalFollowups(input, max = 3, splits) {
     const turnKind = input.agent === "dev" ? "dev" : "plan";
     const answer = input.answer ?? "";
     const text = plainText(answer);
@@ -193,7 +227,7 @@ function naturalFollowups(input, max = 3) {
             break;
         }
     }
-    const offersAll = chips.some((c) => /^(?:apply|implement|fix|make|do|proceed|go ahead|address)\b(?:.*\b(?:these|them|this|it|all|those|everything|fixes|changes|steps?|plan)\b)?/i.test(c.label));
+    const offersAll = chips.some((c) => /^(?:apply|implement|fix|make|do|proceed|go ahead|address)\b(?:\s*[.!?]*$|.*\b(?:these|them|this|it|all|those|everything|fixes|changes|steps?|plan)\b)/i.test(c.label));
     if (!chips.length && tail.length && /\?$/.test(tail[tail.length - 1])) {
         for (const choice of choicesOf(tail[tail.length - 1])) {
             const t = (0, followups_1.naturalText)("choice", { choice });
@@ -223,6 +257,10 @@ function naturalFollowups(input, max = 3) {
                 pushT((0, followups_1.naturalText)("fixAll"), "dev");
             }
         }
+        const lanes = splits ? (0, exports.laneItems)(answer, splits) : undefined;
+        if (lanes) {
+            pushT((0, followups_1.naturalText)("lanes", { n: String(lanes.length), lanes: lanes.join("\n---\n") }), "parallel");
+        }
         if (RECOMMENDS.test(tailText) && /\?/.test(tailText)) {
             pushT((0, followups_1.naturalText)("recommend"), "dev");
         }
@@ -234,9 +272,16 @@ function naturalFollowups(input, max = 3) {
         const file = edited.length === 1 ? edited[0].split(/[\\/]/).pop() ?? edited[0] : "";
         pushT(file ? (0, followups_1.naturalText)("review1", { file }) : (0, followups_1.naturalText)("reviewN", { n: String(edited.length) }), "plan");
         const ranTests = input.steps.some((s) => /\btest/i.test(s.detail ?? "") && /bash|shell|run/i.test(s.tool));
-        if (!ranTests && !TESTS_PASSED.test(tailText)) {
+        if (TESTS_FAILED.test(tailText) && !NO_FAILURES.test(tailText)) {
+            pushT((0, followups_1.naturalText)("fixTests"), "dev");
+        }
+        else if (!ranTests && !TESTS_PASSED.test(tailText)) {
             pushT((0, followups_1.naturalText)("tests"), "dev");
         }
+    }
+    if (input.nextEffort && /^[A-Za-z][\w-]{0,23}$/.test(input.nextEffort) && UNCERTAIN.test(tailText)) {
+        const t = (0, followups_1.naturalText)("deeper", { effort: input.nextEffort });
+        pushT({ ...t, prompt: `effort:${input.nextEffort} ${t.prompt}` }, turnKind);
     }
     return chips;
 }

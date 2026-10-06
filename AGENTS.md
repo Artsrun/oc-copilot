@@ -15,21 +15,29 @@ no bundler, no test runner: plain TypeScript → `out/`, plain Node for the suit
 | Path | What lives there |
 | --- | --- |
 | `src/chat.ts` | **The chat turn.** `handleChat`: routing, vague-prompt gate, context, agent and model choice, the recovery ladder (handoff, CLI fallback, cold rerun, stale session), `pre-run:` timings. |
-| `src/chat-boot.ts` | Rendering and vocabulary: heartbeat (plain live lines + milestone ticker; finished accordions with `groupProgress`), **`chatStream`** (nothing after Stop, never throws, one pill badger per turn), `helpMarkdown`, `splitLanes` (`\|` `;;` `---` only), `runParallelLanes`, command aliases, the command/kind vocabulary, **`followupsFor`**. |
-| `src/chat-commands.ts` | Control commands — `/help` `/new` `/model` `/ping` `/env` `/session` `/sessions` `/stop`: model-free answers. |
+| `src/chat-boot.ts` | The command vocabulary: control/kind/routed commands, aliases, retired words, `helpMarkdown`. Re-exports `heartbeat`, `lanes` and `chips`, so the chat layer keeps one import. |
+| `src/heartbeat.ts` | The live turn: heartbeat (plain live lines + milestone ticker; finished accordions with `groupProgress`; a subagent's tool over its `task` row), **`chatStream`** (nothing after Stop, never throws, one pill badger per turn), `thoughtLine`. |
+| `src/lanes.ts` | `/parallel`: `splitLanes` (`\|` `;;` `---` only), `runParallelLanes`, the lane store behind Merge / Retry, `retryLanesPrompt`. |
+| `src/chips.ts` | **`followupsFor`**: state chips first (Resume a subagent, Compact), then the answer's own (`suggestFollowups`, kept per turn). |
+| `src/chat-commands.ts` | Control commands — `/help` `/new` `/model` `/ping` `/env` `/session` `/sessions` `/stop` `/compact`: answers without a turn (`/compact` is one summarize pass). |
 | `src/chat-sessions.ts` | **/sessions**: the picker and Continue / Fork / Close / Delete; binds a chat by returning `{sessionId, turns, cwd}` metadata. |
 | `src/sessions.ts` | OpenCode's session store over HTTP: list, last messages, fork (+ headless rules back), archive, delete. |
 | `src/compose.ts` | **The /parallel composer**: one `createQuickPick` per lane, `laneProblem` (the real splitter), insert via `chat.open` + `isPartialQuery`. |
-| `src/runs.ts` | Running OpenCode: CLI stream and server transport, event → `StepRecord`, tokens/cost, idle cap, compaction, **headless asks**. |
+| `src/runs.ts` | The one import the chat layer uses for running OpenCode (re-exports), and the stale-session retry that needs both runners. |
+| `src/run-cli.ts` | `opencode run --format json`, cold or `--attach`ed: kill on silence, bounded stderr (`STDERR_CAP`), the attached run's liveness from SSE. |
+| `src/run-server.ts` | The server transport: POST + shared SSE, idle watchdog, abort on Stop (the subagents too). |
+| `src/run-steps.ts` | Events → `StepRecord`, `stepDetail`, keyed text/reasoning deltas, the answering model, subagent spend. Pure. |
+| `src/asks.ts` | **Headless asks** for a session and its subagents (`watchFamily`), and what the subagents cost. |
+| `src/server-session.ts` | Session ids (`safeSessionId`, `sessionPath`), **permission rules** (`HEADLESS_PERMISSION`, `turnPermission`), busy/abort (+ children), create, model, compaction. |
 | `src/net.ts` | Bounded HTTP, the managed `opencode serve`, shared SSE demux by session id. |
 | `src/session.ts` | Session state per chat thread (`threadSession`), handoff chain and the way back after one, completion toasts, status bar. |
 | `src/proc.ts` | Spawning: shim resolution, `cmd.exe` quoting, `killTree`, `PWD = cwd`. §2 rule 3. |
-| `src/models.ts` | Model catalog (server `GET /config/providers`, else `opencode models --verbose`), names, cache tiers, the picker, `writeModelPin`, short names, `modelResolver` (one forced refetch per turn). |
+| `src/models.ts` | Model catalog (server `GET /config/providers`, else `opencode models --verbose`), names, variant names, cache tiers, the picker, `writeModelPin`, short names, `modelResolver` (one forced refetch per turn), `effortFor` / `higherEffort`, `contextNote`. |
 | `src/agents.ts` | Which agent a read-only turn runs as: `planAgent`, only once OpenCode lists it. |
 | `src/context.ts` | Attachments/selection folding, references, answer file pills (`createFileLinker`), `parseChatPrompt`, `splitModelPrefix`, `splitModelsFanout`. |
 | `src/env.ts` | What OpenCode loaded: config, plugins, MCP, commands, skills, agents, instruction files. |
 | `src/followups.ts` + `.json` | **Every word a chip or handoff sends**, the marks, pills (`createBadger`), `followupsProblems`. Leaf: imports only its JSON. |
-| `src/natural.ts` | Answer-derived chips: the agent's own offer or either/or, a named step 1, the file it edited — or nothing. |
+| `src/natural.ts` | Answer-derived chips: the agent's own offer or either/or, a named step 1, the file it edited, failing tests, Dig deeper — or nothing. `laneItems` is the lanes rule for the chip and for `autoParallel: auto`. |
 | `src/core.ts` | **The foundation**: imports nothing local. `config()`, `logChannel`, text helpers, status bar, folder resolution. |
 | `src/extension.ts` | `activate()` (panel + guarded inline participant), the `__test` handle, `deactivate()`. |
 | `src/commands.ts`, `commands-registry.ts` | Palette commands, worktree buttons, config listener. |
@@ -44,7 +52,11 @@ extension.ts  →  chat · chat-boot · commands-registry · session · worktree
  chat-commands →  chat-boot · chat-sessions · commands · context · env · models · net · prompt · proc · runs · session · core
  chat-sessions →  sessions (→ net · runs) · session · core
     compose   →  chat-boot · models · core   (used by chat and commands-registry)
-  chat-boot   →  core · format · metrics · models · runs
+  chat-boot   →  heartbeat · lanes · chips (re-exported) · core · metrics
+    lanes     →  runs · format · metrics · models · core      chips → lanes · natural
+      runs    →  run-cli · run-server · run-steps · server-session · session
+ run-cli, run-server →  asks · run-steps · server-session · net · proc (cli) · metrics
+      asks    →  server-session · net      server-session → net · metrics
      all      →  core.ts · followups.ts (JSON only) · natural.ts (→ followups)
 ```
 
@@ -130,6 +142,8 @@ A probe measures one thing on this machine and prints it. Paste its output.
 | `scripts/probe-progress-inflation.js` | How many `progress()` calls a realistic run makes. |
 | `scripts/probe-sse-crosstalk.js` | That the SSE demux cannot leak another chat's text. |
 | `scripts/probe-opencode-pwd.js` | Which folder `opencode run` works in: stale `PWD` vs `spawnOpenCode()`. |
+| `scripts/probe-server-adoption.js` | What a listener that only answers `{"healthy":true}` on the server port receives from the bridge. |
+| `scripts/probe-plan-subagents.js` | Against a real server and model: whether a plan turn can edit through `general`, with and without the read-only `task` rules, and whether `/session/:id/children` lists the child. |
 
 *Write to the OS temp dir, never the repo* — the suite sweeps `ocb-*` at
 startup, not exit (Windows holds a just-exited child's cwd).
@@ -229,6 +243,32 @@ history belongs in `CHANGELOG.md`, not in the source.
 - **A chat is bound to a session only by its turns' metadata**
   (`threadSession`: `sessionId` + numeric `turns`, `/new` a barrier). Anything
   that re-binds a chat (`/sessions` Continue, Fork) returns that metadata.
+- **OpenCode ignores an unknown `--variant` / `variant` without a word**
+  (1.18.34 `session/llm/request.ts` looks it up in the model's variants), and
+  a prompt without one resets the session to `default`: check it with
+  `effortFor`, send it every turn (`EF`).
+- **A session's context is its last step, not the turn**: `step_finish`
+  tokens are per step and each step resends the context; cache reads are
+  context too (OpenCode's `isOverflow`). Use `RunMetrics.context` (`CX`).
+- **`opencode run --agent <subagent>` falls back to the default agent**
+  (`build`, which edits): never send a subagent-mode agent as a lane's agent.
+- **A subagent runs with its own permissions, not the turn's** (OpenCode
+  docs, agents): `general` edits under a plan turn. Read-only turns put
+  `task` rules on the session (`turnPermission`, `RO`); session rules are
+  PATCHed per kind change, never per turn.
+- **A fixed `serverPort` can be held by a listener that never answers**: the
+  window's own server cannot bind and exits 1 after its boot. `ensureServer`
+  starts one on a free port instead and never sends that listener a request
+  but `/global/health` (`SV`).
+- **A first `opencode serve` boot can take most of a minute** (config,
+  plugins, MCP): the poll waits 3 s per health check and 45 s in all, a
+  waiter is told after 1.5 s, and the log records each start's time (`SB`).
+  **`untilStop` reads a rejection as Stop**: keep the error yourself when it
+  must be reported.
+- **A parent's `task` row runs as long as its subagent**: child events are the
+  run's activity, or the idle cap stops a parent whose subagent works (`SU`).
+- **A task result carries no cost or tokens** (OpenCode #47822): a subagent's
+  spend is read from its own session's `message.updated` (`SC`).
 - **A quick pick filters its list by what is typed** — the composer's model
   items are `alwaysShow`, or typing a task would hide every model.
 
@@ -238,4 +278,4 @@ Every capability the README states is tagged `<!-- claim:id -->` and anchored by
 `claim:id` in a comment beside the code; gate 4 fails on a tag with no anchor.
 Current: `worktrees`, `worktree-command`, `inline-participant`, `model-names`,
 `parallel-models`, `command-aliases`, `sessions`, `parallel-composer`,
-`file-links`.
+`file-links`, `effort`, `auto-parallel`, `lane-agents`, `read-only-subagents`.

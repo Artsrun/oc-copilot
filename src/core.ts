@@ -41,6 +41,14 @@ export function truncate(text: string, max = 160): string {
     return oneLine.length > max ? `${oneLine.slice(0, max)}…` : oneLine;
 }
 
+// A plain object lookup also finds inherited keys: `table["constructor"]` is a
+// function, truthy, and stringifies to "function Object() { [native code] }" —
+// which is how 0.0.197 refused `/constructor …` as a broken alias. Every table
+// keyed by user or model text goes through this.
+export function own<T>(table: Record<string, T>, key: string): T | undefined {
+    return Object.hasOwn(table, key) ? table[key] : undefined;
+}
+
 export function secs(ms: number): string {
     return `${(ms / 1000).toFixed(1)}s`;
 }

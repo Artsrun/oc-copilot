@@ -33,7 +33,10 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.modelRefProblem = exports.modelLabel = exports.cachedModelInfo = void 0;
+exports.modelRefProblem = exports.sortEfforts = exports.modelLabel = exports.cachedModelInfo = void 0;
+exports.effortFor = effortFor;
+exports.contextNote = contextNote;
+exports.higherEffort = higherEffort;
 exports.parseVerboseModels = parseVerboseModels;
 exports.parseProviders = parseProviders;
 exports.parseModelList = parseModelList;
@@ -59,11 +62,62 @@ const readCache = () => core_1.extensionContext?.globalState?.get(MODEL_CACHE_KE
 const cachedModelInfo = () => readCache()?.info ?? {};
 exports.cachedModelInfo = cachedModelInfo;
 const modelLabel = (id, info = (0, exports.cachedModelInfo)()) => {
-    const name = info[id]?.name;
+    const name = (0, core_1.own)(info, id)?.name;
     return name && name !== id && name !== id.split("/").slice(1).join("/") ? `${name} · \`${id}\`` : `\`${id}\``;
 };
 exports.modelLabel = modelLabel;
 const ID_LINE = /^[\w.@-]+\/\S+$/;
+const variantNames = (raw) => raw && typeof raw === "object" && !Array.isArray(raw)
+    ? Object.entries(raw)
+        .filter(([, v]) => !(v && typeof v === "object" && v.disabled === true))
+        .map(([k]) => k)
+    : undefined;
+const EFFORT_ORDER = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
+const effortRank = (name) => {
+    const i = EFFORT_ORDER.indexOf(name.toLowerCase());
+    return i < 0 ? EFFORT_ORDER.length : i;
+};
+function effortFor(model, requested, strict, info = (0, exports.cachedModelInfo)()) {
+    const want = (requested ?? "").trim();
+    if (!want) {
+        return {};
+    }
+    const levels = model ? (0, core_1.own)(info, model)?.variants : undefined;
+    if (!levels) {
+        return { variant: want };
+    }
+    const hit = levels.find((l) => l.toLowerCase() === want.toLowerCase());
+    if (hit) {
+        return { variant: hit };
+    }
+    const list = levels.length ? `Its levels: ${(0, exports.sortEfforts)(levels).map((l) => `\`${l}\``).join(", ")}.` : "It has no effort levels.";
+    return {
+        problem: strict
+            ? `\`effort:${want}\` is not a level of \`${model}\`. ${list}`
+            : `\`effort: ${want}\` is not a level of \`${model}\`, so it ran at its default. ${list}`
+    };
+}
+function contextNote(tokens, model, info = (0, exports.cachedModelInfo)()) {
+    if (!tokens) {
+        return "";
+    }
+    const k = (n) => (n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
+    const limit = model ? (0, core_1.own)(info, model)?.context : undefined;
+    return limit ? `context ${k(tokens)} of ${k(limit)} (${Math.round((tokens / limit) * 100)}%)` : `context ${k(tokens)}`;
+}
+const sortEfforts = (levels) => [...levels].sort((a, b) => effortRank(a) - effortRank(b));
+exports.sortEfforts = sortEfforts;
+function higherEffort(model, current, info = (0, exports.cachedModelInfo)()) {
+    const levels = model ? (0, exports.sortEfforts)((0, core_1.own)(info, model)?.variants ?? []) : [];
+    if (!levels.length) {
+        return undefined;
+    }
+    if (!current) {
+        return levels.find((l) => l.toLowerCase() === "high") ?? levels[levels.length - 1];
+    }
+    const rank = effortRank(current);
+    return levels.find((l) => effortRank(l) > rank && EFFORT_ORDER.includes(l.toLowerCase()));
+}
 function parseVerboseModels(raw) {
     const info = {};
     let id = "";
@@ -85,7 +139,8 @@ function parseVerboseModels(raw) {
             name: typeof m.name === "string" && m.name.trim() ? m.name.trim() : id,
             provider,
             providerName: provider,
-            context: typeof limit?.context === "number" && limit.context > 0 ? limit.context : undefined
+            context: typeof limit?.context === "number" && limit.context > 0 ? limit.context : undefined,
+            variants: variantNames(m.variants)
         };
     };
     for (const line of raw.split(/\r?\n/)) {
@@ -125,7 +180,8 @@ function parseProviders(raw) {
                 name: typeof m?.name === "string" && m.name.trim() ? m.name.trim() : id,
                 provider,
                 providerName,
-                context: typeof limit?.context === "number" && limit.context > 0 ? limit.context : undefined
+                context: typeof limit?.context === "number" && limit.context > 0 ? limit.context : undefined,
+                variants: variantNames(m?.variants)
             };
         }
     }
@@ -137,7 +193,10 @@ async function catalogFromServer(cwd, base) {
     if (!base && settings.get("transport", "auto") === "cli") {
         return undefined;
     }
-    const url = base ?? `http://${settings.get("serverHostname", "127.0.0.1")}:${settings.get("serverPort", 4096)}`;
+    const url = base ?? (0, net_1.knownServerBase)();
+    if (!url) {
+        return undefined;
+    }
     try {
         const info = parseProviders(await (0, net_1.httpGetJson)((0, net_1.withDirectory)(`${url}/config/providers`, cwd), PROVIDERS_TIMEOUT_MS));
         return Object.keys(info).length ? info : undefined;
@@ -263,7 +322,7 @@ async function setDefaultModel() {
                     ? (0, followups_1.mark)("warn") + " from your settings — could not reach OpenCode"
                     : "no models found";
     const set = folder ? (0, env_1.openCodeConfigModel)(folder.uri.fsPath) : undefined;
-    const defaultNote = set ? `${catalog.info[set.model]?.name ?? set.model}, from ${set.from}` : "OpenCode picks";
+    const defaultNote = set ? `${(0, core_1.own)(catalog.info, set.model)?.name ?? set.model}, from ${set.from}` : "OpenCode picks";
     const models = current && !catalog.models.includes(current) ? [current, ...catalog.models] : catalog.models;
     const items = [
         {
@@ -272,14 +331,18 @@ async function setDefaultModel() {
             action: "clear"
         },
         ...models.map((id) => {
-            const info = catalog.info[id];
+            const info = (0, core_1.own)(catalog.info, id);
             const listed = catalog.models.includes(id);
             return {
-                label: info?.name ?? id,
+                label: `$(chip) ${info?.name ?? id}`,
                 description: [info?.name && info.name !== id ? id : "", id === current ? "$(check) pinned — chat only" : "", listed ? "" : "(not listed)"]
                     .filter(Boolean)
                     .join(" · "),
-                detail: info ? [info.providerName, info.context ? `${Math.round(info.context / 1000)}k context` : ""].filter(Boolean).join(" · ") : undefined,
+                detail: info
+                    ? [info.providerName, info.context ? `${Math.round(info.context / 1000)}k context` : "", info.variants?.length ? `effort ${(0, exports.sortEfforts)(info.variants).join("/")}` : ""]
+                        .filter(Boolean)
+                        .join(" · ")
+                    : undefined,
                 modelId: id
             };
         }),

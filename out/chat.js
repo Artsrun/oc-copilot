@@ -12,6 +12,7 @@ const agents_1 = require("./agents");
 const session_1 = require("./session");
 const runs_1 = require("./runs");
 const models_1 = require("./models");
+const natural_1 = require("./natural");
 const chat_boot_1 = require("./chat-boot");
 const chat_commands_1 = require("./chat-commands");
 const compose_1 = require("./compose");
@@ -35,6 +36,12 @@ async function handleChat(request, context, rawResponse, token, turn = {}) {
     const retired = (0, chat_boot_1.retiredCommand)(prompt);
     if (retired) {
         response.markdown(retired);
+        return { metadata: { kind: "idle" } };
+    }
+    const mergeId = (0, followups_1.mergeRunId)(prompt);
+    const mergeLanes = mergeId ? (0, chat_boot_1.recallLanes)(mergeId) : undefined;
+    if (mergeId && !(0, chat_boot_1.answeredLanes)(mergeLanes ?? []).length) {
+        response.markdown((0, followups_1.prompt)("LANES_GONE"));
         return { metadata: { kind: "idle" } };
     }
     const state = (0, session_1.resolveSessionState)(context, cwd);
@@ -67,7 +74,15 @@ async function handleChat(request, context, rawResponse, token, turn = {}) {
         ? prompt.replace(/^\/\S+\s*/, `${slashKind === "par" ? "parallel" : slashKind}: `)
         : prompt;
     const parsed = (0, context_1.parseChatPrompt)(normalizedPrompt);
-    const kind = (0, chat_boot_1.kindChoice)(declared, parsed.kind);
+    const autoLanes = (0, core_1.config)().get("autoParallel", "offer") === "auto" &&
+        !declared &&
+        !slashKind &&
+        !parsed.explicitKind &&
+        !turn.inline &&
+        !mergeId
+        ? (0, natural_1.laneItems)(parsed.task, chat_boot_1.splitLanes)
+        : undefined;
+    const kind = autoLanes ? "parallel" : (0, chat_boot_1.kindChoice)(declared, parsed.kind);
     const isBuild = kind === "dev";
     const devAgent = (0, core_1.config)().get("devAgent", "build").trim() || "build";
     const agentLabel = isBuild ? "dev" : "plan";
@@ -82,17 +97,28 @@ async function handleChat(request, context, rawResponse, token, turn = {}) {
     const useServer = transport === "server" || (transport === "auto" && !isBuild);
     const attachDev = transport === "auto" && settings.get("attachDevToServer", true);
     const autoCompact = settings.get("autoCompact", true);
-    const COMPACT_INPUT_TOKENS = 60000;
+    const COMPACT_CONTEXT_TOKENS = 60000;
+    const COMPACT_CONTEXT_SHARE = 0.7;
     const compactEvery = settings.get("autoCompactEveryTurns", 8);
     const showThoughts = settings.get("showThoughtProcess", true);
     const wantThinking = showThoughts;
+    const effortAsked = parsed.effort ?? (settings.get("effort", "").trim() || undefined);
+    const effortStrict = Boolean(parsed.effort);
     const fallbackModels = settings
         .get("fallbackModels", [])
         .map((m) => m.trim())
         .filter(Boolean);
     const resolveModel = (0, models_1.modelResolver)(executable, cwd, (work) => (0, core_1.untilStop)(work, token));
     if (kind === "parallel") {
-        const laneText = parsed.model ? `m:${parsed.model} ${parsed.task}` : parsed.task;
+        const laneText = autoLanes
+            ? autoLanes.map((l) => (parsed.model ? `m:${parsed.model} ${l}` : l)).join("\n---\n")
+            : parsed.model
+                ? `m:${parsed.model} ${parsed.task}`
+                : parsed.task;
+        if (autoLanes) {
+            response.markdown(`> ${(0, followups_1.mark)("step")} \`autoParallel\`: your ${autoLanes.length} listed steps run as ${autoLanes.length} lanes. ` +
+                "Start with `plan:` to keep them in one turn.\n\n");
+        }
         if (!laneText.trim()) {
             const composed = await (0, compose_1.composeParallel)(token, cwd);
             if (!composed) {
@@ -115,8 +141,8 @@ async function handleChat(request, context, rawResponse, token, turn = {}) {
         const specsRaw = fan
             ? fan.models.map((ref) => ({ task: fan.task, ref }))
             : (0, chat_boot_1.splitLanes)(laneText).map((lane) => {
-                const { model: ref, task: laneTask } = (0, context_1.splitModelPrefix)(lane);
-                return { task: laneTask, ref };
+                const { model: ref, agent, task: laneTask } = (0, context_1.splitLanePrefixes)(lane);
+                return { task: laneTask, ref, agent };
             });
         if (specsRaw.length < 2) {
             response.markdown("Give me at least two lanes separated by `|`, `;;` or a `---` line (not inside backticks).\n\n" +
@@ -125,13 +151,15 @@ async function handleChat(request, context, rawResponse, token, turn = {}) {
             return { metadata: { kind: "parallel", lanesMissing: true } };
         }
         const lanes = [];
-        for (const { task: laneTask, ref } of specsRaw) {
+        for (const raw of specsRaw) {
+            const { task: laneTask, ref } = raw;
+            const agent = "agent" in raw ? raw.agent : undefined;
             if (!ref) {
-                lanes.push({ task: laneTask });
+                lanes.push({ task: laneTask, agent });
                 continue;
             }
             const r = await resolveModel(ref);
-            lanes.push("id" in r ? { task: laneTask, model: r.id } : { task: laneTask, error: (0, models_1.modelRefProblem)(ref, r) });
+            lanes.push("id" in r ? { task: laneTask, model: r.id, agent } : { task: laneTask, agent, error: (0, models_1.modelRefProblem)(ref, r) });
         }
         if (token.isCancellationRequested) {
             return { metadata: { kind: "parallel", lanes: lanes.length, cancelled: true } };
@@ -143,6 +171,17 @@ async function handleChat(request, context, rawResponse, token, turn = {}) {
         }
         const laneUrl = transport === "server" || attachDev ? await (0, core_1.untilStop)(warmServer(cwd), token) : undefined;
         const lanePlan = write ? undefined : await (0, core_1.untilStop)((0, agents_1.resolvePlanAgent)(cwd, laneUrl), token);
+        for (const name of [...new Set(lanes.filter((l) => l.agent && !l.error).map((l) => l.agent))]) {
+            if (token.isCancellationRequested) {
+                break;
+            }
+            const problem = (0, agents_1.laneAgentProblem)(name, await (0, core_1.untilStop)((0, agents_1.listAgents)(cwd, laneUrl, name), token));
+            for (const l of lanes) {
+                if (problem && l.agent === name && !l.error) {
+                    l.error = problem;
+                }
+            }
+        }
         if (token.isCancellationRequested) {
             return { metadata: { kind: "parallel", lanes: lanes.length, cancelled: true } };
         }
@@ -155,7 +194,7 @@ async function handleChat(request, context, rawResponse, token, turn = {}) {
         if (laneNote) {
             response.markdown(`> ${(0, followups_1.mark)("warn")} ${laneNote}\n\n`);
         }
-        await (0, chat_boot_1.runParallelLanes)({
+        const outcomes = await (0, chat_boot_1.runParallelLanes)({
             response,
             token,
             cwd,
@@ -168,9 +207,22 @@ async function handleChat(request, context, rawResponse, token, turn = {}) {
             devAgent,
             planAgent: lanePlan?.agent,
             attachUrl: laneUrl,
-            preamble: laneCtx.preamble
+            preamble: laneCtx.preamble,
+            effort: effortAsked
         });
-        return { metadata: { kind: "parallel", lanes: lanes.length } };
+        const laneRunId = (0, chat_boot_1.newLaneRunId)();
+        (0, chat_boot_1.rememberLanes)(laneRunId, outcomes);
+        return {
+            metadata: {
+                kind: "parallel",
+                lanes: lanes.length,
+                laneRunId,
+                laneAnswers: (0, chat_boot_1.answeredLanes)(outcomes).length,
+                laneRetries: (0, chat_boot_1.failedLanes)(outcomes).length,
+                laneWrite: write,
+                ...(autoLanes ? { autoLanes: true } : {})
+            }
+        };
     }
     let inlineModel = parsed.model;
     if (inlineModel) {
@@ -207,6 +259,18 @@ async function handleChat(request, context, rawResponse, token, turn = {}) {
     const handoffReturn = (0, session_1.takeHandoffReturn)(state.id, agentKey, Boolean(pinned));
     const model = pinned ?? handoffReturn;
     const chain = (0, session_1.handoffChain)(model, fallbackModels);
+    const firstEffort = (0, models_1.effortFor)(model ?? state.lastModel, effortAsked, effortStrict);
+    if (firstEffort.problem && effortStrict) {
+        response.markdown(firstEffort.problem);
+        return { metadata: { kind: "idle" } };
+    }
+    if (firstEffort.problem) {
+        response.markdown(`> ${(0, followups_1.mark)("warn")} ${firstEffort.problem}\n\n`);
+    }
+    else if (firstEffort.variant && effortStrict) {
+        response.markdown(`> ${(0, followups_1.mark)("thought")} effort \`${firstEffort.variant}\`\n\n`);
+    }
+    const variantFor = (attempt) => attempt === 0 ? firstEffort.variant : (0, models_1.effortFor)(chain[attempt], effortAsked, false).variant;
     const tPlan = (0, prompt_1.planTimeout)();
     timeoutMs = tPlan.timeoutMs;
     const idleTimeoutMs = tPlan.idleTimeoutMs;
@@ -217,7 +281,7 @@ async function handleChat(request, context, rawResponse, token, turn = {}) {
         core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] back to ${model}: the last turn handed off, and OpenCode keeps a session on its last model`);
     }
     const ctx = (0, context_1.buildChatContext)(request, cwd, { inline: turn.inline });
-    const taskForModel = ctx.preamble ? `${task}${ctx.preamble}` : task;
+    const taskForModel = `${task}${mergeLanes ? (0, chat_boot_1.laneMergeContext)(mergeLanes) : ""}${ctx.preamble}`;
     (0, context_1.emitReferences)(response, ctx.uris);
     if (ctx.uris.length) {
         core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] context: ${ctx.uris.map((u) => (0, core_1.relTo)(cwd, u)).join(", ")}`);
@@ -270,13 +334,17 @@ async function handleChat(request, context, rawResponse, token, turn = {}) {
         let sessionId = state.id;
         if (attachUrl && !sessionId && !token.isCancellationRequested) {
             try {
-                sessionId = await timed("session", () => (0, runs_1.createServerSession)(attachUrl, cwd, task));
+                sessionId = await timed("session", () => (0, runs_1.createServerSession)(attachUrl, cwd, task, !isBuild));
             }
             catch (error) {
                 core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] could not pre-create a session, the run creates one: ${error}`);
             }
         }
         const guardBase = attachUrl ?? (useServer ? await (0, core_1.untilStop)(timed("server", () => warmServer(cwd)), token) : undefined);
+        const versionNote = guardBase ? (0, net_1.versionNotice)(guardBase) : undefined;
+        if (versionNote) {
+            response.markdown(`> ${(0, followups_1.mark)("warn")} ${versionNote}\n\n`);
+        }
         const planChoice = isBuild || (0, agents_1.planAgentSetting)() === "plan"
             ? undefined
             : await timed("agent", () => (0, core_1.untilStop)((0, agents_1.resolvePlanAgent)(cwd, guardBase), token));
@@ -337,6 +405,7 @@ async function handleChat(request, context, rawResponse, token, turn = {}) {
                 readOnly: !isBuild,
                 json: true,
                 thinking: wantThinking,
+                variant: variantFor(attempt),
                 timeoutMs,
                 idleTimeoutMs,
                 sessionId,
@@ -346,6 +415,7 @@ async function handleChat(request, context, rawResponse, token, turn = {}) {
                 token,
                 onStep: streamStep,
                 onReasoning: streamReasoning,
+                onSubagent: (text) => beat.subagent(text),
                 onText: (rawText) => {
                     const text = (0, format_1.scrubLeakedContext)(rawText);
                     if (!text || (!answer.trim() && ((0, format_1.isPromptEcho)(text, task) || (0, format_1.isPromptEcho)(text, attemptTask)))) {
@@ -486,15 +556,36 @@ async function handleChat(request, context, rawResponse, token, turn = {}) {
                 tokensIn: baseline.tokensIn + (metrics?.tokens.input ?? 0),
                 tokensOut: baseline.tokensOut + (metrics?.tokens.output ?? 0),
                 cost: baseline.cost + (metrics?.cost ?? 0),
-                lastModel: answeredBy
+                lastModel: answeredBy,
+                context: metrics?.context
             });
         }
-        const inputs = metrics?.tokens.input ?? 0;
-        if (autoCompact && sessionId && turns > 0 && (turns % compactEvery === 0 || inputs > COMPACT_INPUT_TOKENS)) {
+        const contextTokens = metrics?.context ?? 0;
+        const sizedBy = answeredBy ?? state.lastModel;
+        const contextLimit = sizedBy ? (0, core_1.own)((0, models_1.cachedModelInfo)(), sizedBy)?.context : undefined;
+        if (autoCompact &&
+            sessionId &&
+            turns > 0 &&
+            (turns % compactEvery === 0 ||
+                contextTokens > COMPACT_CONTEXT_TOKENS ||
+                (contextLimit !== undefined && contextTokens >= contextLimit * COMPACT_CONTEXT_SHARE))) {
+            core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] compacting ${sessionId}: turn ${turns}, context ${contextTokens}` + (contextLimit ? ` of ${contextLimit}` : ""));
             void (0, runs_1.compactSession)(sessionId, cwd, answeredBy);
         }
+        const compactOffer = !autoCompact && sessionId && (contextTokens > COMPACT_CONTEXT_TOKENS || (contextLimit !== undefined && contextTokens >= contextLimit * COMPACT_CONTEXT_SHARE))
+            ? contextLimit
+                ? `${Math.round((100 * contextTokens) / contextLimit)}%`
+                : `${Math.round(contextTokens / 1000)}k`
+            : undefined;
+        const failedTask = metrics?.failedTasks?.[0];
+        const sentVariant = variantFor(lastAttempt);
         if (sessionId && metrics && !metrics.error && !metrics.timedOut && !metrics.cancelled) {
-            (0, chat_boot_1.rememberFollowups)(sessionId, turns, (0, chat_boot_1.suggestFollowups)({ agent: agentLabel, answer: finalAnswer || answer, steps: metrics.steps }));
+            (0, chat_boot_1.rememberFollowups)(sessionId, turns, (0, chat_boot_1.suggestFollowups)({
+                agent: agentLabel,
+                answer: finalAnswer || answer,
+                steps: metrics.steps,
+                nextEffort: (0, models_1.higherEffort)(sizedBy, sentVariant)
+            }));
         }
         (0, session_1.refreshStatus)(cwd);
         return {
@@ -509,6 +600,12 @@ async function handleChat(request, context, rawResponse, token, turn = {}) {
                 cost: baseline.cost + (metrics?.cost ?? 0),
                 toolOutputBytes: sessionBytes,
                 model: answeredBy,
+                ...(sentVariant ? { effort: sentVariant } : {}),
+                ...(contextTokens ? { context: contextTokens } : {}),
+                ...(compactOffer ? { compact: compactOffer } : {}),
+                ...(failedTask
+                    ? { failedTask: { agent: failedTask.agent, description: (0, core_1.truncate)(failedTask.description, 80), ...(failedTask.sessionId ? { taskId: (0, runs_1.safeSessionId)(failedTask.sessionId) } : {}) } }
+                    : {}),
                 timedOut: Boolean(metrics?.timedOut),
                 cancelled: Boolean(metrics?.cancelled),
                 error: metrics?.error

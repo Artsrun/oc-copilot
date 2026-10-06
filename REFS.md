@@ -401,3 +401,39 @@ group's own `*` and `?`. With placeholders, the simulation matches `vsce ls`
   the sentence; the pill reads `cart.ts:42` and opens at the line. The answer's
   file pills use this. (0.0.184 removed anchors only because they were called
   unbound; `chatStream` calls every method on the stream.)
+
+## A listener that only says {"healthy":true} receives the prompt (measured)
+
+`scripts/probe-server-adoption.js` runs one turn against a fake non-OpenCode listener
+on the server port. `ensureServer()` adopted it: `POST /session` and
+`POST /session/<id>/message` reached it, the body of both carried the prompt text,
+and every URL carried the workspace path in `?directory=`. The real server's
+health answer is `{"healthy":true,"version":"1.18.34"}` (1.18.34), so a
+version field exists to check; the bridge ignores it. Not yet fixed.
+
+## A fixed port held by a listener that never answers (reported, 0.0.202)
+
+Reported log: `[13:33:07] serve exited (1)` then `[13:33:11] compact failed:
+OpenCode server did not become healthy on http://127.0.0.1:53200`. The 20 s
+deadline and the 5 s health timeout explain the shape: the first probe of
+53200 waited out its 5 s (something accepted and never answered), the
+bridge's own `serve` could not bind there and exited 1 after its boot, and the
+poll that was waiting at the deadline turned that exit into "did not become
+healthy". Not reproduced against a real hung server here; the suite's `SV`
+reproduces the shape with a listener that never answers and a fake `serve`.
+0.0.203: a port that accepts TCP but fails the health probe gets a server of
+the window's own on a free port; exits report the server's own last error
+line; polls wait 1.5 s. Check the `[serve]` lines in the debug log for the
+real cause on your machine (`EADDRINUSE` is the expected one).
+
+## Subagents run with their own permissions (docs, not yet measured)
+
+OpenCode's agents docs (V2): "The child currently uses its own configured
+permissions, not a restricted copy of the parent's permissions"; the v1 docs
+say `general` "has full tool access". `permission.task` takes globs, the last
+match wins, and a denied subagent is removed from the task tool's
+description. A task result carries no duration, tokens or cost (#47822); the
+child session's `message.updated` does. `opencode run --format json` drops a
+child's parts (#49300). `scripts/probe-plan-subagents.js` measures the plan →
+`general` edit with and without the 0.0.203 rules — run it before relying on
+`RO` against a live model.

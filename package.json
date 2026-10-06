@@ -2,7 +2,7 @@
   "name": "opencode-copilot-bridge",
   "displayName": "OpenCode Copilot Bridge",
   "description": "Delegate research, planning, and development to OpenCode from GitHub Copilot Chat.",
-  "version": "0.0.198",
+  "version": "0.0.204",
   "publisher": "local",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -83,6 +83,10 @@
           {
             "name": "new",
             "description": "Start a fresh OpenCode session"
+          },
+          {
+            "name": "compact",
+            "description": "Summarise this chat's OpenCode session now — one model pass"
           },
           {
             "name": "model",
@@ -264,6 +268,16 @@
             "default": "plan",
             "markdownDescription": "OpenCode agent for read-only turns: plan (the default kind) and `/parallel` lanes. Set it to a read-only agent of your own, such as `look` (README: *Read-only turns*). The bridge uses it only once OpenCode lists it for the folder, and otherwise runs `plan` and says so: an unknown `--agent` makes `opencode run` fall back to its default agent, which edits. `/dev` keeps `devAgent`."
           },
+          "opencodeCopilotBridge.readOnlySubagents": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": [
+              "explore"
+            ],
+            "markdownDescription": "Subagents a read-only turn (plan, `/parallel` lanes) may start through OpenCode's `task` tool; every other subagent is denied for that turn. A subagent runs with its own permissions, not the turn's: `general` edits. Applied as the session's `task` rules on the server and attached runs; a cold `opencode run` has no server to apply them on. Empty: no subagents on read-only turns."
+          },
           "opencodeCopilotBridge.attachDevToServer": {
             "type": "boolean",
             "default": true,
@@ -305,8 +319,8 @@
           },
           "opencodeCopilotBridge.serverPort": {
             "type": "number",
-            "default": 4096,
-            "description": "Port for the managed `opencode serve` instance. An already-running healthy server on this port is reused."
+            "default": 53200,
+            "description": "Port for the managed `opencode serve` instance. 53200 by default, reused when a healthy server is already there. 0 picks a free port for a server this window starts and never adopts another listener; a fixed port reuses a healthy server already there."
           },
           "opencodeCopilotBridge.timeoutMs": {
             "type": "number",
@@ -327,6 +341,11 @@
             "type": "string",
             "default": "",
             "description": "Model passed to OpenCode as provider/id. Empty: OpenCode picks — a new session starts on its default, and a session keeps the model it last ran on."
+          },
+          "opencodeCopilotBridge.effort": {
+            "type": "string",
+            "default": "",
+            "description": "Reasoning effort for every turn: an OpenCode model variant such as low, medium, high, xhigh or max (sent as --variant, or variant on the server). Empty: the model's default. A level the model is known to lack is dropped with a note; effort:<level> at the start of a message sets it for one turn and is refused if the model lacks it."
           },
           "opencodeCopilotBridge.fallbackModels": {
             "type": "array",
@@ -437,6 +456,21 @@
       {
         "title": "Parallel",
         "properties": {
+          "opencodeCopilotBridge.autoParallel": {
+            "type": "string",
+            "enum": [
+              "offer",
+              "auto",
+              "off"
+            ],
+            "enumDescriptions": [
+              "A plan whose first numbered list is 2-5 read-only steps, each naming a file or call, gets a \"Run N as lanes\" chip.",
+              "As offer, and a message that is itself such a list runs as /parallel lanes at once. Start it with plan: to keep one turn.",
+              "No lanes unless you type /parallel."
+            ],
+            "default": "offer",
+            "description": "When independent read-only steps run as /parallel lanes without typing /parallel. Lanes are separate paid runs."
+          },
           "opencodeCopilotBridge.parallelAllowWrite": {
             "type": "boolean",
             "default": false,

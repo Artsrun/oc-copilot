@@ -19,7 +19,8 @@ code --extensionDevelopmentPath .
 ```
 
 Pick `@opencode` in Copilot Chat and describe a task. Every message continues
-**one OpenCode session per chat thread**.
+**one OpenCode session per chat thread** — or one per folder, if you set
+`sessionScope` to `workspace`.
 
 ```text
 @opencode Inspect the login flow and find the cause of the redirect bug.
@@ -58,6 +59,7 @@ says `CANNOT USE these API proposals` — the inline entry left out, not a failu
 | `/session` | Session id, turns, tokens and cost |
 | `/sessions` | This folder's sessions: continue, fork, close or delete one |
 | `/stop` | Stop a run still going on the server (closing the chat does not) |
+| `/compact` | Summarise this chat's session now (one model pass), as autocompact does |
 | `/new` | Fresh OpenCode session, with a button for a fresh chat |
 | `/model` | The model chain, with a button to change it |
 | `/ping` | Connectivity check — no model call, no cost |
@@ -66,6 +68,15 @@ says `CANNOT USE these API proposals` — the inline entry left out, not a failu
 
 Inline prefixes mean the same: `plan:`, `dev:`, `par:` / `parallel:`, and
 `model:provider/id` for one turn. A slash command wins over a prefix.
+
+**Effort.** `effort:high` (or `e:high`) in front of a message sends OpenCode's
+reasoning-effort variant for that turn (`--variant` on the CLI, `variant` on
+the server); the `effort` setting does it for every turn. The levels are the
+model's own (`low`, `medium`, `high`, `xhigh`, `max`…, shown in the model
+picker). OpenCode ignores a level the model lacks without a word, so the bridge
+checks the catalog first: `effort:` is refused before anything runs, the setting
+runs at the model's default with a note, and each `/parallel` lane is checked
+against its own model. <!-- claim:effort -->
 
 **Short model names.** `model:tundra` is the one listed model whose id or name
 is `tundra` (any case), or starts with it (3+ letters). Two matches or none: the
@@ -78,6 +89,12 @@ runs **one** task on each model, with time and cost per lane. There is no lane
 cap, and every lane is a paid run, so lanes split only on `|`, `;;` or a `---`
 line (any line ending): `||` (a shell OR) is text, and so is anything inside
 backticks or a table row. <!-- claim:parallel-models -->
+
+**An agent per lane.** `/parallel a:look m:oasis read the logs | review auth`
+runs that lane as your primary agent `look`. The name is checked against
+OpenCode's own list first: an unknown, subagent-mode or hidden agent is refused
+before anything runs, because `opencode run` would run it as `build`, which
+edits. An `a:` lane runs with that agent's own permissions. <!-- claim:lane-agents -->
 
 **Aliases.** `/p` parallel · `/d` dev · `/pl` plan · `/n` new · `/s` session ·
 `/x` stop · `/m` model · `/w` worktree · `/e` env · `/ls` sessions ·
@@ -136,11 +153,21 @@ OpenCode's server (started on demand). Debug: the output channel logs
   line; an accordion row that read or edited one file opens it too.
 - **Follow-ups are the answer's own next moves**: what the agent offered or
   asked ("Which do you prefer: Postgres or MySQL?"), a step 1, the file it
-  edited — else none. Recovery chips appear only after a failure or a stop.
+  edited, the tests it said fail, one more look at a higher effort when it
+  said it was unsure — else none. Recovery chips appear only after a failure or a stop.
+- **Lanes when they fit** <!-- claim:auto-parallel -->: a plan whose first
+  numbered list is 2-5 read-only steps, each naming a file or call, offers
+  **Run N as lanes**. With `autoParallel: auto`, a message that is itself such a
+  list runs as lanes at once (`plan:` keeps it one turn); `off` stops both.
+  A finished `/parallel` offers **Merge lanes** and **Retry failed lanes**.
+- **Subagents are named**: a row for OpenCode's `task` tool reads
+  `explore: find the auth handlers`, not only the description.
 - **Two transports**: `plan` over a warm `opencode serve` (SSE), `dev` as
   `opencode run --auto` attached to it. Every call is scoped with `?directory=`.
 - **Sessions are per chat thread**; a timed-out turn can hand off to the next
-  model, in the same session. Long conversations compact themselves.
+  model, in the same session. Long conversations compact themselves, sized as
+  OpenCode sizes them (the last step's tokens, cache reads in); `/session` shows
+  `context 42k of 200k (21%)`.
 - **The model is yours or OpenCode's**: a pin is sent every turn; with none,
   OpenCode keeps a session on the model it last ran.
 - **Windows**: a sibling `opencode.exe` is preferred over the `.cmd` shim, else
@@ -229,6 +256,14 @@ Verify: `opencode agent list` shows `look (primary)`; restart the server after
 editing it (a running server reads agents once). The debug log shows
 `agent=look` or `--agent look`, and a fallback logs `planAgent "look" not usable`.
 
+**Subagents on read-only turns.** OpenCode runs a subagent with its own
+permissions, not the turn's: the built-in `general` has every tool and edits.
+So on a read-only turn (plan, read-only lanes) the session's `task` rules allow
+only `readOnlySubagents` (default `["explore"]`) and deny the rest; a `/dev`
+turn in the same chat gets them back. This holds on the server and attached
+paths (`transport: server`, or `auto` with `attachDevToServer`); a cold
+`opencode run` has no server to set rules on — use `look`, which denies `task`. <!-- claim:read-only-subagents -->
+
 ## Isolated work: `/worktree` and the parallel scripts
 
 ### `/worktree <task>` (in chat)
@@ -294,16 +329,18 @@ All under `opencodeCopilotBridge.`.
 | `pure` | `false` | Run with `--pure` (no external MCP plugins) for a faster cold start. |
 | `devAgent` | `build` | Agent `/dev` runs, always passed as `--agent`. |
 | `planAgent` | `plan` | Agent for read-only turns and `/parallel` lanes, used once OpenCode lists it (see *Read-only turns*). |
+| `readOnlySubagents` | `["explore"]` | Subagents a read-only turn may start via `task`; the rest are denied for that turn (a subagent runs with its own permissions — `general` edits). Server and attached runs. |
 | `attachDevToServer` | `true` | With transport `auto`, `/dev` attaches to the warm server instead of booting OpenCode per turn. |
 | `toolQuietMs` | `600000` | How long a tool the server reports as running may stay silent. 0 = `idleTimeoutMs`. |
 | `busySessionPolicy` | `abort` | A session still busy with an unwatched run: `abort` it first, or `queue` behind it. |
 | `transport` | `auto` | `auto`: server for plan, attached CLI for dev. `cli` or `server` for all. |
 | `serverStartupPollMs` | `350` | Longest gap between health polls while `opencode serve` starts. |
 | `serverHostname` | `127.0.0.1` | Host of the managed `opencode serve`. |
-| `serverPort` | `4096` | Port of the managed `opencode serve`; a healthy server there is reused. |
+| `serverPort` | `53200` | Port of the managed `opencode serve`; a healthy server already there is reused. `0` picks a free port for a server this window starts and adopts nothing. |
 | `timeoutMs` | `0` | Wall-clock cap per run, ms. 0 = none; `idleTimeoutMs` stops hung runs. |
 | `idleTimeoutMs` | `300000` | Stop a run after this long with no output, ms. 0 disables it. |
 | `model` | — | `provider/id` sent every turn. Empty: OpenCode picks. |
+| `effort` | — | Reasoning effort (an OpenCode variant: `low` … `max`) for every turn. Empty: the model's default. |
 | `fallbackModels` | `[]` | Models to hand off to, in order, when a run times out (same session). |
 | `modelCatalogTtlMinutes` | `360` | How long the fetched model list stays fresh. 0 = always fetch. |
 | `maxHandoffAttempts` | `3` | Most models tried in one turn; each attempt is billed. |
@@ -316,10 +353,11 @@ All under `opencodeCopilotBridge.`.
 | `statusBar` | `true` | Status bar item with the session and turn count. |
 | `showThoughtProcess` | `true` | Stream OpenCode's reasoning (`--thinking`) on the progress line. |
 | `clarifyVaguePrompts` | `true` | Ask before spending a run on a bare one-word first message. |
-| `autoCompact` | `true` | Summarize the session every `autoCompactEveryTurns` turns. |
+| `autoCompact` | `true` | Summarize the session every `autoCompactEveryTurns` turns, or once its context passes 60k tokens or 70% of the model's window. |
 | `autoCompactEveryTurns` | `8` | Turns between compactions. 0 = OpenCode's own only. |
 | `editorTitleButton` | `true` | Quick Actions button in the editor title bar. |
 | `sessionScope` | `thread` | `thread`: one session per chat. `workspace`: one per folder. |
+| `autoParallel` | `offer` | `offer`: a lanes-shaped plan gets a **Run N as lanes** chip. `auto`: a message that is such a list runs as lanes. `off`: only typed `/parallel`. |
 | `parallelAllowWrite` | `false` | Let `/parallel` lanes edit (concurrent writers can collide). |
 | `worktreeDiffMaxMB` | `16` | Largest diff `/worktree` reads, MB. |
 | `debugLog` | `false` | Log every reasoning and text delta (it accumulates for the window's life). |
@@ -330,37 +368,56 @@ All under `opencodeCopilotBridge.`.
 
 The last five releases; the full history is `CHANGELOG.md` in the repository.
 
-### 0.0.198
+### 0.0.204
 
-- `/constructor …` and `/__proto__ …` run as tasks; they were refused as
-  broken aliases.
-- `/help` lists itself and names the session scope you set.
-- The ship gate fails on a tracked file that `.gitignore` names, and checks its
-  no-git file walk against git on every run.
+- **Fixed: `/sessions` failed while the server was still starting** (a first
+  boot can take most of a minute). The wait says so, Stop ends it, and a real
+  failure names what the server last printed.
+- **Resume** chip when a subagent stopped before finishing; **`/compact`**,
+  and a **Compact** chip when `autoCompact` is off and the context is large.
+- The live line shows what a subagent is doing, and a working subagent keeps
+  its parent from being idle-capped.
+- One line when the OpenCode server is outside the tested 1.18.27–1.18.34.
 
-### 0.0.197
+### 0.0.203
 
-- **`/help` lists every command**, `/ping` and `/env` included.
-- The repo stops tracking `.vscode/settings.json`: a model picked in this
-  repo went into it. Picks go to User settings.
-- Dead code removed (a write-only session tracker, unused parameters, a stale
-  Diagnose row); four checks that asserted nothing assert again.
+- **Fixed: a read-only turn could edit through a subagent** (`general` runs
+  with its own permissions). Plan turns now allow only `readOnlySubagents`
+  (default `explore`) on the server and attached paths.
+- **Fixed: a hung listener on a fixed `serverPort`** cost every turn 20 s and
+  hid the cause. The window starts its own server on a free port; a server
+  that exits says why (`exited (code 1): Error: listen EADDRINUSE …`).
+- **`a:<agent>` per lane**, checked against OpenCode's list (a subagent or an
+  unknown name is refused: the CLI would run it as `build`).
+- Subagent spend joins the turn's cost; Stop aborts subagent sessions too.
 
-### 0.0.196
+### 0.0.202
 
-- **Removed `/flow`** (and `/f`); typed from habit, it runs nothing.
-- **`/parallel` lanes get your attachments** — `#file:` reached no lane before.
-- The ship gate scans every file for internal names even without git, and
-  checks the lock file's version.
+- **Effort**: `effort:high` / `e:high` per turn, or the `effort` setting, sends
+  OpenCode's reasoning-effort variant. Checked against the model's levels first
+  (OpenCode ignores a miss silently); the picker shows each model's levels.
+- **`autoParallel`**: `auto` runs a message that is a list of 2-5 read-only
+  steps as lanes; `off` drops the lanes chip. Default `offer` is unchanged.
+- **Fixed: autocompact measured the wrong thing.** It summed `input` over every
+  step (a 3-step 25k turn read as 75k and compacted) and left out cache reads (a
+  cached 70k context read as 100 and never did). It now uses the last step's
+  tokens, as OpenCode does, and also fires at 70% of a known window. `/session`
+  shows the context size.
+- New chips: **Fix failing tests** after a dev turn that reports failures, and
+  **Dig deeper · high** when the answer says it is unsure and the model has a
+  higher level. Subagent rows name the subagent.
 
-### 0.0.195
+### 0.0.201
 
-Review fixes for `/parallel`: with `transport: server` the lanes attach to the
-warm server instead of running cold, and Stop no longer waits out a cold server
-boot.
+- A specific Fix offer no longer hides Fix all; a merge prompt without {run} is reported.
+- `serverPort` defaults to 53200 instead of 4096, so the bridge no longer adopts whatever answers `{"healthy":true}` on the common port (it received the prompt and workspace path, measured). `0` starts a private server on a free port and adopts nothing; a fixed port still reuses a healthy server there.
 
-### 0.0.194
+### 0.0.199
 
-- **Files open on click**: a workspace file the answer names in inline code
-  (`src/cart.ts:42`) is a pill that opens it at that line; an accordion row
-  that read or edited one file opens it too.
+- A plan whose first numbered list is 2-5 read-only steps, each naming a concrete
+  file or call, gets a "Run N as lanes" chip that sends them as /parallel lanes.
+- A finished /parallel run offers "Merge lanes" and "Retry failed lanes". Lane
+  answers are kept in memory (8 runs); after a reload the merge says so and runs nothing.
+- Model rows in the default-model picker lead with a chip icon.
+- Fixed: an answer ending "the parser constructor" no longer produces an inherited-key chip.
+- `.vscode/settings.json` is no longer tracked (it is git-ignored).

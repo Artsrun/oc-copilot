@@ -4,7 +4,7 @@
 // Continue and Fork return that metadata; Close and Delete of this chat's own
 // session return a `/new` barrier.
 import * as vscode from "vscode";
-import { config, logChannel, mdText, stamp, truncate } from "./core";
+import { config, logChannel, mdText, stamp, truncate, untilStop } from "./core";
 import { mark } from "./followups";
 import { ensureServer } from "./net";
 import { ServerSession, archiveSession, busySessions, deleteSession, forkSession, listSessions, sessionExcerpt } from "./sessions";
@@ -50,11 +50,25 @@ export async function handleSessions(p: SessionsProps): Promise<vscode.ChatResul
     let base: string;
     let sessions: ServerSession[];
     try {
-        base = await ensureServer(p.cwd);
+        // A first boot can take most of a minute: Stop must not wait it out.
+        // untilStop reads a failure as "stopped": keep the failure to report it.
+        let failure: unknown;
+        const started = ensureServer(p.cwd, (text) => p.response.progress(text)).catch((error: unknown) => {
+            failure = error ?? new Error("the server did not start");
+            return undefined;
+        });
+        const ready = p.token ? await untilStop(started, p.token) : await started;
+        if (failure) {
+            throw failure;
+        }
+        if (!ready) {
+            return done({ cancelled: true });
+        }
+        base = ready;
         sessions = await listSessions(base, p.cwd);
     } catch (error) {
         logChannel.appendLine(`[${stamp()}] /sessions: ${error}`);
-        p.response.markdown(`${mark("fail")} Could not list sessions: \`${truncate(String(error instanceof Error ? error.message : error), 120).replace(/`/g, "'")}\`. \`/ping\` checks the connection.`);
+        p.response.markdown(`${mark("fail")} Could not list sessions: \`${truncate(String(error instanceof Error ? error.message : error), 480).replace(/`/g, "'")}\`. \`/ping\` checks the connection.`);
         return done();
     }
     if (!sessions.length) {

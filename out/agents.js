@@ -5,6 +5,7 @@ exports.listAgents = listAgents;
 exports.planAgentSetting = planAgentSetting;
 exports.resolvePlanAgent = resolvePlanAgent;
 exports.planAgentNotice = planAgentNotice;
+exports.laneAgentProblem = laneAgentProblem;
 const core_1 = require("./core");
 const net_1 = require("./net");
 const proc_1 = require("./proc");
@@ -133,5 +134,22 @@ function planAgentNotice(choice, cwd) {
         default:
             return `Couldn't list OpenCode's agents to confirm ${name} — ran as the built-in \`plan\`, which is read-only by instruction only.`;
     }
+}
+function laneAgentProblem(name, agents) {
+    const shown = `\`${name}\``;
+    if (!agents) {
+        return `Couldn't list OpenCode's agents to confirm ${shown} — not run (an unconfirmed name runs as \`build\`).`;
+    }
+    const found = agents.find((a) => a.name === name);
+    if (!found) {
+        return `No ${shown} agent in OpenCode for this folder — not run. \`opencode agent list\` shows the agents it loads.`;
+    }
+    if (found.mode === "subagent") {
+        return `${shown} is a subagent — not run: \`opencode run\` would run it as \`build\`. Give it \`mode: all\`, or ask the lane's agent to use it.`;
+    }
+    if (found.hidden) {
+        return `${shown} is a hidden agent — not run.`;
+    }
+    return undefined;
 }
 //# sourceMappingURL=agents.js.map

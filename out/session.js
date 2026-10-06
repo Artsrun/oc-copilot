@@ -82,7 +82,8 @@ function threadSession(history, cwd) {
             tokensIn: meta.tokensIn,
             tokensOut: meta.tokensOut,
             cost: meta.cost,
-            lastModel: meta.model
+            lastModel: meta.model,
+            context: typeof meta.context === "number" ? meta.context : undefined
         };
     }
     return undefined;

@@ -3,6 +3,7 @@ import {
     config,
     isMultiRoot,
     logChannel,
+    own,
     relTo,
     rememberFolder,
     resolveFolder,
@@ -12,13 +13,13 @@ import {
     truncate,
     untilStop
 } from "./core";
-import { mark, prompt as promptText } from "./followups";
+import { mark, mergeRunId, prompt as promptText } from "./followups";
 import { RunMetrics, RunOptions, StepRecord, finalizeStepStatuses, toolOutputBytes } from "./metrics";
 import { composeVisibleAnswer, isPromptEcho, metricsLogLine, scrubLeakedContext } from "./format";
 import { insistedOn, isVaguePrompt, markClarifiedPrompt, planTimeout } from "./prompt";
-import { buildChatContext, createFileLinker, emitAnswerParts, emitReferences, parseChatPrompt, splitModelPrefix, splitModelsFanout, stepUris } from "./context";
-import { ensureServer } from "./net";
-import { planAgentNotice, planAgentSetting, resolvePlanAgent } from "./agents";
+import { buildChatContext, createFileLinker, emitAnswerParts, emitReferences, parseChatPrompt, splitLanePrefixes, splitModelsFanout, stepUris } from "./context";
+import { ensureServer, versionNotice } from "./net";
+import { laneAgentProblem, listAgents, planAgentNotice, planAgentSetting, resolvePlanAgent } from "./agents";
 import {
     getActiveSession,
     handoffChain,
@@ -40,15 +41,23 @@ import {
     restartAfterMissingSession,
     runOpenCode,
     runOpenCodeServer,
+    safeSessionId,
     sessionBusy
 } from "./runs";
-import { modelRefProblem, modelResolver } from "./models";
+import { cachedModelInfo, effortFor, higherEffort, modelRefProblem, modelResolver } from "./models";
+import { laneItems } from "./natural";
 import {
     LaneSpec,
+    answeredLanes,
     controlCommand,
+    failedLanes,
     isKindCommand,
     kindChoice,
+    laneMergeContext,
+    newLaneRunId,
+    recallLanes,
     rememberFollowups,
+    rememberLanes,
     resolveAlias,
     retiredCommand,
     runParallelLanes,
@@ -97,6 +106,15 @@ export async function handleChat(
         response.markdown(retired);
         return { metadata: { kind: "idle" } };
     }
+    // A Merge-lanes chip sends the run id, never the answers: they live in this
+    // window's memory only. After a reload there is nothing to merge, and the
+    // turn must cost nothing rather than ask the model to merge thin air.
+    const mergeId = mergeRunId(prompt);
+    const mergeLanes = mergeId ? recallLanes(mergeId) : undefined;
+    if (mergeId && !answeredLanes(mergeLanes ?? []).length) {
+        response.markdown(promptText("LANES_GONE"));
+        return { metadata: { kind: "idle" } };
+    }
     // Scoped to this chat thread, not to the folder — see threadSession().
     const state = resolveSessionState(context, cwd);
 
@@ -140,8 +158,21 @@ export async function handleChat(
         ? prompt.replace(/^\/\S+\s*/, `${slashKind === "par" ? "parallel" : slashKind}: `)
         : prompt;
     const parsed = parseChatPrompt(normalizedPrompt);
+    // `autoParallel: auto`: a plain prompt that is itself a list of 2-5
+    // read-only steps, each naming a file or call, runs as lanes — the same
+    // rule as the "Run N as lanes" chip. Any typed kind (`plan:`, `/plan`,
+    // `/dev`), an inline turn or a merge keeps the single turn. claim:auto-parallel
+    const autoLanes =
+        config().get<string>("autoParallel", "offer") === "auto" &&
+        !declared &&
+        !slashKind &&
+        !parsed.explicitKind &&
+        !turn.inline &&
+        !mergeId
+            ? laneItems(parsed.task, splitLanes)
+            : undefined;
     // An explicit slash command wins over an inline `dev:` prefix.
-    const kind = kindChoice(declared, parsed.kind);
+    const kind = autoLanes ? "parallel" : kindChoice(declared, parsed.kind);
     const isBuild = kind === "dev";
     // The editing agent is always named: without --agent OpenCode runs the
     // config's `default_agent`, which may be plan (measured, 1.18.32).
@@ -164,12 +195,18 @@ export async function handleChat(
     // dev keeps the CLI for `--auto`, attached to the warm server (cold boots: 48–69s).
     const attachDev = transport === "auto" && settings.get<boolean>("attachDevToServer", true);
     const autoCompact = settings.get<boolean>("autoCompact", true);
-    // Size triggers a summarize too, not only the turn count (9.6k → 199k seen in 8 turns).
-    const COMPACT_INPUT_TOKENS = 60000;
+    // Size triggers a summarize too, not only the turn count (9.6k → 199k seen in 8 turns):
+    // 60k of context, or 70% of the model's window when the catalog knows it.
+    const COMPACT_CONTEXT_TOKENS = 60000;
+    const COMPACT_CONTEXT_SHARE = 0.7;
     const compactEvery = settings.get<number>("autoCompactEveryTurns", 8);
     const showThoughts = settings.get<boolean>("showThoughtProcess", true);
     // Only ask OpenCode for thinking blocks when something will consume them.
     const wantThinking = showThoughts;
+    // `effort:` for this turn, else the setting. Inline is strict: a level the
+    // model is known to lack refuses the turn; the setting is dropped with a note.
+    const effortAsked = parsed.effort ?? (settings.get<string>("effort", "").trim() || undefined);
+    const effortStrict = Boolean(parsed.effort);
     const fallbackModels = settings
         .get<string[]>("fallbackModels", [])
         .map((m) => m.trim())
@@ -180,7 +217,17 @@ export async function handleChat(
     if (kind === "parallel") {
         // `models:a,b,c <task>`: one task per model. Otherwise each lane may
         // carry `m:<model>`; a leading `m:` belongs to lane 1. No lane cap.
-        const laneText = parsed.model ? `m:${parsed.model} ${parsed.task}` : parsed.task;
+        const laneText = autoLanes
+            ? autoLanes.map((l) => (parsed.model ? `m:${parsed.model} ${l}` : l)).join("\n---\n")
+            : parsed.model
+                ? `m:${parsed.model} ${parsed.task}`
+                : parsed.task;
+        if (autoLanes) {
+            response.markdown(
+                `> ${mark("step")} \`autoParallel\`: your ${autoLanes.length} listed steps run as ${autoLanes.length} lanes. ` +
+                "Start with `plan:` to keep them in one turn.\n\n"
+            );
+        }
         // A bare `/parallel`: compose the lanes step by step, then put the
         // command in the chat input — nothing runs until it is sent.
         if (!laneText.trim()) {
@@ -209,8 +256,8 @@ export async function handleChat(
         const specsRaw = fan
             ? fan.models.map((ref) => ({ task: fan.task, ref }))
             : splitLanes(laneText).map((lane) => {
-                const { model: ref, task: laneTask } = splitModelPrefix(lane);
-                return { task: laneTask, ref };
+                const { model: ref, agent, task: laneTask } = splitLanePrefixes(lane);
+                return { task: laneTask, ref, agent };
             });
         if (specsRaw.length < 2) {
             response.markdown(
@@ -221,13 +268,15 @@ export async function handleChat(
             return { metadata: { kind: "parallel", lanesMissing: true } };
         }
         const lanes: LaneSpec[] = [];
-        for (const { task: laneTask, ref } of specsRaw) {
+        for (const raw of specsRaw) {
+            const { task: laneTask, ref } = raw;
+            const agent = "agent" in raw ? raw.agent : undefined;
             if (!ref) {
-                lanes.push({ task: laneTask });
+                lanes.push({ task: laneTask, agent });
                 continue;
             }
             const r = await resolveModel(ref);
-            lanes.push("id" in r ? { task: laneTask, model: r.id } : { task: laneTask, error: modelRefProblem(ref, r) });
+            lanes.push("id" in r ? { task: laneTask, model: r.id, agent } : { task: laneTask, agent, error: modelRefProblem(ref, r) });
         }
         if (token.isCancellationRequested) {
             return { metadata: { kind: "parallel", lanes: lanes.length, cancelled: true } };
@@ -245,6 +294,18 @@ export async function handleChat(
         const laneUrl = transport === "server" || attachDev ? await untilStop(warmServer(cwd), token) : undefined;
         // Read-only lanes run as `planAgent` too, checked once for all.
         const lanePlan = write ? undefined : await untilStop(resolvePlanAgent(cwd, laneUrl), token);
+        // `a:<agent>` per lane: confirmed against OpenCode's own list first.
+        for (const name of [...new Set(lanes.filter((l) => l.agent && !l.error).map((l) => l.agent as string))]) {
+            if (token.isCancellationRequested) {
+                break;
+            }
+            const problem = laneAgentProblem(name, await untilStop(listAgents(cwd, laneUrl, name), token));
+            for (const l of lanes) {
+                if (problem && l.agent === name && !l.error) {
+                    l.error = problem;
+                }
+            }
+        }
         if (token.isCancellationRequested) {
             return { metadata: { kind: "parallel", lanes: lanes.length, cancelled: true } };
         }
@@ -258,7 +319,7 @@ export async function handleChat(
         if (laneNote) {
             response.markdown(`> ${mark("warn")} ${laneNote}\n\n`);
         }
-        await runParallelLanes({
+        const outcomes = await runParallelLanes({
             response,
             token,
             cwd,
@@ -271,9 +332,23 @@ export async function handleChat(
             devAgent,
             planAgent: lanePlan?.agent,
             attachUrl: laneUrl,
-            preamble: laneCtx.preamble
+            preamble: laneCtx.preamble,
+            effort: effortAsked
         });
-        return { metadata: { kind: "parallel", lanes: lanes.length } };
+        // The id travels in the metadata; the answers never leave this window.
+        const laneRunId = newLaneRunId();
+        rememberLanes(laneRunId, outcomes);
+        return {
+            metadata: {
+                kind: "parallel",
+                lanes: lanes.length,
+                laneRunId,
+                laneAnswers: answeredLanes(outcomes).length,
+                laneRetries: failedLanes(outcomes).length,
+                laneWrite: write,
+                ...(autoLanes ? { autoLanes: true } : {})
+            }
+        };
     }
 
     // `model:tundra`: one catalog match, else refused before anything runs.
@@ -327,6 +402,21 @@ export async function handleChat(
     const model = pinned ?? handoffReturn;
     const chain = handoffChain(model, fallbackModels);
 
+    // Unpinned, the session's last model is the best guess at who answers.
+    const firstEffort = effortFor(model ?? state.lastModel, effortAsked, effortStrict);
+    if (firstEffort.problem && effortStrict) {
+        response.markdown(firstEffort.problem);
+        return { metadata: { kind: "idle" } };
+    }
+    if (firstEffort.problem) {
+        response.markdown(`> ${mark("warn")} ${firstEffort.problem}\n\n`);
+    } else if (firstEffort.variant && effortStrict) {
+        response.markdown(`> ${mark("thought")} effort \`${firstEffort.variant}\`\n\n`);
+    }
+    // A fallback model gets the level only if it has it (or is not described).
+    const variantFor = (attempt: number): string | undefined =>
+        attempt === 0 ? firstEffort.variant : effortFor(chain[attempt], effortAsked, false).variant;
+
     // timeoutMs is an optional hard cap (at least 1s); idleTimeoutMs is what stops a hung run.
     const tPlan = planTimeout();
     timeoutMs = tPlan.timeoutMs;
@@ -343,7 +433,8 @@ export async function handleChat(
 
     // Attachments (and, opt-in, the selection) go into the prompt and back as references.
     const ctx = buildChatContext(request, cwd, { inline: turn.inline });
-    const taskForModel = ctx.preamble ? `${task}${ctx.preamble}` : task;
+    // A merge turn carries the lanes it names; they are context, like an attachment.
+    const taskForModel = `${task}${mergeLanes ? laneMergeContext(mergeLanes) : ""}${ctx.preamble}`;
     emitReferences(response, ctx.uris);
     if (ctx.uris.length) {
         logChannel.appendLine(
@@ -422,7 +513,7 @@ export async function handleChat(
         // An attached run needs its session id first, for the SSE liveness feed.
         if (attachUrl && !sessionId && !token.isCancellationRequested) {
             try {
-                sessionId = await timed("session", () => createServerSession(attachUrl, cwd, task));
+                sessionId = await timed("session", () => createServerSession(attachUrl, cwd, task, !isBuild));
             } catch (error) {
                 logChannel.appendLine(`[${stamp()}] could not pre-create a session, the run creates one: ${error}`);
             }
@@ -430,6 +521,10 @@ export async function handleChat(
 
         // Never queue silently behind a run nobody watches (busySessionPolicy).
         const guardBase = attachUrl ?? (useServer ? await untilStop(timed("server", () => warmServer(cwd)), token) : undefined);
+        const versionNote = guardBase ? versionNotice(guardBase) : undefined;
+        if (versionNote) {
+            response.markdown(`> ${mark("warn")} ${versionNote}\n\n`);
+        }
         // planAgent only once OpenCode lists it: the CLI runs an unknown name
         // as BUILD (REFS "Read-only turns"). Raced against Stop.
         const planChoice = isBuild || planAgentSetting() === "plan"
@@ -507,6 +602,7 @@ export async function handleChat(
                 readOnly: !isBuild,
                 json: true,
                 thinking: wantThinking,
+                variant: variantFor(attempt),
                 timeoutMs,
                 idleTimeoutMs,
                 sessionId,
@@ -517,6 +613,7 @@ export async function handleChat(
                 token,
                 onStep: streamStep,
                 onReasoning: streamReasoning,
+                onSubagent: (text) => beat.subagent(text),
                 onText: (rawText) => {
                     const text = scrubLeakedContext(rawText);
                     if (!text || (!answer.trim() && (isPromptEcho(text, task) || isPromptEcho(text, attemptTask)))) {
@@ -689,20 +786,49 @@ export async function handleChat(
                 tokensIn: baseline.tokensIn + (metrics?.tokens.input ?? 0),
                 tokensOut: baseline.tokensOut + (metrics?.tokens.output ?? 0),
                 cost: baseline.cost + (metrics?.cost ?? 0),
-                lastModel: answeredBy
+                lastModel: answeredBy,
+                context: metrics?.context
             });
         }
 
         // Autocompact in the background: awaiting it held a finished answer for 30s.
-        const inputs = metrics?.tokens.input ?? 0;
-        if (autoCompact && sessionId && turns > 0 && (turns % compactEvery === 0 || inputs > COMPACT_INPUT_TOKENS)) {
+        // Sized by the last step's context, as OpenCode sizes it: the turn's summed
+        // `input` counted the context once per step and left out cache reads.
+        const contextTokens = metrics?.context ?? 0;
+        const sizedBy = answeredBy ?? state.lastModel;
+        const contextLimit = sizedBy ? own(cachedModelInfo(), sizedBy)?.context : undefined;
+        if (
+            autoCompact &&
+            sessionId &&
+            turns > 0 &&
+            (turns % compactEvery === 0 ||
+                contextTokens > COMPACT_CONTEXT_TOKENS ||
+                (contextLimit !== undefined && contextTokens >= contextLimit * COMPACT_CONTEXT_SHARE))
+        ) {
+            logChannel.appendLine(
+                `[${stamp()}] compacting ${sessionId}: turn ${turns}, context ${contextTokens}` + (contextLimit ? ` of ${contextLimit}` : "")
+            );
             void compactSession(sessionId, cwd, answeredBy);
         }
+        // Autocompact off: offer it once the context is where it would have fired.
+        const compactOffer =
+            !autoCompact && sessionId && (contextTokens > COMPACT_CONTEXT_TOKENS || (contextLimit !== undefined && contextTokens >= contextLimit * COMPACT_CONTEXT_SHARE))
+                ? contextLimit
+                    ? `${Math.round((100 * contextTokens) / contextLimit)}%`
+                    : `${Math.round(contextTokens / 1000)}k`
+                : undefined;
+        const failedTask = metrics?.failedTasks?.[0];
+        const sentVariant = variantFor(lastAttempt);
         if (sessionId && metrics && !metrics.error && !metrics.timedOut && !metrics.cancelled) {
             rememberFollowups(
                 sessionId,
                 turns,
-                suggestFollowups({ agent: agentLabel, answer: finalAnswer || answer, steps: metrics.steps })
+                suggestFollowups({
+                    agent: agentLabel,
+                    answer: finalAnswer || answer,
+                    steps: metrics.steps,
+                    nextEffort: higherEffort(sizedBy, sentVariant)
+                })
             );
         }
         refreshStatus(cwd);
@@ -719,6 +845,12 @@ export async function handleChat(
                 cost: baseline.cost + (metrics?.cost ?? 0),
                 toolOutputBytes: sessionBytes,
                 model: answeredBy,
+                ...(sentVariant ? { effort: sentVariant } : {}),
+                ...(contextTokens ? { context: contextTokens } : {}),
+                ...(compactOffer ? { compact: compactOffer } : {}),
+                ...(failedTask
+                    ? { failedTask: { agent: failedTask.agent, description: truncate(failedTask.description, 80), ...(failedTask.sessionId ? { taskId: safeSessionId(failedTask.sessionId) } : {}) } }
+                    : {}),
                 timedOut: Boolean(metrics?.timedOut),
                 cancelled: Boolean(metrics?.cancelled),
                 error: metrics?.error

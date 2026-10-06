@@ -1,10 +1,13 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.contextOf = void 0;
 exports.emptyTokens = emptyTokens;
 exports.stepOutput = stepOutput;
 exports.toolFilePath = toolFilePath;
 exports.toolOutputBytes = toolOutputBytes;
 exports.finalizeStepStatuses = finalizeStepStatuses;
+const contextOf = (t) => t ? t.total || (t.input ?? 0) + (t.output ?? 0) + (t.cache?.read ?? 0) + (t.cache?.write ?? 0) : 0;
+exports.contextOf = contextOf;
 function emptyTokens() {
     return { total: 0, input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } };
 }

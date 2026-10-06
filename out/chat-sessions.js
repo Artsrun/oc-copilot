@@ -67,12 +67,24 @@ async function handleSessions(p) {
     let base;
     let sessions;
     try {
-        base = await (0, net_1.ensureServer)(p.cwd);
+        let failure;
+        const started = (0, net_1.ensureServer)(p.cwd, (text) => p.response.progress(text)).catch((error) => {
+            failure = error ?? new Error("the server did not start");
+            return undefined;
+        });
+        const ready = p.token ? await (0, core_1.untilStop)(started, p.token) : await started;
+        if (failure) {
+            throw failure;
+        }
+        if (!ready) {
+            return done({ cancelled: true });
+        }
+        base = ready;
         sessions = await (0, sessions_1.listSessions)(base, p.cwd);
     }
     catch (error) {
         core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] /sessions: ${error}`);
-        p.response.markdown(`${(0, followups_1.mark)("fail")} Could not list sessions: \`${(0, core_1.truncate)(String(error instanceof Error ? error.message : error), 120).replace(/`/g, "'")}\`. \`/ping\` checks the connection.`);
+        p.response.markdown(`${(0, followups_1.mark)("fail")} Could not list sessions: \`${(0, core_1.truncate)(String(error instanceof Error ? error.message : error), 480).replace(/`/g, "'")}\`. \`/ping\` checks the connection.`);
         return done();
     }
     if (!sessions.length) {

@@ -12,6 +12,8 @@ export interface SessionState {
     tokensOut?: number;
     cost?: number;
     lastModel?: string;
+    /** Context tokens after the last turn (RunMetrics.context). */
+    context?: number;
 }
 
 export const PARTICIPANT_ID = "opencodeCopilotBridge.chat";
@@ -47,6 +49,8 @@ export interface TurnMetadata {
     toolOutputBytes?: number;
     agent?: string;
     model?: string;
+    context?: number;
+    effort?: string;
 }
 
 /**
@@ -92,7 +96,8 @@ export function threadSession(history: readonly unknown[], cwd: string): Session
             tokensIn: meta.tokensIn,
             tokensOut: meta.tokensOut,
             cost: meta.cost,
-            lastModel: meta.model
+            lastModel: meta.model,
+            context: typeof meta.context === "number" ? meta.context : undefined
         };
     }
     return undefined;

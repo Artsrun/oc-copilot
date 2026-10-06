@@ -3,6 +3,81 @@
 Full release history, newest first; releases before the last one are condensed
 to their summary and headlines. The README ships the last five.
 
+### 0.0.204
+
+A slow first server start that failed `/sessions`, chips from what the run
+left unfinished, `/compact`, subagents you can see, and `chat-boot.ts` split.
+No setting was added or removed.
+
+- **Fixed: `/sessions` failed while the server was still starting.**
+  Reported on 0.0.203: `Could not list sessions: OpenCode server did not
+  become healthy on http://127.0.0.1:61930 within 20 s`, then `/ping` healthy
+  on the same port a moment later. 0.0.203 had cut each health poll to 1.5 s,
+  so a booting server that answers slowly never counted as up. The review of
+  0.0.203 set the deadline to 45 s and each poll to 3 s, and the error now
+  says the process is still running and what it last printed. 0.0.204 adds:
+  a wait past 1.5 s says *Starting the OpenCode server…* (`/sessions`, `/stop`),
+  Stop ends a `/sessions` that waits on a boot, a failed start is reported
+  instead of being read as Stop, the `/sessions` error is no longer cut at 120
+  characters (it lost the cause), and the log records
+  `serve on … answered after N.Ns` for every start. Checks `SB`.
+- **Resume chip for a subagent that stopped.** A `task` call that ended in an
+  error or was interrupted leaves `failedTask` in the turn's metadata (agent,
+  description, child session); the first chip, *Resume explore*, asks the
+  agent to call `task` again with that `task_id` (resumable since OpenCode
+  1.18.20), or to rerun it when no child session was reported. Checks `RT`.
+- **`/compact`**: summarise this chat's session now, with the model it runs
+  on, as autocompact does (one model pass). With `autoCompact` off, a turn
+  whose context reached the autocompact threshold offers a *Compact · 72%*
+  chip. Checks `CP`.
+- **Subagents you can see, and that keep their parent alive.** On server and
+  attached runs the live line shows what a subagent is doing
+  (`explore › grep redirect`, one line per 2 s at most), and its events count
+  as the run's activity: a parent waiting on a long subagent is no longer
+  stopped by the idle cap. Checks `SU`.
+- **Version note.** A server whose `/global/health` names a version outside
+  1.18.27–1.18.34 gets one line per window saying so; the turn runs. Checks `VN`.
+- **State chips first.** Resume and Compact come before the answer's own
+  chips; at most three as before.
+- **`chat-boot.ts` split** (1,000 lines) into `heartbeat.ts` (the live turn),
+  `lanes.ts` (`/parallel`) and `chips.ts` (follow-ups); `chat-boot.ts` keeps
+  the command vocabulary and `/help`, and re-exports the rest.
+
+### 0.0.203
+
+Subagents on read-only turns, a server port held by a hung listener, an agent
+per lane, and `runs.ts` split by transport. One setting added.
+
+- **Fixed: a read-only turn could edit through a subagent** — `task` rules allow only `readOnlySubagents`. Checks `RO`.
+- **Fixed: a fixed `serverPort` held by a hung listener** — the window starts its own server; exits name their cause. Checks `SV`.
+- **`a:<agent>` per lane**, checked against OpenCode's list. Checks `LA`. Subagent spend and Stop. Checks `SC`, `AT`.
+- **`runs.ts` split** into `run-cli`, `run-server`, `run-steps`, `asks`, `server-session`.
+
+### 0.0.202
+
+Reasoning effort, lanes without typing `/parallel`, and autocompact sized the
+way OpenCode sizes a session. No setting was removed; two were added.
+
+- **Effort (OpenCode model variants)**: `effort:<level>` / `e:<level>` or the `effort` setting, checked against the model's levels (OpenCode ignores a miss silently). Checks `EF`.
+- **`autoParallel`** (`offer` | `auto` | `off`). Checks `AP`.
+- **Fixed: autocompact measured the wrong thing** — now the last step's context, as OpenCode's `isOverflow`. Checks `CX`.
+- **Chips**: *Fix failing tests*, *Dig deeper · high*. Checks `FT`. **Subagent rows** name the subagent. Checks `SG`.
+
+### 0.0.201
+
+- A specific Fix offer no longer hides Fix all; a merge prompt without {run} is reported.
+- `serverPort` defaults to 53200 instead of 4096, so the bridge no longer adopts whatever answers `{"healthy":true}` on the common port (it received the prompt and workspace path, measured). `0` starts a private server on a free port and adopts nothing; a fixed port still reuses a healthy server there.
+
+### 0.0.199
+
+- A plan whose first numbered list is 2-5 read-only steps, each naming a concrete
+  file or call, gets a "Run N as lanes" chip that sends them as /parallel lanes.
+- A finished /parallel run offers "Merge lanes" and "Retry failed lanes". Lane
+  answers are kept in memory (8 runs); after a reload the merge says so and runs nothing.
+- Model rows in the default-model picker lead with a chip icon.
+- Fixed: an answer ending "the parser constructor" no longer produces an inherited-key chip.
+- `.vscode/settings.json` is no longer tracked (it is git-ignored).
+
 ### 0.0.198
 
 Fixes from a Copilot review of 0.0.197, and four write-only fields found by
