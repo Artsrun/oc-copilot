@@ -23,6 +23,7 @@
         "COMPARE_LANES": { "kao": "(°ー°〃)", "label": "Compare", "prompt": "COMPARE_LANES", "command": "plan" },
         "RETRY_LANES": { "kao": "(ﾉ´･ω･)ﾉ", "label": "Retry lanes", "prompt": "", "command": "parallel" },
         "RESUME_TASK": { "kao": "(ง •̀ω•́)ง", "label": "Resume", "prompt": "RESUME_TASK", "command": "@kind" },
+        "RERUN_TASK": { "kao": "(ง •̀_•́)ง", "label": "Rerun", "prompt": "RERUN_TASK", "command": "@kind" },
         "COMPACT": { "kao": "(っ˘ω˘ς)", "label": "Compact", "prompt": "", "command": "compact" }
     },
     "cases": {

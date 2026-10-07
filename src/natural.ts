@@ -15,7 +15,10 @@
 // model call, no invented intent. No offer and no concrete cue: no chips.
 //
 // Pure string work — no vscode import — so check NF drives it directly.
+// The one text utility it needs beyond its own rules (plainText, sentencesOf)
+// lives in ./core, shared with the rest of the bridge.
 
+import { plainText, sentencesOf } from "./core";
 import { NATURAL_MAX_LABEL, NaturalKey, naturalText } from "./followups";
 
 export interface NaturalChip {
@@ -60,25 +63,6 @@ const PARTICIPLES: Record<string, string> = {
     renamed: "rename", reviewed: "review", run: "run", split: "split", summarized: "summarize", tested: "test",
     updated: "update", walked: "walk", written: "write"
 };
-
-const ABBREVIATIONS = /\b(e\.g|i\.e|etc|vs|approx|incl|esp|cf)\./gi;
-
-/** Markdown and code out, one sentence per line-ish unit, abbreviations kept whole. */
-const plainText = (markdown: string): string =>
-    markdown
-        .replace(/```[\s\S]*?```/g, " ")
-        .replace(/`([^`\n]*)`/g, "$1")
-        .replace(/\*\*|__/g, "")
-        .replace(/(^|\s)[*_]([^*_\n]+)[*_](?=\s|[.,!?;:]|$)/g, "$1$2")
-        .replace(/^\s{0,3}(#{1,6}|>)\s*/gm, "")
-        .replace(/[ \t]+/g, " ");
-
-const sentencesOf = (text: string): string[] =>
-    text
-        .replace(ABBREVIATIONS, (m) => m.replace(/\./g, "․"))
-        .split(/\n+|(?<=[.!?])\s+(?=[A-Z("'‘“])/)
-        .map((x) => x.replace(/․/g, ".").replace(/^[-*•]\s+/, "").trim())
-        .filter(Boolean);
 
 const capitalize = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
 
@@ -288,25 +272,28 @@ export const laneItems = (markdown: string, splits: (task: string) => string[]):
     return ok && splits(items.join("\n---\n")).length === items.length ? items : undefined;
 };
 
-/** `held`: kinds the chip backoff holds back (./chips); they leave room for the next. */
-export function naturalFollowups(input: AnswerFacts, max = 3, splits?: (task: string) => string[], held?: ReadonlySet<string>): NaturalChip[] {
-    const turnKind: "dev" | "plan" = input.agent === "dev" ? "dev" : "plan";
-    const answer = input.answer ?? "";
-    const text = plainText(answer);
-    const tail = sentencesOf(text.slice(-900)).slice(-4);
-    const chips: NaturalChip[] = [];
-    const push = (kind: string, label: string, promptText: string, command: NaturalChip["command"], kao = ""): void => {
-        if (chips.length < max && label && !held?.has(kind) && !chips.some((c) => c.prompt === promptText)) {
-            chips.push({ label: kao ? `${kao} ${labelOf(label)}` : labelOf(label), prompt: promptText, command, kind });
-        }
-    };
-    const pushT = (kind: NaturalKey, t: { kao: string; label: string; prompt: string }, command: NaturalChip["command"]): void =>
-        push(kind, t.label, t.prompt, command, t.kao);
+// Bounds on what part of the answer is read: the whole answer can be 250 KB.
+const OFFER_TAIL_CHARS = 900; // the tail scanned for the agent's offers
+const OFFER_TAIL_SENTENCES = 4; // …sentences of that tail
+const OFFER_HEAD_SENTENCES = 3; // …sentences of the head, scanned only when nothing fired
+const CUE_TAIL_CHARS = 300; // the shorter tail the unfinished cue reads
+const CUE_TEXT_CHARS = 1200; // the tail the other cues read
+const ACTION_MAX_CHARS = 140; // one offered action is never longer
 
-    // 1. The agent's own offer, newest sentence first — and inside a sentence,
-    // the clause after a dash, semicolon or colon ("…glob — let me know if you
-    // want…", "Question: Should I …?").
-    const clauses = tail.flatMap((s) => [s, ...s.split(/\s[—–]\s|;\s|:\s(?=[A-Z])/).slice(1).reverse()]);
+/** A cue chip as `naturalFollowups` combines them (the kind is the backoff key). */
+const cueChip = (kind: NaturalKey, command: NaturalChip["command"], t: { kao: string; label: string; prompt: string }): NaturalChip => ({
+    label: t.kao ? `${t.kao} ${labelOf(t.label)}` : labelOf(t.label),
+    prompt: t.prompt,
+    command,
+    kind
+});
+
+/** 1. The agent's own offer in these sentences, newest clause first — inside a
+ * sentence, the clause after a dash, semicolon or colon ("…glob — let me know
+ * if you want…", "Question: Should I …?"). The first sentence that offers
+ * wins; a later one would be the older ask. */
+const offerChipsIn = (sentences: readonly string[], turnKind: "dev" | "plan"): NaturalChip[] => {
+    const clauses = sentences.flatMap((s) => [s, ...s.split(/\s[—–]\s|;\s|:\s(?=[A-Z])/).slice(1).reverse()]);
     for (const sentence of [...clauses].reverse()) {
         const body = OFFERS.map((re) => sentence.match(re)?.[1]).find(Boolean);
         const noun = !body ? sentence.match(WANT_NOUN)?.[1] : undefined;
@@ -321,41 +308,55 @@ export function naturalFollowups(input: AnswerFacts, max = 3, splits?: (task: st
                     : wantA
                         ? [`${WANT_A_VERB[wantA[1].toLowerCase()]}${wantA[2] ?? ""}`]
                         : [];
-        const actions = raw.map(cleanAction).filter((a) => a.length >= 3 && a.length <= 140 && isVerb(firstWord(a)));
-        for (const action of actions) {
+        const actions = raw.map(cleanAction).filter((a) => a.length >= 3 && a.length <= ACTION_MAX_CHARS && isVerb(firstWord(a)));
+        if (!actions.length) {
+            continue;
+        }
+        return actions.map((action) => {
             const t = naturalText("offer", { action: capitalize(action) });
-            push("offer", t.label, t.prompt, commandFor(action, turnKind));
-        }
-        if (actions.length) {
-            break;
-        }
+            return { label: labelOf(t.label), prompt: t.prompt, command: commandFor(action, turnKind), kind: "offer" };
+        });
     }
+    return [];
+};
 
-    // An offer that already means "do all of it" would make the fixAll and
-    // apply chips (followups.json) the same click twice.
-    const offersAll = chips.some((c) =>
-        /^(?:apply|implement|fix|make|do|proceed|go ahead|address)\b(?:\s*[.!?]*$|.*\b(?:these|them|this|it|all|those|everything|fixes|changes|steps?|plan)\b)/i.test(c.label)
-    );
+// An offer that already means "do all of it" would make the fixAll and apply
+// chips (followups.json) the same click twice.
+const OFFERS_ALL = /^(?:apply|implement|fix|make|do|proceed|go ahead|address)\b(?:\s*[.!?]*$|.*\b(?:these|them|this|it|all|those|everything|fixes|changes|steps?|plan)\b)/i;
+const offersAllOf = (offers: readonly NaturalChip[]): boolean => offers.some((c) => OFFERS_ALL.test(c.label));
 
-    // 2. A closing either/or question: quick replies in the user's words.
-    if (!chips.length && tail.length && /\?$/.test(tail[tail.length - 1])) {
-        for (const choice of choicesOf(tail[tail.length - 1])) {
-            const t = naturalText("choice", { choice });
-            push("choice", capitalize(t.label), t.prompt, turnKind);
-        }
+/** 2. A closing either/or question: quick replies in the user's words. */
+const choiceChipsIn = (tail: readonly string[], turnKind: "dev" | "plan"): NaturalChip[] => {
+    if (!tail.length || !/\?$/.test(tail[tail.length - 1])) {
+        return [];
     }
+    return choicesOf(tail[tail.length - 1]).map((choice) => {
+        const t = naturalText("choice", { choice });
+        return { label: labelOf(capitalize(t.label)), prompt: t.prompt, command: turnKind, kind: "choice" };
+    });
+};
 
-    // 3. Concrete cues, the agent saying it will carry on first. Offers fill
-    // the cap before any cue: three offers leave no room for Continue.
-    if (UNFINISHED.test(text.slice(-300))) {
-        pushT("resume", naturalText("resume"), turnKind);
+/** 3. Concrete cues, in order: the agent saying it will carry on first, then
+ * what this answer did and points at. Offers fill the cap before any cue:
+ * three offers leave no room for Continue. */
+const cueChipsIn = (
+    input: AnswerFacts,
+    answer: string,
+    text: string,
+    turnKind: "dev" | "plan",
+    offersAll: boolean,
+    splits?: (task: string) => string[]
+): NaturalChip[] => {
+    const out: NaturalChip[] = [];
+    if (UNFINISHED.test(text.slice(-CUE_TAIL_CHARS))) {
+        out.push(cueChip("resume", turnKind, naturalText("resume")));
     }
     const edited = [
         ...new Set(input.steps.filter((s) => EDIT_TOOLS.test(s.tool)).map((s) => s.filePath || s.detail || "").filter(Boolean))
     ];
-    const tailText = text.slice(-1200);
+    const tailText = text.slice(-CUE_TEXT_CHARS);
     if (turnKind === "dev" && !edited.length && PLAN_REFUSAL.test(tailText)) {
-        pushT("applyNow", naturalText("applyNow"), "dev");
+        out.push(cueChip("applyNow", "dev", naturalText("applyNow")));
     }
     if (turnKind === "plan") {
         // A numbered list is a PLAN when item 1 is an instruction ("Fix …"),
@@ -368,38 +369,66 @@ export function naturalFollowups(input: AnswerFacts, max = 3, splits?: (task: st
         // item, bounded only against a runaway paragraph.
         const shortItem = item && (item.length > 200 ? item.slice(0, item.lastIndexOf(" ", 200)) : item);
         if (shortItem && EDIT_VERBS.has(firstWord(shortItem))) {
-            pushT("step1", naturalText("step1", { item: shortItem }), "dev");
+            out.push(cueChip("step1", "dev", naturalText("step1", { item: shortItem })));
         } else if (shortItem && ISSUE.test(first ?? "")) {
-            pushT("fix1", naturalText("fix1", { item: shortItem }), "dev");
+            out.push(cueChip("fix1", "dev", naturalText("fix1", { item: shortItem })));
             if (!offersAll) {
-                pushT("fixAll", naturalText("fixAll"), "dev");
+                out.push(cueChip("fixAll", "dev", naturalText("fixAll")));
             }
         }
         const lanes = splits ? laneItems(answer, splits) : undefined;
         if (lanes) {
-            pushT("lanes", naturalText("lanes", { n: String(lanes.length), lanes: lanes.join("\n---\n") }), "parallel");
+            out.push(cueChip("lanes", "parallel", naturalText("lanes", { n: String(lanes.length), lanes: lanes.join("\n---\n") })));
         }
         if (RECOMMENDS.test(tailText) && /\?/.test(tailText)) {
-            pushT("recommend", naturalText("recommend"), "dev");
+            out.push(cueChip("recommend", "dev", naturalText("recommend")));
         }
         if (!offersAll && ((shortItem && EDIT_VERBS.has(firstWord(shortItem))) || /```diff|^@@ /m.test(answer))) {
-            pushT("apply", naturalText("apply"), "dev");
+            out.push(cueChip("apply", "dev", naturalText("apply")));
         }
     }
     if (turnKind === "dev" && edited.length) {
         const file = edited.length === 1 ? edited[0].split(/[\\/]/).pop() ?? edited[0] : "";
-        pushT("review1", file ? naturalText("review1", { file }) : naturalText("reviewN", { n: String(edited.length) }), "plan");
+        out.push(cueChip("review1", "plan", file ? naturalText("review1", { file }) : naturalText("reviewN", { n: String(edited.length) })));
         const ranTests = input.steps.some((s) => /\btest/i.test(s.detail ?? "") && /bash|shell|run/i.test(s.tool));
         if (TESTS_FAILED.test(tailText) && !NO_FAILURES.test(tailText)) {
-            pushT("fixTests", naturalText("fixTests"), "dev");
+            out.push(cueChip("fixTests", "dev", naturalText("fixTests")));
         } else if (!ranTests && !TESTS_PASSED.test(tailText)) {
-            pushT("tests", naturalText("tests"), "dev");
+            out.push(cueChip("tests", "dev", naturalText("tests")));
         }
     }
     // An unsettled answer, and a level above this turn's: one more look, harder.
     if (input.nextEffort && /^[A-Za-z][\w-]{0,23}$/.test(input.nextEffort) && UNCERTAIN.test(tailText)) {
         const t = naturalText("deeper", { effort: input.nextEffort });
-        pushT("deeper", { ...t, prompt: `effort:${input.nextEffort} ${t.prompt}` }, turnKind);
+        out.push(cueChip("deeper", turnKind, { ...t, prompt: `effort:${input.nextEffort} ${t.prompt}` }));
+    }
+    return out;
+};
+
+/** `held`: kinds the chip backoff holds back (./chips); they leave room for the next. */
+export function naturalFollowups(input: AnswerFacts, max = 3, splits?: (task: string) => string[], held?: ReadonlySet<string>): NaturalChip[] {
+    const turnKind: "dev" | "plan" = input.agent === "dev" ? "dev" : "plan";
+    const answer = input.answer ?? "";
+    const text = plainText(answer);
+    const tail = sentencesOf(text.slice(-OFFER_TAIL_CHARS)).slice(-OFFER_TAIL_SENTENCES);
+    const offers = offerChipsIn(tail, turnKind);
+    const choices = offers.length ? [] : choiceChipsIn(tail, turnKind);
+    const cues = cueChipsIn(input, answer, text, turnKind, offersAllOf(offers), splits);
+    let all = [...offers, ...choices, ...cues];
+    if (!all.length) {
+        // Agents state intent up front ("I'll fix A."), and a long plan answer
+        // can end in a summary that buries its offer below the tail scan. Only
+        // when nothing fired — a live cue or choice always out-ranks the head.
+        all = offerChipsIn(sentencesOf(text).slice(0, OFFER_HEAD_SENTENCES), turnKind);
+    }
+    const seen = new Set<string>();
+    const chips: NaturalChip[] = [];
+    for (const c of all) {
+        if (chips.length >= max || !c.label || held?.has(c.kind) || seen.has(c.prompt)) {
+            continue;
+        }
+        seen.add(c.prompt);
+        chips.push(c);
     }
     return chips;
 }

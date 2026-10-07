@@ -254,6 +254,7 @@ function startHeartbeat(response, initial, timeoutMs, cwd) {
                 group.children.set(parent, kids);
             }
             if (step.status !== "running") {
+                sub = "";
                 return;
             }
             const detail = (0, core_1.truncate)(step.detail, 60);

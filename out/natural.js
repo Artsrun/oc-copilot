@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.laneItems = void 0;
 exports.naturalFollowups = naturalFollowups;
+const core_1 = require("./core");
 const followups_1 = require("./followups");
 const EDIT_VERBS = new Set(("add address apply align branch build bump change checkout clean clone close commit complete confirm continue convert " +
     "create delete deploy disable document drop edit enable exclude export extend extract finish fix focus format " +
@@ -21,19 +22,6 @@ const PARTICIPLES = {
     renamed: "rename", reviewed: "review", run: "run", split: "split", summarized: "summarize", tested: "test",
     updated: "update", walked: "walk", written: "write"
 };
-const ABBREVIATIONS = /\b(e\.g|i\.e|etc|vs|approx|incl|esp|cf)\./gi;
-const plainText = (markdown) => markdown
-    .replace(/```[\s\S]*?```/g, " ")
-    .replace(/`([^`\n]*)`/g, "$1")
-    .replace(/\*\*|__/g, "")
-    .replace(/(^|\s)[*_]([^*_\n]+)[*_](?=\s|[.,!?;:]|$)/g, "$1$2")
-    .replace(/^\s{0,3}(#{1,6}|>)\s*/gm, "")
-    .replace(/[ \t]+/g, " ");
-const sentencesOf = (text) => text
-    .replace(ABBREVIATIONS, (m) => m.replace(/\./g, "․"))
-    .split(/\n+|(?<=[.!?])\s+(?=[A-Z("'‘“])/)
-    .map((x) => x.replace(/․/g, ".").replace(/^[-*•]\s+/, "").trim())
-    .filter(Boolean);
 const capitalize = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 const labelOf = (text) => {
     if (text.length <= followups_1.NATURAL_MAX_LABEL) {
@@ -157,7 +145,7 @@ const firstOfNumbered = (markdown) => {
             first = m[2];
         }
         else if (m[1] === "2" && first !== undefined) {
-            return plainText(first).replace(/[*_`]/g, "").replace(/[:.]\s*$/, "").trim();
+            return (0, core_1.plainText)(first).replace(/[*_`]/g, "").replace(/[:.]\s*$/, "").trim();
         }
     }
     return undefined;
@@ -186,24 +174,25 @@ const laneItems = (markdown, splits) => {
     if (raw.length < 2 || raw.length > 5) {
         return undefined;
     }
-    const items = raw.map((r) => plainText(r).replace(/[\s.:;]+$/, "").trim());
+    const items = raw.map((r) => (0, core_1.plainText)(r).replace(/[\s.:;]+$/, "").trim());
     const ok = items.every((i) => i.length >= 8 && i.length <= 200 && READ_VERBS.has(firstWord(i)) && LANE_TARGET.test(i) && !BARE_BACKREF.test(i) && splits(i).length === 1);
     return ok && splits(items.join("\n---\n")).length === items.length ? items : undefined;
 };
 exports.laneItems = laneItems;
-function naturalFollowups(input, max = 3, splits, held) {
-    const turnKind = input.agent === "dev" ? "dev" : "plan";
-    const answer = input.answer ?? "";
-    const text = plainText(answer);
-    const tail = sentencesOf(text.slice(-900)).slice(-4);
-    const chips = [];
-    const push = (kind, label, promptText, command, kao = "") => {
-        if (chips.length < max && label && !held?.has(kind) && !chips.some((c) => c.prompt === promptText)) {
-            chips.push({ label: kao ? `${kao} ${labelOf(label)}` : labelOf(label), prompt: promptText, command, kind });
-        }
-    };
-    const pushT = (kind, t, command) => push(kind, t.label, t.prompt, command, t.kao);
-    const clauses = tail.flatMap((s) => [s, ...s.split(/\s[—–]\s|;\s|:\s(?=[A-Z])/).slice(1).reverse()]);
+const OFFER_TAIL_CHARS = 900;
+const OFFER_TAIL_SENTENCES = 4;
+const OFFER_HEAD_SENTENCES = 3;
+const CUE_TAIL_CHARS = 300;
+const CUE_TEXT_CHARS = 1200;
+const ACTION_MAX_CHARS = 140;
+const cueChip = (kind, command, t) => ({
+    label: t.kao ? `${t.kao} ${labelOf(t.label)}` : labelOf(t.label),
+    prompt: t.prompt,
+    command,
+    kind
+});
+const offerChipsIn = (sentences, turnKind) => {
+    const clauses = sentences.flatMap((s) => [s, ...s.split(/\s[—–]\s|;\s|:\s(?=[A-Z])/).slice(1).reverse()]);
     for (const sentence of [...clauses].reverse()) {
         const body = OFFERS.map((re) => sentence.match(re)?.[1]).find(Boolean);
         const noun = !body ? sentence.match(WANT_NOUN)?.[1] : undefined;
@@ -218,70 +207,101 @@ function naturalFollowups(input, max = 3, splits, held) {
                     : wantA
                         ? [`${WANT_A_VERB[wantA[1].toLowerCase()]}${wantA[2] ?? ""}`]
                         : [];
-        const actions = raw.map(cleanAction).filter((a) => a.length >= 3 && a.length <= 140 && isVerb(firstWord(a)));
-        for (const action of actions) {
+        const actions = raw.map(cleanAction).filter((a) => a.length >= 3 && a.length <= ACTION_MAX_CHARS && isVerb(firstWord(a)));
+        if (!actions.length) {
+            continue;
+        }
+        return actions.map((action) => {
             const t = (0, followups_1.naturalText)("offer", { action: capitalize(action) });
-            push("offer", t.label, t.prompt, commandFor(action, turnKind));
-        }
-        if (actions.length) {
-            break;
-        }
+            return { label: labelOf(t.label), prompt: t.prompt, command: commandFor(action, turnKind), kind: "offer" };
+        });
     }
-    const offersAll = chips.some((c) => /^(?:apply|implement|fix|make|do|proceed|go ahead|address)\b(?:\s*[.!?]*$|.*\b(?:these|them|this|it|all|those|everything|fixes|changes|steps?|plan)\b)/i.test(c.label));
-    if (!chips.length && tail.length && /\?$/.test(tail[tail.length - 1])) {
-        for (const choice of choicesOf(tail[tail.length - 1])) {
-            const t = (0, followups_1.naturalText)("choice", { choice });
-            push("choice", capitalize(t.label), t.prompt, turnKind);
-        }
+    return [];
+};
+const OFFERS_ALL = /^(?:apply|implement|fix|make|do|proceed|go ahead|address)\b(?:\s*[.!?]*$|.*\b(?:these|them|this|it|all|those|everything|fixes|changes|steps?|plan)\b)/i;
+const offersAllOf = (offers) => offers.some((c) => OFFERS_ALL.test(c.label));
+const choiceChipsIn = (tail, turnKind) => {
+    if (!tail.length || !/\?$/.test(tail[tail.length - 1])) {
+        return [];
     }
-    if (UNFINISHED.test(text.slice(-300))) {
-        pushT("resume", (0, followups_1.naturalText)("resume"), turnKind);
+    return choicesOf(tail[tail.length - 1]).map((choice) => {
+        const t = (0, followups_1.naturalText)("choice", { choice });
+        return { label: labelOf(capitalize(t.label)), prompt: t.prompt, command: turnKind, kind: "choice" };
+    });
+};
+const cueChipsIn = (input, answer, text, turnKind, offersAll, splits) => {
+    const out = [];
+    if (UNFINISHED.test(text.slice(-CUE_TAIL_CHARS))) {
+        out.push(cueChip("resume", turnKind, (0, followups_1.naturalText)("resume")));
     }
     const edited = [
         ...new Set(input.steps.filter((s) => EDIT_TOOLS.test(s.tool)).map((s) => s.filePath || s.detail || "").filter(Boolean))
     ];
-    const tailText = text.slice(-1200);
+    const tailText = text.slice(-CUE_TEXT_CHARS);
     if (turnKind === "dev" && !edited.length && PLAN_REFUSAL.test(tailText)) {
-        pushT("applyNow", (0, followups_1.naturalText)("applyNow"), "dev");
+        out.push(cueChip("applyNow", "dev", (0, followups_1.naturalText)("applyNow")));
     }
     if (turnKind === "plan") {
         const first = firstOfNumbered(answer);
         const item = first && first.replace(/\s+\([^)]+\)/g, "").trim();
         const shortItem = item && (item.length > 200 ? item.slice(0, item.lastIndexOf(" ", 200)) : item);
         if (shortItem && EDIT_VERBS.has(firstWord(shortItem))) {
-            pushT("step1", (0, followups_1.naturalText)("step1", { item: shortItem }), "dev");
+            out.push(cueChip("step1", "dev", (0, followups_1.naturalText)("step1", { item: shortItem })));
         }
         else if (shortItem && ISSUE.test(first ?? "")) {
-            pushT("fix1", (0, followups_1.naturalText)("fix1", { item: shortItem }), "dev");
+            out.push(cueChip("fix1", "dev", (0, followups_1.naturalText)("fix1", { item: shortItem })));
             if (!offersAll) {
-                pushT("fixAll", (0, followups_1.naturalText)("fixAll"), "dev");
+                out.push(cueChip("fixAll", "dev", (0, followups_1.naturalText)("fixAll")));
             }
         }
         const lanes = splits ? (0, exports.laneItems)(answer, splits) : undefined;
         if (lanes) {
-            pushT("lanes", (0, followups_1.naturalText)("lanes", { n: String(lanes.length), lanes: lanes.join("\n---\n") }), "parallel");
+            out.push(cueChip("lanes", "parallel", (0, followups_1.naturalText)("lanes", { n: String(lanes.length), lanes: lanes.join("\n---\n") })));
         }
         if (RECOMMENDS.test(tailText) && /\?/.test(tailText)) {
-            pushT("recommend", (0, followups_1.naturalText)("recommend"), "dev");
+            out.push(cueChip("recommend", "dev", (0, followups_1.naturalText)("recommend")));
         }
         if (!offersAll && ((shortItem && EDIT_VERBS.has(firstWord(shortItem))) || /```diff|^@@ /m.test(answer))) {
-            pushT("apply", (0, followups_1.naturalText)("apply"), "dev");
+            out.push(cueChip("apply", "dev", (0, followups_1.naturalText)("apply")));
         }
     }
     if (turnKind === "dev" && edited.length) {
         const file = edited.length === 1 ? edited[0].split(/[\\/]/).pop() ?? edited[0] : "";
-        pushT("review1", file ? (0, followups_1.naturalText)("review1", { file }) : (0, followups_1.naturalText)("reviewN", { n: String(edited.length) }), "plan");
+        out.push(cueChip("review1", "plan", file ? (0, followups_1.naturalText)("review1", { file }) : (0, followups_1.naturalText)("reviewN", { n: String(edited.length) })));
         const ranTests = input.steps.some((s) => /\btest/i.test(s.detail ?? "") && /bash|shell|run/i.test(s.tool));
         if (TESTS_FAILED.test(tailText) && !NO_FAILURES.test(tailText)) {
-            pushT("fixTests", (0, followups_1.naturalText)("fixTests"), "dev");
+            out.push(cueChip("fixTests", "dev", (0, followups_1.naturalText)("fixTests")));
         }
         else if (!ranTests && !TESTS_PASSED.test(tailText)) {
-            pushT("tests", (0, followups_1.naturalText)("tests"), "dev");
+            out.push(cueChip("tests", "dev", (0, followups_1.naturalText)("tests")));
         }
     }
     if (input.nextEffort && /^[A-Za-z][\w-]{0,23}$/.test(input.nextEffort) && UNCERTAIN.test(tailText)) {
         const t = (0, followups_1.naturalText)("deeper", { effort: input.nextEffort });
-        pushT("deeper", { ...t, prompt: `effort:${input.nextEffort} ${t.prompt}` }, turnKind);
+        out.push(cueChip("deeper", turnKind, { ...t, prompt: `effort:${input.nextEffort} ${t.prompt}` }));
+    }
+    return out;
+};
+function naturalFollowups(input, max = 3, splits, held) {
+    const turnKind = input.agent === "dev" ? "dev" : "plan";
+    const answer = input.answer ?? "";
+    const text = (0, core_1.plainText)(answer);
+    const tail = (0, core_1.sentencesOf)(text.slice(-OFFER_TAIL_CHARS)).slice(-OFFER_TAIL_SENTENCES);
+    const offers = offerChipsIn(tail, turnKind);
+    const choices = offers.length ? [] : choiceChipsIn(tail, turnKind);
+    const cues = cueChipsIn(input, answer, text, turnKind, offersAllOf(offers), splits);
+    let all = [...offers, ...choices, ...cues];
+    if (!all.length) {
+        all = offerChipsIn((0, core_1.sentencesOf)(text).slice(0, OFFER_HEAD_SENTENCES), turnKind);
+    }
+    const seen = new Set();
+    const chips = [];
+    for (const c of all) {
+        if (chips.length >= max || !c.label || held?.has(c.kind) || seen.has(c.prompt)) {
+            continue;
+        }
+        seen.add(c.prompt);
+        chips.push(c);
     }
     return chips;
 }

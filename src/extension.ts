@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 
-import { logChannel, resolveFolder, setExtensionContext, setLogChannel } from "./core";
+import { logChannel, resolveFolder, setExtensionContext, setLogChannel, stamp } from "./core";
 import { expandShimVar, readShimTarget, resolveExecutable, tokenizeCmdLine } from "./proc";
 import { httpGetJson, httpPostJson, lastServeLine, setStartupDeadline, stopServer, withDirectory } from "./net";
 import { toolFilePath } from "./metrics";
@@ -67,6 +67,15 @@ const participant = (
         provideFollowups: (result): vscode.ChatFollowup[] =>
             followupsFor((result?.metadata ?? {}) as Record<string, unknown>)
     };
+    // Docs (chat follow-ups) ask for success metrics: the host's verdict on a
+    // turn (thumbs up/down) goes to the log next to the chip offered/taken
+    // lines. Optional-chained: the stub host may not have the event.
+    const feedback = (chat as { onDidReceiveFeedback?: vscode.Event<vscode.ChatResultFeedback> }).onDidReceiveFeedback;
+    if (feedback) {
+        context.subscriptions.push(
+            feedback((e) => logChannel.appendLine(`[${stamp()}] turn feedback: ${e.kind}`))
+        );
+    }
     return chat;
 };
 

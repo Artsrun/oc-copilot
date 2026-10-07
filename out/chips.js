@@ -38,7 +38,7 @@ function recalledFollowups(sessionId, turns) {
 const BACKOFF_KEY = "opencodeCopilotBridge.chipBackoff";
 const BACKOFF_AFTER = 3;
 const BACKOFF_MAX_HOLD = 32;
-const NEVER_HELD = new Set(["offer", "choice", "RESUME_TASK"]);
+const NEVER_HELD = new Set(["offer", "choice", "RESUME_TASK", "RERUN_TASK"]);
 const readBackoff = () => {
     const stored = core_1.extensionContext?.globalState?.get(BACKOFF_KEY);
     const message = typeof stored?.message === "number" && Number.isFinite(stored.message) ? stored.message : 0;
@@ -66,6 +66,7 @@ function noteNextMessage(sessionId, turns, command, prompt, control) {
     const b = readBackoff();
     b.message += 1;
     if (taken?.kind) {
+        core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] chip taken: ${taken.kind}`);
         delete b.kinds[taken.kind];
     }
     else if (offered && !taken) {
@@ -188,13 +189,14 @@ function followupsFor(metadata) {
                 .filter((f) => !seen.has(`${f.command}|${f.prompt}`) && Boolean(seen.add(`${f.command}|${f.prompt}`)))
                 .filter((f) => !f.kind || !held.has(f.kind))
                 .slice(0, 3);
-            if (sessionId) {
+            if (shown.length && sessionId) {
                 const key = `${sessionId}#${turns}`;
                 offeredStore.delete(key);
                 offeredStore.set(key, shown.map((f) => ({ kind: f.kind, prompt: f.prompt, command: f.command })));
                 while (offeredStore.size > FOLLOWUP_STORE_CAP) {
                     offeredStore.delete(offeredStore.keys().next().value);
                 }
+                core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] chips offered: ${shown.map((f) => f.kind ?? "?").join(", ")}`);
             }
             return shown.map(({ label, prompt, command }) => ({ label, prompt, command }));
         }
@@ -208,11 +210,12 @@ function stateChips(metadata, kind) {
     if (task && typeof task.agent === "string" && task.agent) {
         const description = typeof task.description === "string" && task.description ? task.description : task.agent;
         const taskId = typeof task.taskId === "string" ? task.taskId : "";
-        const text = (0, followups_1.fillPrompt)(taskId ? "RESUME_TASK" : "RERUN_TASK", { agent: task.agent, description, task: taskId });
-        const chip = (0, followups_1.chipOf)("RESUME_TASK", kind, text);
+        const key = taskId ? "RESUME_TASK" : "RERUN_TASK";
+        const text = (0, followups_1.fillPrompt)(key, { agent: task.agent, description, task: taskId });
+        const chip = (0, followups_1.chipOf)(key, kind, text);
         if (chip) {
-            chip.label = `${(0, followups_1.chipLabel)("RESUME_TASK")} ${task.agent}`;
-            out.push({ ...chip, kind: "RESUME_TASK" });
+            chip.label = `${(0, followups_1.chipLabel)(key)} ${task.agent}`;
+            out.push({ ...chip, kind: key });
         }
     }
     if (typeof metadata.compact === "string" && metadata.compact) {

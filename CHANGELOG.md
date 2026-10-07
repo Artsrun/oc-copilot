@@ -3,11 +3,36 @@
 Full release history, newest first; releases before the last one are condensed
 to their summary and headlines. The README ships the last five.
 
+### 0.0.206
+
+Chip telemetry and `natural.ts` in testable parts. No setting was added or
+removed.
+
+- **Chip telemetry.** The log gets `chips offered: <kinds>` per finished turn
+  and `chip taken: <kind>` when a chip is sent next, plus the host's
+  `onDidReceiveFeedback` verdict. Checks `BK`.
+- **Head fallback.** When no offer, choice or cue fired, the first 3 sentences
+  are scanned for the agent's offer (a long plan ending in a summary buried it).
+  Checks `NF`.
+- **`naturalFollowups` split** into `offerChipsIn`, `choiceChipsIn` and
+  `cueChipsIn`; scan limits are named constants; `plainText` and
+  `sentencesOf` moved to `core.ts`. Table-driven offer phrasings in `NF`.
 ### 0.0.205
 
 Server identity on a fixed port, permission replies that are confirmed,
 subagent rows in the accordion, Compare lanes, chip backoff, and `handleChat`
 split. No setting was added or removed.
+
+- **Review of 0.0.205: five fixes, all minor.** A server-transport turn that
+  waits on a first boot now prints *Starting the OpenCode server…* itself
+  (`/sessions`, `/stop` and `/parallel` already did). *Compare lanes* is
+  offered only when the lanes can answer differently — one task, and a model
+  or agent that differs; `models:a,a task` no longer claims a comparison.
+  A finished subagent tool no longer names itself in the live line's ticker
+  (the ticker names the parent again). A failed `task` with no child session
+  is a *Rerun* chip, not *Resume*, and like Resume it is never held back.
+  The `asks` module's imports (`run-steps`, `metrics`) are in the §1 graph.
+  Checks `SB`, `CL`, `SU`, `RT`.
 
 - **Fixed: an impostor on the server port received the prompt.** Measured in
   0.0.204 with `scripts/probe-server-adoption.js`: a listener answering only

@@ -60,7 +60,7 @@ chat-parallel →  agents · chat-boot · compose · context · models · net ·
     lanes     →  runs · format · metrics · models · core      chips → lanes · natural
       runs    →  run-cli · run-server · run-steps · asks (re-exported) · server-session · session
  run-cli, run-server →  asks · run-steps · server-session · net · proc (cli) · metrics
-      asks    →  server-session · net      server-session → net · metrics
+      asks    →  server-session · net · run-steps · metrics      server-session → net · metrics
      all      →  core.ts · followups.ts (JSON only) · natural.ts (→ followups)
 ```
 

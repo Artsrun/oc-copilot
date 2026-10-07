@@ -166,8 +166,12 @@ export async function runParallelTurn(p: ParallelTurn): Promise<vscode.ChatResul
             laneAnswers: answeredLanes(outcomes).length,
             laneRetries: failedLanes(outcomes).length,
             laneWrite: write,
-            // One task on several models (`models:`, or the same task in every lane): the Compare chip.
-            ...(lanes.every((l) => l.task === lanes[0].task) ? { laneSameTask: true } : {}),
+            // One task on several models (`models:`, or the same task in every
+            // lane) — and the lanes can answer differently (model or agent):
+            // two lanes that would run identically have nothing to compare.
+            ...(lanes.every((l) => l.task === lanes[0].task) && new Set(lanes.map((l) => `${l.model ?? ""}|${l.agent ?? ""}`)).size > 1
+                ? { laneSameTask: true }
+                : {}),
             ...(autoLanes ? { autoLanes: true } : {})
         }
     };

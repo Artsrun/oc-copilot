@@ -323,6 +323,10 @@ export function startHeartbeat(response: vscode.ChatResponseStream, initial: str
                 group.children.set(parent, kids);
             }
             if (step.status !== "running") {
+                // The child's call is done: the ticker names the parent again,
+                // not a tool that already ended (no line for a quiet finish —
+                // the next milestone or parent step prints the cleared label).
+                sub = "";
                 return;
             }
             const detail = truncate(step.detail, 60);

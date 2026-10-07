@@ -63,13 +63,13 @@ export function recalledFollowups(sessionId: string | undefined, turns: number):
 // clears it. Counted when the next message arrives: a chip taken is that
 // message, a typed task passes over every chip shown, a control command
 // (`/help`, `/session`) is neither. The agent's own offers and choices are its
-// words, and Resume is unfinished work: never held. In globalState: the user's
-// habit, not the folder's.
+// words, and Resume and Rerun are unfinished work: never held. In globalState:
+// the user's habit, not the folder's.
 
 const BACKOFF_KEY = "opencodeCopilotBridge.chipBackoff";
 const BACKOFF_AFTER = 3;
 const BACKOFF_MAX_HOLD = 32;
-const NEVER_HELD = new Set(["offer", "choice", "RESUME_TASK"]);
+const NEVER_HELD = new Set(["offer", "choice", "RESUME_TASK", "RERUN_TASK"]);
 
 interface Backoff {
     /** Messages counted so far: a hold lasts until this reaches `until`. */
@@ -111,6 +111,9 @@ export function noteNextMessage(sessionId: string | undefined, turns: number, co
     const b = readBackoff();
     b.message += 1;
     if (taken?.kind) {
+        // Docs (chat follow-ups): measure what the user actually takes, next to
+        // the offered line — the backoff counts passes, this counts hits.
+        logChannel.appendLine(`[${stamp()}] chip taken: ${taken.kind}`);
         delete b.kinds[taken.kind];
     } else if (offered && !taken) {
         for (const kind of new Set(offered.map((c) => c.kind ?? ""))) {
@@ -267,13 +270,17 @@ export function followupsFor(metadata: Record<string, unknown>): vscode.ChatFoll
                 .filter((f) => !seen.has(`${f.command}|${f.prompt}`) && Boolean(seen.add(`${f.command}|${f.prompt}`)))
                 .filter((f) => !f.kind || !held.has(f.kind))
                 .slice(0, 3);
-            if (sessionId) {
+            if (shown.length && sessionId) {
                 const key = `${sessionId}#${turns}`;
                 offeredStore.delete(key);
                 offeredStore.set(key, shown.map((f) => ({ kind: f.kind, prompt: f.prompt, command: f.command })));
                 while (offeredStore.size > FOLLOWUP_STORE_CAP) {
                     offeredStore.delete(offeredStore.keys().next().value as string);
                 }
+                // Docs (chat follow-ups): "any other user interaction… as a
+                // positive metric" — what a turn offered, next to what got taken
+                // (noteNextMessage), for tuning the cap and the backoff.
+                logChannel.appendLine(`[${stamp()}] chips offered: ${shown.map((f) => f.kind ?? "?").join(", ")}`);
             }
             return shown.map(({ label, prompt, command }) => ({ label, prompt, command }));
         }
@@ -294,11 +301,14 @@ function stateChips(metadata: Record<string, unknown>, kind: "dev" | "plan"): Of
     if (task && typeof task.agent === "string" && task.agent) {
         const description = typeof task.description === "string" && task.description ? task.description : task.agent;
         const taskId = typeof task.taskId === "string" ? task.taskId : "";
-        const text = fillPrompt(taskId ? "RESUME_TASK" : "RERUN_TASK", { agent: task.agent, description, task: taskId });
-        const chip = chipOf("RESUME_TASK", kind, text);
+        // With the child's id: Resume, and it picks up where it was; without:
+        // Rerun, and the whole task goes again. Never held: unfinished work.
+        const key: ChipKey = taskId ? "RESUME_TASK" : "RERUN_TASK";
+        const text = fillPrompt(key, { agent: task.agent, description, task: taskId });
+        const chip = chipOf(key, kind, text);
         if (chip) {
-            chip.label = `${chipLabel("RESUME_TASK")} ${task.agent}`;
-            out.push({ ...chip, kind: "RESUME_TASK" });
+            chip.label = `${chipLabel(key)} ${task.agent}`;
+            out.push({ ...chip, kind: key });
         }
     }
     if (typeof metadata.compact === "string" && metadata.compact) {

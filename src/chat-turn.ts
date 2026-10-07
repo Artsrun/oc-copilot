@@ -157,7 +157,7 @@ async function prepareRun(t: Turn, live: Live): Promise<Ready | Stopped> {
     }
 
     // Never queue silently behind a run nobody watches (busySessionPolicy).
-    const guardBase = attachUrl ?? (useServer ? await untilStop(timed("server", () => warmServer(cwd)), token) : undefined);
+    const guardBase = attachUrl ?? (useServer ? await untilStop(timed("server", () => warmServer(cwd, (text) => response.progress(text))), token) : undefined);
     const versionNote = guardBase ? versionNotice(guardBase) : undefined;
     if (versionNote) {
         response.markdown(`> ${mark("warn")} ${versionNote}\n\n`);

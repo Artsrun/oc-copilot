@@ -238,3 +238,24 @@ export function untilStop<T>(work: Promise<T>, token: vscode.CancellationToken):
 
 /** Plain text in markdown: `my_file.ts` is not italic, a backtick opens nothing. */
 export const mdText = (s: string): string => s.replace(/[\\`*_{}[\]<>#|~]/g, "\\$&");
+
+// Answer-to-sentence utilities (the natural follow-ups read answers this way;
+// kept here so the rest of the bridge can reuse them). Pure string work.
+const ABBREVIATIONS = /\b(e\.g|i\.e|etc|vs|approx|incl|esp|cf)\./gi;
+
+/** Markdown and code out, one sentence per line-ish unit, abbreviations kept whole. */
+export const plainText = (markdown: string): string =>
+    markdown
+        .replace(/```[\s\S]*?```/g, " ")
+        .replace(/`([^`\n]*)`/g, "$1")
+        .replace(/\*\*|__/g, "")
+        .replace(/(^|\s)[*_]([^*_\n]+)[*_](?=\s|[.,!?;:]|$)/g, "$1$2")
+        .replace(/^\s{0,3}(#{1,6}|>)\s*/gm, "")
+        .replace(/[ \t]+/g, " ");
+
+export const sentencesOf = (text: string): string[] =>
+    text
+        .replace(ABBREVIATIONS, (m) => m.replace(/\./g, "․"))
+        .split(/\n+|(?<=[.!?])\s+(?=[A-Z("'‘“])/)
+        .map((x) => x.replace(/․/g, ".").replace(/^[-*•]\s+/, "").trim())
+        .filter(Boolean);

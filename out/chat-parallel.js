@@ -121,7 +121,9 @@ async function runParallelTurn(p) {
             laneAnswers: (0, chat_boot_1.answeredLanes)(outcomes).length,
             laneRetries: (0, chat_boot_1.failedLanes)(outcomes).length,
             laneWrite: write,
-            ...(lanes.every((l) => l.task === lanes[0].task) ? { laneSameTask: true } : {}),
+            ...(lanes.every((l) => l.task === lanes[0].task) && new Set(lanes.map((l) => `${l.model ?? ""}|${l.agent ?? ""}`)).size > 1
+                ? { laneSameTask: true }
+                : {}),
             ...(autoLanes ? { autoLanes: true } : {})
         }
     };

@@ -368,6 +368,13 @@ All under `opencodeCopilotBridge.`.
 
 The last five releases; the full history is `CHANGELOG.md` in the repository.
 
+### 0.0.206
+
+- The log records which chips each turn offered and which one you took
+  (`chips offered: …` / `chip taken: …`), and the host's thumbs up or down.
+- A plan answer that states its offer up front and ends in a summary still
+  gets that offer as a chip, when nothing else fits.
+- Internal: `natural.ts` split into small parts, its limits named.
 ### 0.0.205
 
 - **Fixed: a listener on a fixed `serverPort` that only said `{"healthy":true}`
@@ -422,8 +429,3 @@ The last five releases; the full history is `CHANGELOG.md` in the repository.
 - New chips: **Fix failing tests** after a dev turn that reports failures, and
   **Dig deeper · high** when the answer says it is unsure and the model has a
   higher level. Subagent rows name the subagent.
-
-### 0.0.201
-
-- A specific Fix offer no longer hides Fix all; a merge prompt without {run} is reported.
-- `serverPort` defaults to 53200 instead of 4096, so the bridge no longer adopts whatever answers `{"healthy":true}` on the common port (it received the prompt and workspace path, measured). `0` starts a private server on a free port and adopts nothing; a fixed port still reuses a healthy server there.

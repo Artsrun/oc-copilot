@@ -77,6 +77,10 @@ const participant = (context, id, handler) => {
     chat.followupProvider = {
         provideFollowups: (result) => (0, chat_boot_1.followupsFor)((result?.metadata ?? {}))
     };
+    const feedback = chat.onDidReceiveFeedback;
+    if (feedback) {
+        context.subscriptions.push(feedback((e) => core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] turn feedback: ${e.kind}`)));
+    }
     return chat;
 };
 exports.__test = {

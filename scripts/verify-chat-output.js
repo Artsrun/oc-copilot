@@ -3691,6 +3691,25 @@ const lbProvider = (global.__participant || {}).followupProvider;
     // stay EMPTY: that half is what keeps "natural" from becoming noise.
     const nf = (agent, answer, steps = []) => ext.__test.naturalFollowups?.({ agent, answer, steps }) ?? [];
     const nfLabels = (chips) => chips.map((c) => c.label);
+    // 0.0.206: a table of offer phrasings → the chips they must give (labels
+    // and commands), so a new phrasing is one row, not archaeology. Real
+    // endings first; the shapes that must stay EMPTY keep their own list below.
+    const nfPhrasings = [
+        ["Want me to add a test for the rounding?", "Add a test for the rounding", "dev"],
+        ["I can also fix the tax order if you'd like.", "Fix the tax order", "dev"],
+        ["Should I open a PR or merge directly?", "Open a PR|Merge directly", "dev"],
+        ["Let me know if you would like the docs updated or the tests added.", "Update the docs|Add the tests", "dev"],
+        ["Would you like me to create a fix plan?", "Create a fix plan", "plan"]
+    ];
+    for (const [answer, labels, command] of nfPhrasings) {
+        const chips = nf("plan", answer);
+        add(
+            `NF phrasing "${answer.slice(0, 40)}${answer.length > 40 ? "…" : ""}" → ${labels}`,
+            nfLabels(chips).join("|") === labels &&
+                labels.split("|").length === chips.length &&
+                chips.every((c) => c.command === command)
+        );
+    }
     const nfReview = nf("plan", "Solid overall.\n\nWant me to draft a concrete plan for any of these — e.g. updating the §1 map, extracting the catalog/compact constants, or aligning `chat-worktree.ts` against `handleChat` — or is this review the deliverable?");
     add("NF an 'any of these — e.g. A, B, or C' offer becomes three chips", nfReview.length === 3);
     add(
@@ -3793,6 +3812,21 @@ const lbProvider = (global.__participant || {}).followupProvider;
     for (const [what, chips] of nfEmpty) {
         add(`NF no chips for ${what}`, chips.length === 0);
     }
+
+    // 0.0.206: an offer stated up front, above the tail scan (a plan answer
+    // that ends in a summary), still becomes its chip — but only when nothing
+    // else fired: a live cue or choice always out-ranks the head.
+    const nfHeadFiller = "The subtotal loop and the tax order were both reviewed line by line. ".repeat(40);
+    const nfHead = nf("plan", `Want me to add a regression test for the rounding?\n\n${nfHeadFiller}`);
+    add(
+        "NF an offer above the tail scan still becomes its chip when nothing else fired",
+        nfHead.length === 1 && nfHead[0].kind === "offer" && /^Add a regression test for the rounding$/.test(nfHead[0].label) && nfHead[0].command === "dev"
+    );
+    const nfHeadCue = nf("plan", `Want me to add a regression test for the rounding?\n\n${nfHeadFiller}Next, I'll continue with the header.`);
+    add(
+        "NF a live cue out-ranks the head: the offer chip stays away beside it",
+        !nfHeadCue.some((c) => /regression test/.test(c.label)) && nfHeadCue.some((c) => c.kind === "resume")
+    );
 
     // 0.0.199: when a plan's first numbered list is 2–5 read-only steps that each
     // name a concrete target, one chip runs them as lanes. Everything else — an
@@ -4941,6 +4975,28 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
             rtChips.length >= 1 && /Resume explore$/.test(rtChips[0].label) && rtChips[0].command === "plan" &&
                 rtChips[0].prompt === P.RESUME_TASK.replace("{agent}", "explore").replace("{description}", "find auth handlers").replace("{task}", "ses_rt_child")
         );
+        // The rerun must carry the turn's kind: on a /dev turn it has to be
+        // able to edit, not fall back to the read-only plan. No sessionID here:
+        // the fake server stamps the ask with this turn's own session.
+        v5.asks = [{
+            type: "message.part.updated",
+            properties: { part: { id: "prt_task_dev", type: "tool", tool: "task", state: { status: "error", error: "provider overloaded", input: { subagent_type: "explore", description: "find auth handlers", prompt: "look" }, metadata: { sessionId: "ses_rt_dev_child" }, time: { start: 0, end: 9 } } } },
+            wait: 1
+        }];
+        const rtDev = await v5Turn("explain auth with a subagent for rt dev", { command: "dev" });
+        const rtDevChips = chipsOf(rtDev.result);
+        add(
+            `RT …and on a /dev turn it resumes under dev, so the rerun can edit (${rtDevChips[0]?.command})`,
+            rtDevChips.length >= 1 && /Resume explore$/.test(rtDevChips[0].label) && rtDevChips[0].command === "dev"
+        );
+        // Without the child's id there is nothing to resume: the whole task
+        // goes again, and the chip says so (Rerun, not Resume).
+        const rtRerun = chipsOf({ metadata: { failedTask: { agent: "explore", description: "find auth handlers" } } });
+        add(
+            `RT a failed task with no child session is rerun whole, labelled Rerun (${rtRerun.map((c) => c.label).join(" | ")})`,
+            rtRerun.length === 1 && /Rerun explore$/.test(rtRerun[0].label) && rtRerun[0].command === "plan" &&
+                rtRerun[0].prompt === P.RERUN_TASK.replace("{agent}", "explore").replace("{description}", "find auth handlers")
+        );
         v5.asks = [];
         v5.mode = "answer";
         const rt2 = await v5Turn("explain auth with no subagent for rt");
@@ -5037,6 +5093,14 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         v5.asks = [{ type: "session.created", properties: { info: { id: "ses_su2_kid", parentID: su2Sid, title: "find it (@explore subagent)" } } }, su2Msg, su2Msg, su2Msg];
         const su2 = await v5Turn("explain with a quiet subagent for su");
         add("SU a subagent that only updates its messages also keeps the parent from the idle cap", /answered by/.test(su2.md) && !su2.result?.metadata?.timedOut);
+        // A finished child call is not the live line's tool: the ticker names
+        // the parent again, not a tool that already ended.
+        const suSub = fs.readFileSync(path.join(__dirname, "..", "src", "heartbeat.ts"), "utf8");
+        const suHandler = suSub.slice(suSub.lastIndexOf("subagent: ("), suSub.lastIndexOf("thought: ("));
+        add(
+            "SU a finished subagent tool clears the live line's subagent part",
+            /status !== "running"[\s\S]*sub = "";[\s\S]*return;/.test(suHandler)
+        );
         settings.idleTimeoutMs = 0;
 
         // ---- SR: a subagent's calls nest under its task row in the finished accordion ----
@@ -5616,6 +5680,7 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
             bk1.result?.metadata?.sessionId === "ses_bk" && offer(bk1) && review(bk1) && tests(bk1)
         );
         add("BK a chip reaches the host without its kind", bk1.chips.every((c) => !("kind" in c)));
+        add("BK a finished turn logs the kinds of the chips it offered", logLines.some((l) => /chips offered: offer, review1, tests/.test(l)));
         await typed(2);
         const bk3 = await typed(3);
         add("BK passed over twice: nothing held yet", review(bk3) && tests(bk3));
@@ -5627,6 +5692,7 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         const bkTest = bk3.chips.find((c) => /Test it/.test(c.label));
         const bk4 = await bkTurn({ command: bkTest?.command, prompt: bkTest?.prompt ?? "" });
         add(`BK a chip taken after a control command counts as taken, and holds nothing (${labels(bk4)})`, review(bk4) && tests(bk4));
+        add("BK a taken chip is logged by its kind", logLines.some((l) => /chip taken: tests\b/.test(l)));
         const bk5 = await typed(5);
         add(
             `BK Review passed over three times running is held back; Test it, taken since, and the agent's offer are not (${labels(bk5)})`,
@@ -6099,6 +6165,13 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         );
         const cl2 = await clTurn("m:tundra review auth | m:oasis read the logs");
         add("CL different tasks: Merge lanes only", !cl2.result?.metadata?.laneSameTask && !cl2.chips.some((c) => c.label === clLabel("COMPARE_LANES")) && cl2.chips.some((c) => c.label === clLabel("MERGE_LANES")));
+        // Two lanes that would run identically (same model, same agent, same
+        // task) have nothing to compare: Merge only, no Compare chip.
+        const clSame = await clTurn("models:tundra,tundra review the auth flow");
+        add(
+            "CL two identical lanes (same model twice) get no Compare chip",
+            clSame.result?.metadata?.laneSameTask === undefined && !clSame.chips.some((c) => c.label === clLabel("COMPARE_LANES")) && clSame.chips.some((c) => c.label === clLabel("MERGE_LANES"))
+        );
         const cl3 = await clTurn(clCompare?.prompt ?? "", clCompare?.command);
         const clTask = plRuns()[0]?.[plRuns()[0].length - 1] ?? "";
         add(
@@ -6680,6 +6753,12 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         const sb4 = stream();
         await global.__handler({ prompt: "a for sb | b for sb", command: "parallel" }, {}, sb4.response, sb4.token);
         add("SB a /parallel turn that waits on a first boot says so", sb4.progress.some((t) => /Starting the OpenCode server/.test(t)));
+        // A chat turn warms the same server before its heartbeat exists: it
+        // has to pass the slow-start note itself, not only /sessions and /parallel.
+        add(
+            "SB …and so does a chat turn: no bare warmServer(cwd) call is left",
+            !/warmServer\(cwd\)/.test(fs.readFileSync(path.join(__dirname, "..", "src", "chat-turn.ts"), "utf8"))
+        );
         ext.deactivate();
         settings.transport = sb4Transport;
         Object.assign(settings, { executable: sbSaved.exe, serverPort: sbSaved.port, serverStartupPollMs: sbSaved.poll });

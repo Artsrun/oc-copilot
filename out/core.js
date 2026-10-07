@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.mdText = exports.extensionContext = exports.logChannel = void 0;
+exports.sentencesOf = exports.plainText = exports.mdText = exports.extensionContext = exports.logChannel = void 0;
 exports.setLogChannel = setLogChannel;
 exports.setExtensionContext = setExtensionContext;
 exports.config = config;
@@ -226,4 +226,19 @@ function untilStop(work, token) {
 }
 const mdText = (s) => s.replace(/[\\`*_{}[\]<>#|~]/g, "\\$&");
 exports.mdText = mdText;
+const ABBREVIATIONS = /\b(e\.g|i\.e|etc|vs|approx|incl|esp|cf)\./gi;
+const plainText = (markdown) => markdown
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/`([^`\n]*)`/g, "$1")
+    .replace(/\*\*|__/g, "")
+    .replace(/(^|\s)[*_]([^*_\n]+)[*_](?=\s|[.,!?;:]|$)/g, "$1$2")
+    .replace(/^\s{0,3}(#{1,6}|>)\s*/gm, "")
+    .replace(/[ \t]+/g, " ");
+exports.plainText = plainText;
+const sentencesOf = (text) => text
+    .replace(ABBREVIATIONS, (m) => m.replace(/\./g, "․"))
+    .split(/\n+|(?<=[.!?])\s+(?=[A-Z("'‘“])/)
+    .map((x) => x.replace(/․/g, ".").replace(/^[-*•]\s+/, "").trim())
+    .filter(Boolean);
+exports.sentencesOf = sentencesOf;
 //# sourceMappingURL=core.js.map

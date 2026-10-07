@@ -60,7 +60,7 @@ async function prepareRun(t, live) {
             core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] could not pre-create a session, the run creates one: ${error}`);
         }
     }
-    const guardBase = attachUrl ?? (useServer ? await (0, core_1.untilStop)(timed("server", () => (0, net_1.warmServer)(cwd)), token) : undefined);
+    const guardBase = attachUrl ?? (useServer ? await (0, core_1.untilStop)(timed("server", () => (0, net_1.warmServer)(cwd, (text) => response.progress(text))), token) : undefined);
     const versionNote = guardBase ? (0, net_1.versionNotice)(guardBase) : undefined;
     if (versionNote) {
         response.markdown(`> ${(0, followups_1.mark)("warn")} ${versionNote}\n\n`);
