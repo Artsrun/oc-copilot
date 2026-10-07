@@ -20,7 +20,7 @@
         "RUN_LANES": { "kao": "ヽ(•‿•)ノ", "label": "Run lanes", "prompt": "", "command": "parallel" },
         "COMPOSE": { "kao": "(・ω・)ノ", "label": "Compose…", "prompt": "", "command": "parallel" },
         "MERGE_LANES": { "kao": "(=^‥^)ノ", "label": "Merge lanes", "prompt": "MERGE_LANES", "command": "plan" },
-        "COMPARE_LANES": { "kao": "(°ー°〃)", "label": "Compare lanes", "prompt": "COMPARE_LANES", "command": "plan" },
+        "COMPARE_LANES": { "kao": "(°ー°〃)", "label": "Compare", "prompt": "COMPARE_LANES", "command": "plan" },
         "RETRY_LANES": { "kao": "(ﾉ´･ω･)ﾉ", "label": "Retry lanes", "prompt": "", "command": "parallel" },
         "RESUME_TASK": { "kao": "(ง •̀ω•́)ง", "label": "Resume", "prompt": "RESUME_TASK", "command": "@kind" },
         "COMPACT": { "kao": "(っ˘ω˘ς)", "label": "Compact", "prompt": "", "command": "compact" }

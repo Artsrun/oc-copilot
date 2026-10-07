@@ -368,6 +368,22 @@ All under `opencodeCopilotBridge.`.
 
 The last five releases; the full history is `CHANGELOG.md` in the repository.
 
+### 0.0.205
+
+- **Fixed: a listener on a fixed `serverPort` that only said `{"healthy":true}`
+  received the prompt.** The bridge now adopts a fixed-port server only if its
+  health names a `version`; anything else gets one health probe and the window
+  starts its own server.
+- Permission asks: pre-1.1 `permission.updated` is answered too, and a reply
+  counts only when `permission.replied` confirms it (one resend otherwise).
+- A subagent's tool calls nest under its `task` row in the finished accordion.
+- **Compare lanes** chip (a `/parallel` task run on several models), before
+  Merge lanes.
+- A cue chip you pass over three times running steps back for a while
+  (Resume and the agent's own offers never do).
+- `handleChat` split into `chat.ts` (route, gates), `chat-turn.ts` (run,
+  recover, post) and `chat-parallel.ts`.
+
 ### 0.0.204
 
 - **Fixed: `/sessions` failed while the server was still starting** (a first
@@ -411,13 +427,3 @@ The last five releases; the full history is `CHANGELOG.md` in the repository.
 
 - A specific Fix offer no longer hides Fix all; a merge prompt without {run} is reported.
 - `serverPort` defaults to 53200 instead of 4096, so the bridge no longer adopts whatever answers `{"healthy":true}` on the common port (it received the prompt and workspace path, measured). `0` starts a private server on a free port and adopts nothing; a fixed port still reuses a healthy server there.
-
-### 0.0.199
-
-- A plan whose first numbered list is 2-5 read-only steps, each naming a concrete
-  file or call, gets a "Run N as lanes" chip that sends them as /parallel lanes.
-- A finished /parallel run offers "Merge lanes" and "Retry failed lanes". Lane
-  answers are kept in memory (8 runs); after a reload the merge says so and runs nothing.
-- Model rows in the default-model picker lead with a chip icon.
-- Fixed: an answer ending "the parser constructor" no longer produces an inherited-key chip.
-- `.vscode/settings.json` is no longer tracked (it is git-ignored).

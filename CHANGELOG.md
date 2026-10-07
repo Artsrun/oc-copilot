@@ -3,6 +3,41 @@
 Full release history, newest first; releases before the last one are condensed
 to their summary and headlines. The README ships the last five.
 
+### 0.0.205
+
+Server identity on a fixed port, permission replies that are confirmed,
+subagent rows in the accordion, Compare lanes, chip backoff, and `handleChat`
+split. No setting was added or removed.
+
+- **Fixed: an impostor on the server port received the prompt.** Measured in
+  0.0.204 with `scripts/probe-server-adoption.js`: a listener answering only
+  `{"healthy":true}` was adopted, and `POST /session/<id>/message` carried the
+  prompt and the workspace path. A real server names its version
+  (`{"healthy":true,"version":"1.18.34"}`). A fixed-port listener without a
+  `version` now gets the health probe alone and the window starts its own
+  server on a free port; a server this window started is used either way.
+  Checks `ID`.
+- **Permission replies are confirmed.** `POST /permission/:id/reply` answers
+  200 for an id that is not pending (#15386), so a reply counts only when
+  `permission.replied` arrives; else one resend after 3 s. The pre-1.1
+  `permission.updated` ask is answered at the session's own route. Checks `HQ`.
+- **Subagent rows.** On server and attached runs a subagent's tool calls nest
+  under its `task` row in the finished accordion (`explore › read: src/x.ts`),
+  at most 8, the last counting the rest. Checks `SU`.
+- **Compare lanes.** A `/parallel` run of one task on several models offers
+  *Compare lanes* (a plan turn that weighs the lane answers) before *Merge
+  lanes*. Checks `CL`.
+- **Chip backoff.** A cue chip kind passed over three messages running is held
+  for the next 2 messages, then 4, 8 … 32; taking one clears it. Kept in
+  globalState. The agent's own offers and choices and Resume are never held.
+  Checks `BK`.
+- **`handleChat` split** (≈ 950 lines): `chat.ts` keeps routing, gates,
+  context and the handoff chain; `chat-turn.ts` runs, recovers and posts;
+  `chat-parallel.ts` runs `/parallel`.
+- **Probe:** `scripts/probe-subtask-lanes.js` measures whether a `subtask`
+  part runs a project-local subagent on a real server (#21659), before
+  subagent-mode lanes move to server-side delegation.
+
 ### 0.0.204
 
 A slow first server start that failed `/sessions`, chips from what the run
