@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.turnPermission = exports.sessionRoot = exports.sessionPath = exports.sessionModel = exports.sessionBusy = exports.safeSessionId = exports.isMissingSessionRun = exports.isMissingSessionError = exports.isAttachFailure = exports.createServerSession = exports.compactSession = exports.abortServerRun = exports.HEADLESS_PERMISSION = exports.stepDetail = exports.emitKeyedDelta = exports.applyServerPart = exports.runOpenCodeServer = exports.runOpenCode = void 0;
+exports.turnPermission = exports.sessionRoot = exports.sessionPath = exports.sessionModel = exports.sessionBusy = exports.safeSessionId = exports.isMissingSessionRun = exports.isMissingSessionError = exports.isAttachFailure = exports.createServerSession = exports.compactSession = exports.abortServerRun = exports.HEADLESS_PERMISSION = exports.setReplyConfirmWait = exports.stepDetail = exports.noteTask = exports.emitKeyedDelta = exports.applyServerPart = exports.runOpenCodeServer = exports.runOpenCode = void 0;
 exports.restartAfterMissingSession = restartAfterMissingSession;
 const core_1 = require("./core");
 const followups_1 = require("./followups");
@@ -14,7 +14,10 @@ Object.defineProperty(exports, "runOpenCodeServer", { enumerable: true, get: fun
 var run_steps_1 = require("./run-steps");
 Object.defineProperty(exports, "applyServerPart", { enumerable: true, get: function () { return run_steps_1.applyServerPart; } });
 Object.defineProperty(exports, "emitKeyedDelta", { enumerable: true, get: function () { return run_steps_1.emitKeyedDelta; } });
+Object.defineProperty(exports, "noteTask", { enumerable: true, get: function () { return run_steps_1.noteTask; } });
 Object.defineProperty(exports, "stepDetail", { enumerable: true, get: function () { return run_steps_1.stepDetail; } });
+var asks_1 = require("./asks");
+Object.defineProperty(exports, "setReplyConfirmWait", { enumerable: true, get: function () { return asks_1.setReplyConfirmWait; } });
 var server_session_1 = require("./server-session");
 Object.defineProperty(exports, "HEADLESS_PERMISSION", { enumerable: true, get: function () { return server_session_1.HEADLESS_PERMISSION; } });
 Object.defineProperty(exports, "abortServerRun", { enumerable: true, get: function () { return server_session_1.abortServerRun; } });

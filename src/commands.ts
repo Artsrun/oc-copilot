@@ -67,8 +67,10 @@ export async function diagnose(): Promise<void> {
     const serverBase = knownServerBase();
     if (serverBase) {
         try {
-            const health = await httpGetJson<{ healthy?: boolean }>(`${serverBase}/global/health`);
-            serverState = health.healthy === true ? `${mark("ok")} healthy on ${serverBase}` : `${mark("warn")} responded, unhealthy`;
+            const health = await httpGetJson<{ healthy?: boolean; version?: unknown }>(`${serverBase}/global/health`);
+            serverState = health.healthy === true
+                ? `${mark("ok")} healthy on ${serverBase}${typeof health.version === "string" ? ` · OpenCode ${truncate(health.version, 24)}` : ""}`
+                : `${mark("warn")} responded, unhealthy`;
         } catch {
             serverState = `not running on ${serverBase} (started on demand)`;
         }

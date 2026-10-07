@@ -14,7 +14,9 @@ no bundler, no test runner: plain TypeScript → `out/`, plain Node for the suit
 
 | Path | What lives there |
 | --- | --- |
-| `src/chat.ts` | **The chat turn.** `handleChat`: routing, vague-prompt gate, context, agent and model choice, the recovery ladder (handoff, CLI fallback, cold rerun, stale session), `pre-run:` timings. |
+| `src/chat.ts` | **The front half of a chat turn.** `handleChat`: routing, the vague-prompt gate, context, agent and model choice, the handoff chain. Hands the turn to `chat-parallel` or `chat-turn`. |
+| `src/chat-turn.ts` | **Run, recover, post.** `runTurn`: open (heartbeat, server warm-up) → `prepareRun` → `runAttempts` (the recovery ladder: handoff, CLI fallback, cold rerun, stale session) → `finishTurn` (answer, session books, autocompact, chips, metadata) or `failTurn`; `pre-run:` timings. |
+| `src/chat-parallel.ts` | The `/parallel` turn: lanes split, each lane's model and agent checked, `runParallelLanes`. |
 | `src/chat-boot.ts` | The command vocabulary: control/kind/routed commands, aliases, retired words, `helpMarkdown`. Re-exports `heartbeat`, `lanes` and `chips`, so the chat layer keeps one import. |
 | `src/heartbeat.ts` | The live turn: heartbeat (plain live lines + milestone ticker; finished accordions with `groupProgress`; a subagent's tool over its `task` row), **`chatStream`** (nothing after Stop, never throws, one pill badger per turn), `thoughtLine`. |
 | `src/lanes.ts` | `/parallel`: `splitLanes` (`\|` `;;` `---` only), `runParallelLanes`, the lane store behind Merge / Retry, `retryLanesPrompt`. |
@@ -48,13 +50,15 @@ Layering has no cycles:
 
 ```
 extension.ts  →  chat · chat-boot · commands-registry · session · worktree · leaf modules (for __test)
-     chat     →  agents · chat-boot · chat-commands · chat-worktree · context · format · metrics · models · net · prompt · runs · session · core
+     chat     →  agents · chat-boot · chat-commands · chat-parallel · chat-turn · chat-worktree · context · models · natural · prompt · session · core
+chat-parallel →  agents · chat-boot · compose · context · models · net · core
+  chat-turn   →  agents · chat-boot · context · format · metrics · models · net · runs · session · core
  chat-commands →  chat-boot · chat-sessions · commands · context · env · models · net · prompt · proc · runs · session · core
  chat-sessions →  sessions (→ net · runs) · session · core
-    compose   →  chat-boot · models · core   (used by chat and commands-registry)
+    compose   →  chat-boot · models · core   (used by chat-parallel and commands-registry)
   chat-boot   →  heartbeat · lanes · chips (re-exported) · core · metrics
     lanes     →  runs · format · metrics · models · core      chips → lanes · natural
-      runs    →  run-cli · run-server · run-steps · server-session · session
+      runs    →  run-cli · run-server · run-steps · asks (re-exported) · server-session · session
  run-cli, run-server →  asks · run-steps · server-session · net · proc (cli) · metrics
       asks    →  server-session · net      server-session → net · metrics
      all      →  core.ts · followups.ts (JSON only) · natural.ts (→ followups)
@@ -142,7 +146,7 @@ A probe measures one thing on this machine and prints it. Paste its output.
 | `scripts/probe-progress-inflation.js` | How many `progress()` calls a realistic run makes. |
 | `scripts/probe-sse-crosstalk.js` | That the SSE demux cannot leak another chat's text. |
 | `scripts/probe-opencode-pwd.js` | Which folder `opencode run` works in: stale `PWD` vs `spawnOpenCode()`. |
-| `scripts/probe-server-adoption.js` | What a listener that only answers `{"healthy":true}` on the server port receives from the bridge. |
+| `scripts/probe-server-adoption.js` | What a listener that only answers `{"healthy":true}` (no `version`) on the server port receives from the bridge: the health probe alone. |
 | `scripts/probe-plan-subagents.js` | Against a real server and model: whether a plan turn can edit through `general`, with and without the read-only `task` rules, and whether `/session/:id/children` lists the child. |
 
 *Write to the OS temp dir, never the repo* — the suite sweeps `ocb-*` at
@@ -221,6 +225,10 @@ history belongs in `CHANGELOG.md`, not in the source.
 - **Nobody can answer OpenCode's prompts from a chat turn**: sessions the bridge
   creates deny question/plan_enter/plan_exit, and every ask of the session and its
   subagents is answered (`HQ`).
+- **A permission reply's 200 proves nothing**: OpenCode answers 200/true to a
+  reply for an ask that is not pending (#15386). The ask is `permission.asked`
+  (or pre-1.1 `permission.updated`, answered at the session's own route); only
+  `permission.replied` confirms it, else one resend (`HQ`).
 - **A running server lists a folder's agents once**: a new `look.md` needs a
   server restart. Never call `POST /instance/dispose` from the bridge.
 - **OpenCode keeps a session on the model it was last sent**: after an unpinned
@@ -259,7 +267,9 @@ history belongs in `CHANGELOG.md`, not in the source.
 - **A fixed `serverPort` can be held by a listener that never answers**: the
   window's own server cannot bind and exits 1 after its boot. `ensureServer`
   starts one on a free port instead and never sends that listener a request
-  but `/global/health` (`SV`).
+  but `/global/health` (`SV`). The same for one that answers `{"healthy":true}`
+  with no `version`: a real server names it, and an adopted impostor received
+  the prompt (`ID`).
 - **A first `opencode serve` boot can take most of a minute** (config,
   plugins, MCP): the poll waits 3 s per health check and 45 s in all, a
   waiter is told after 1.5 s, and the log records each start's time (`SB`).

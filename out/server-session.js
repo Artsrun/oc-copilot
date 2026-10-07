@@ -172,8 +172,8 @@ async function sessionModel(base, cwd, sessionId) {
 const COMPACT_TIMEOUT_MS = 180000;
 const COMPACT_BACKOFF_MS = 5 * 60000;
 let compactServerFailedAt = 0;
-async function compactSession(sessionId, cwd, model) {
-    if (Date.now() - compactServerFailedAt < COMPACT_BACKOFF_MS) {
+async function compactSession(sessionId, cwd, model, asked = false) {
+    if (!asked && Date.now() - compactServerFailedAt < COMPACT_BACKOFF_MS) {
         core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] compact skipped: the server failed to start ${Math.round((Date.now() - compactServerFailedAt) / 1000)}s ago`);
         return false;
     }

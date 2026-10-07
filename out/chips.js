@@ -3,6 +3,9 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.suggestFollowups = suggestFollowups;
 exports.rememberFollowups = rememberFollowups;
 exports.recalledFollowups = recalledFollowups;
+exports.heldKinds = heldKinds;
+exports.noteNextMessage = noteNextMessage;
+exports.resetChipBackoff = resetChipBackoff;
 exports.outcomeOf = outcomeOf;
 exports.followupsFor = followupsFor;
 const core_1 = require("./core");
@@ -12,7 +15,7 @@ const lanes_1 = require("./lanes");
 function suggestFollowups(input) {
     try {
         const lanes = (0, core_1.config)().get("autoParallel", "offer") !== "off";
-        return (0, natural_1.naturalFollowups)(input, 3, lanes ? lanes_1.splitLanes : undefined);
+        return (0, natural_1.naturalFollowups)(input, 3, lanes ? lanes_1.splitLanes : undefined, heldKinds());
     }
     catch (error) {
         core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] follow-up chips left out: ${error}`);
@@ -31,6 +34,60 @@ function rememberFollowups(sessionId, turns, chips) {
 }
 function recalledFollowups(sessionId, turns) {
     return sessionId ? followupStore.get(`${sessionId}#${turns}`) ?? [] : [];
+}
+const BACKOFF_KEY = "opencodeCopilotBridge.chipBackoff";
+const BACKOFF_AFTER = 3;
+const BACKOFF_MAX_HOLD = 32;
+const NEVER_HELD = new Set(["offer", "choice", "RESUME_TASK"]);
+const readBackoff = () => {
+    const stored = core_1.extensionContext?.globalState?.get(BACKOFF_KEY);
+    const message = typeof stored?.message === "number" && Number.isFinite(stored.message) ? stored.message : 0;
+    const kinds = {};
+    for (const [kind, k] of Object.entries(stored?.kinds ?? {})) {
+        if (typeof k?.passed === "number" && typeof k.until === "number") {
+            kinds[kind] = { passed: k.passed, until: k.until };
+        }
+    }
+    return { message, kinds };
+};
+function heldKinds() {
+    const b = readBackoff();
+    return new Set(Object.entries(b.kinds).filter(([, k]) => b.message < k.until).map(([kind]) => kind));
+}
+const offeredStore = new Map();
+function noteNextMessage(sessionId, turns, command, prompt, control) {
+    const key = `${sessionId}#${turns}`;
+    const offered = sessionId ? offeredStore.get(key) : undefined;
+    const taken = offered?.find((c) => (c.command ?? "") === command && c.prompt.trim() === prompt.trim());
+    if (control && !taken) {
+        return;
+    }
+    offeredStore.delete(key);
+    const b = readBackoff();
+    b.message += 1;
+    if (taken?.kind) {
+        delete b.kinds[taken.kind];
+    }
+    else if (offered && !taken) {
+        for (const kind of new Set(offered.map((c) => c.kind ?? ""))) {
+            if (!kind || NEVER_HELD.has(kind)) {
+                continue;
+            }
+            const k = Object.hasOwn(b.kinds, kind) ? b.kinds[kind] : { passed: 0, until: 0 };
+            k.passed += 1;
+            if (k.passed >= BACKOFF_AFTER) {
+                const hold = Math.min(2 ** (k.passed - BACKOFF_AFTER + 1), BACKOFF_MAX_HOLD);
+                k.until = b.message + hold;
+                core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] chip "${kind}" passed over ${k.passed} times running: held back for ${hold} messages`);
+            }
+            b.kinds[kind] = k;
+        }
+    }
+    void core_1.extensionContext?.globalState?.update(BACKOFF_KEY, b);
+}
+function resetChipBackoff() {
+    offeredStore.clear();
+    void core_1.extensionContext?.globalState?.update(BACKOFF_KEY, undefined);
 }
 const stripKind = (text) => text.replace(/^\/(?:dev|plan)\b\s*/i, "");
 const UNREACHABLE = /ENOENT|ECONNREFUSED|ECONNRESET|EAI_AGAIN|ETIMEDOUT|not found on PATH|could not be started|unreachable|socket hang up|fetch failed/i;
@@ -101,6 +158,10 @@ function followupsFor(metadata) {
             const failed = (0, lanes_1.failedLanes)(stored);
             const keys = [];
             const text = {};
+            if (answered >= 2 && metadata.laneSameTask === true) {
+                keys.push("COMPARE_LANES");
+                text.COMPARE_LANES = (0, followups_1.fillPrompt)("COMPARE_LANES", { run: runId });
+            }
             if (answered >= 2) {
                 keys.push("MERGE_LANES");
                 text.MERGE_LANES = (0, followups_1.fillPrompt)("MERGE_LANES", { run: runId });
@@ -122,9 +183,20 @@ function followupsFor(metadata) {
             const sessionId = typeof metadata.sessionId === "string" ? metadata.sessionId : undefined;
             const turns = typeof metadata.turns === "number" ? metadata.turns : 0;
             const seen = new Set();
-            return [...stateChips(metadata, kind), ...recalledFollowups(sessionId, turns)]
+            const held = heldKinds();
+            const shown = [...stateChips(metadata, kind), ...recalledFollowups(sessionId, turns)]
                 .filter((f) => !seen.has(`${f.command}|${f.prompt}`) && Boolean(seen.add(`${f.command}|${f.prompt}`)))
+                .filter((f) => !f.kind || !held.has(f.kind))
                 .slice(0, 3);
+            if (sessionId) {
+                const key = `${sessionId}#${turns}`;
+                offeredStore.delete(key);
+                offeredStore.set(key, shown.map((f) => ({ kind: f.kind, prompt: f.prompt, command: f.command })));
+                while (offeredStore.size > FOLLOWUP_STORE_CAP) {
+                    offeredStore.delete(offeredStore.keys().next().value);
+                }
+            }
+            return shown.map(({ label, prompt, command }) => ({ label, prompt, command }));
         }
         default:
             return chips(followups_1.CASES[outcome]);
@@ -140,14 +212,14 @@ function stateChips(metadata, kind) {
         const chip = (0, followups_1.chipOf)("RESUME_TASK", kind, text);
         if (chip) {
             chip.label = `${(0, followups_1.chipLabel)("RESUME_TASK")} ${task.agent}`;
-            out.push(chip);
+            out.push({ ...chip, kind: "RESUME_TASK" });
         }
     }
     if (typeof metadata.compact === "string" && metadata.compact) {
         const chip = (0, followups_1.chipOf)("COMPACT", kind);
         if (chip) {
             chip.label = `${(0, followups_1.chipLabel)("COMPACT")} · ${metadata.compact}`;
-            out.push(chip);
+            out.push({ ...chip, kind: "COMPACT" });
         }
     }
     return out;

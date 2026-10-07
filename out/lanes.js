@@ -141,7 +141,7 @@ async function runParallelLanes(opts) {
         (cost > 0 ? ` · $${cost.toFixed(4)}` : "") +
         ".\n\nLanes ran in isolated sessions, so nothing above is in your ongoing " +
         (results.filter((r, i) => !specs[i].error && r.answer.trim()).length >= 2
-            ? "conversation. **Merge lanes** below brings their answers into it."
+            ? `conversation. ${sameTask ? "**Compare lanes** or **Merge lanes**" : "**Merge lanes**"} below brings their answers into it.`
             : "conversation. Paste the parts you want to keep into a normal `@opencode` turn."));
     return results.map((r, i) => ({
         task: specs[i].task,

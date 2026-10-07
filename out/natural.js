@@ -191,18 +191,18 @@ const laneItems = (markdown, splits) => {
     return ok && splits(items.join("\n---\n")).length === items.length ? items : undefined;
 };
 exports.laneItems = laneItems;
-function naturalFollowups(input, max = 3, splits) {
+function naturalFollowups(input, max = 3, splits, held) {
     const turnKind = input.agent === "dev" ? "dev" : "plan";
     const answer = input.answer ?? "";
     const text = plainText(answer);
     const tail = sentencesOf(text.slice(-900)).slice(-4);
     const chips = [];
-    const push = (label, promptText, command, kao = "") => {
-        if (chips.length < max && label && !chips.some((c) => c.prompt === promptText)) {
-            chips.push({ label: kao ? `${kao} ${labelOf(label)}` : labelOf(label), prompt: promptText, command });
+    const push = (kind, label, promptText, command, kao = "") => {
+        if (chips.length < max && label && !held?.has(kind) && !chips.some((c) => c.prompt === promptText)) {
+            chips.push({ label: kao ? `${kao} ${labelOf(label)}` : labelOf(label), prompt: promptText, command, kind });
         }
     };
-    const pushT = (t, command) => push(t.label, t.prompt, command, t.kao);
+    const pushT = (kind, t, command) => push(kind, t.label, t.prompt, command, t.kao);
     const clauses = tail.flatMap((s) => [s, ...s.split(/\s[—–]\s|;\s|:\s(?=[A-Z])/).slice(1).reverse()]);
     for (const sentence of [...clauses].reverse()) {
         const body = OFFERS.map((re) => sentence.match(re)?.[1]).find(Boolean);
@@ -221,7 +221,7 @@ function naturalFollowups(input, max = 3, splits) {
         const actions = raw.map(cleanAction).filter((a) => a.length >= 3 && a.length <= 140 && isVerb(firstWord(a)));
         for (const action of actions) {
             const t = (0, followups_1.naturalText)("offer", { action: capitalize(action) });
-            push(t.label, t.prompt, commandFor(action, turnKind));
+            push("offer", t.label, t.prompt, commandFor(action, turnKind));
         }
         if (actions.length) {
             break;
@@ -231,57 +231,57 @@ function naturalFollowups(input, max = 3, splits) {
     if (!chips.length && tail.length && /\?$/.test(tail[tail.length - 1])) {
         for (const choice of choicesOf(tail[tail.length - 1])) {
             const t = (0, followups_1.naturalText)("choice", { choice });
-            push(capitalize(t.label), t.prompt, turnKind);
+            push("choice", capitalize(t.label), t.prompt, turnKind);
         }
     }
     if (UNFINISHED.test(text.slice(-300))) {
-        pushT((0, followups_1.naturalText)("resume"), turnKind);
+        pushT("resume", (0, followups_1.naturalText)("resume"), turnKind);
     }
     const edited = [
         ...new Set(input.steps.filter((s) => EDIT_TOOLS.test(s.tool)).map((s) => s.filePath || s.detail || "").filter(Boolean))
     ];
     const tailText = text.slice(-1200);
     if (turnKind === "dev" && !edited.length && PLAN_REFUSAL.test(tailText)) {
-        pushT((0, followups_1.naturalText)("applyNow"), "dev");
+        pushT("applyNow", (0, followups_1.naturalText)("applyNow"), "dev");
     }
     if (turnKind === "plan") {
         const first = firstOfNumbered(answer);
         const item = first && first.replace(/\s+\([^)]+\)/g, "").trim();
         const shortItem = item && (item.length > 200 ? item.slice(0, item.lastIndexOf(" ", 200)) : item);
         if (shortItem && EDIT_VERBS.has(firstWord(shortItem))) {
-            pushT((0, followups_1.naturalText)("step1", { item: shortItem }), "dev");
+            pushT("step1", (0, followups_1.naturalText)("step1", { item: shortItem }), "dev");
         }
         else if (shortItem && ISSUE.test(first ?? "")) {
-            pushT((0, followups_1.naturalText)("fix1", { item: shortItem }), "dev");
+            pushT("fix1", (0, followups_1.naturalText)("fix1", { item: shortItem }), "dev");
             if (!offersAll) {
-                pushT((0, followups_1.naturalText)("fixAll"), "dev");
+                pushT("fixAll", (0, followups_1.naturalText)("fixAll"), "dev");
             }
         }
         const lanes = splits ? (0, exports.laneItems)(answer, splits) : undefined;
         if (lanes) {
-            pushT((0, followups_1.naturalText)("lanes", { n: String(lanes.length), lanes: lanes.join("\n---\n") }), "parallel");
+            pushT("lanes", (0, followups_1.naturalText)("lanes", { n: String(lanes.length), lanes: lanes.join("\n---\n") }), "parallel");
         }
         if (RECOMMENDS.test(tailText) && /\?/.test(tailText)) {
-            pushT((0, followups_1.naturalText)("recommend"), "dev");
+            pushT("recommend", (0, followups_1.naturalText)("recommend"), "dev");
         }
         if (!offersAll && ((shortItem && EDIT_VERBS.has(firstWord(shortItem))) || /```diff|^@@ /m.test(answer))) {
-            pushT((0, followups_1.naturalText)("apply"), "dev");
+            pushT("apply", (0, followups_1.naturalText)("apply"), "dev");
         }
     }
     if (turnKind === "dev" && edited.length) {
         const file = edited.length === 1 ? edited[0].split(/[\\/]/).pop() ?? edited[0] : "";
-        pushT(file ? (0, followups_1.naturalText)("review1", { file }) : (0, followups_1.naturalText)("reviewN", { n: String(edited.length) }), "plan");
+        pushT("review1", file ? (0, followups_1.naturalText)("review1", { file }) : (0, followups_1.naturalText)("reviewN", { n: String(edited.length) }), "plan");
         const ranTests = input.steps.some((s) => /\btest/i.test(s.detail ?? "") && /bash|shell|run/i.test(s.tool));
         if (TESTS_FAILED.test(tailText) && !NO_FAILURES.test(tailText)) {
-            pushT((0, followups_1.naturalText)("fixTests"), "dev");
+            pushT("fixTests", (0, followups_1.naturalText)("fixTests"), "dev");
         }
         else if (!ranTests && !TESTS_PASSED.test(tailText)) {
-            pushT((0, followups_1.naturalText)("tests"), "dev");
+            pushT("tests", (0, followups_1.naturalText)("tests"), "dev");
         }
     }
     if (input.nextEffort && /^[A-Za-z][\w-]{0,23}$/.test(input.nextEffort) && UNCERTAIN.test(tailText)) {
         const t = (0, followups_1.naturalText)("deeper", { effort: input.nextEffort });
-        pushT({ ...t, prompt: `effort:${input.nextEffort} ${t.prompt}` }, turnKind);
+        pushT("deeper", { ...t, prompt: `effort:${input.nextEffort} ${t.prompt}` }, turnKind);
     }
     return chips;
 }

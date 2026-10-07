@@ -402,14 +402,20 @@ group's own `*` and `?`. With placeholders, the simulation matches `vsce ls`
   file pills use this. (0.0.184 removed anchors only because they were called
   unbound; `chatStream` calls every method on the stream.)
 
-## A listener that only says {"healthy":true} receives the prompt (measured)
+## A listener that only says {"healthy":true} receives the prompt (measured, fixed 0.0.205)
 
-`scripts/probe-server-adoption.js` runs one turn against a fake non-OpenCode listener
+`scripts/probe-server-adoption.js` ran one turn against a fake non-OpenCode listener
 on the server port. `ensureServer()` adopted it: `POST /session` and
 `POST /session/<id>/message` reached it, the body of both carried the prompt text,
 and every URL carried the workspace path in `?directory=`. The real server's
-health answer is `{"healthy":true,"version":"1.18.34"}` (1.18.34), so a
-version field exists to check; the bridge ignores it. Not yet fixed.
+health answer is `{"healthy":true,"version":"1.18.34"}` (1.18.34), and the
+server docs list it (`GET /global/health` → `{ healthy: true, version: string }`).
+0.0.204 read it for a one-line note outside 1.18.27–1.18.34. 0.0.205 adopts a
+listener on a fixed port only if it names a version; anything else gets that
+one health probe and this window starts its own server on a free port (suite
+`ID`; the probe now prints the health probe alone). A server this window
+started is used with or without a version. Not measured: whether 1.18.27–1.18.33
+send `version`; one that does not gets a second server of its own, not a failure.
 
 ## A fixed port held by a listener that never answers (reported, 0.0.202)
 
@@ -423,8 +429,21 @@ healthy". Not reproduced against a real hung server here; the suite's `SV`
 reproduces the shape with a listener that never answers and a fake `serve`.
 0.0.203: a port that accepts TCP but fails the health probe gets a server of
 the window's own on a free port; exits report the server's own last error
-line; polls wait 1.5 s. Check the `[serve]` lines in the debug log for the
+line; polls wait 1.5 s (0.0.204: 3 s, see the next entry). Check the `[serve]` lines in the debug log for the
 real cause on your machine (`EADDRINUSE` is the expected one).
+
+## A first `opencode serve` boot that outlasts the wait (reported, 0.0.203)
+
+Reported: `/sessions` → `OpenCode server did not become healthy on
+http://127.0.0.1:61930 within 20 s`, and `/ping` healthy on the same port a
+moment later. Not measured here: the reading is that a first boot (config,
+plugins, MCP servers) answers health slowly, and 0.0.203's 1.5 s poll timeout
+never counted such an answer. 0.0.204: 3 s per poll, 45 s in all, a live
+process that misses the deadline is reported as still running with its last
+printed line, and every start logs `serve on … answered after N.Ns` — read that
+figure before moving the deadline again. The suite's `SB` uses a fake `serve`
+that accepts and stays silent for 2.2 s. A turn that warms the server (an
+attached dev run, `/parallel`) says so after 1.5 s too.
 
 ## Subagents run with their own permissions (docs, not yet measured)
 
@@ -437,3 +456,28 @@ child session's `message.updated` does. `opencode run --format json` drops a
 child's parts (#49300). `scripts/probe-plan-subagents.js` measures the plan →
 `general` edit with and without the 0.0.203 rules — run it before relying on
 `RO` against a live model.
+
+The Resume chip reads a `task` part with `status: "error"` or
+`metadata.interrupted` and the child in `metadata.sessionId` (issues #41055,
+#39196; the suite uses fakes, 1.18.34 not measured). A permission-denied call
+is probably `error` too and would earn a rerun chip; its error text is not
+measured, so it is not filtered. A later completed call (same child, or same
+agent and description) clears the mark.
+
+## Permission asks: two event shapes, and a reply that proves nothing (docs, not measured)
+
+OpenCode's generated v1 SDK types (`packages/sdk/js/src/gen/types.gen.ts`, dev,
+read 2026-10-07) name the ask `permission.updated` (properties `id`, `type`,
+`pattern`, `sessionID`, …), its answer `POST /session/:id/permissions/:permissionID`
+with `{ response: "once" | "always" | "reject" }` (the server docs list that route
+too), and the confirmation `permission.replied` `{ sessionID, permissionID,
+response }`. What the bridge measured on 1.18.32 is `permission.asked` and
+`POST /permission/:id/reply` with `{ reply, message? }`; the shape of its
+`permission.replied` (`requestID`, `reply`) is recalled, not measured. The bridge
+answers both ask events, once per request id, and reads either id field in the
+confirmation. `POST /permission/:id/reply` answers 200/true for an id that is
+not pending (#15386; closed unfixed, the fix PR #24322 was closed unmerged), so
+a 200 proves nothing: a reply without a `permission.replied` after 3 s is sent
+once more, then given up on, with a log line either way. A pre-1.1 `reject`
+carries no message, so on such a server it ends the turn instead of being fed
+back. Not measured: any of this on a real server; the suite uses fakes (`HQ`).

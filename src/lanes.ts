@@ -224,9 +224,9 @@ export async function runParallelLanes(opts: {
         `Wall clock ${secs(totalMs)} vs ${secs(serialMs)} sequential` +
         (cost > 0 ? ` · $${cost.toFixed(4)}` : "") +
         ".\n\nLanes ran in isolated sessions, so nothing above is in your ongoing " +
-        // The Merge chip needs two answers (followupsFor); name it only then.
+        // The Merge and Compare chips need two answers (followupsFor); name them only then.
         (results.filter((r, i) => !specs[i].error && r.answer.trim()).length >= 2
-            ? "conversation. **Merge lanes** below brings their answers into it."
+            ? `conversation. ${sameTask ? "**Compare** or **Merge lanes**" : "**Merge lanes**"} below brings their answers into it.`
             : "conversation. Paste the parts you want to keep into a normal `@opencode` turn.")
     );
 

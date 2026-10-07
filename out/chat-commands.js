@@ -52,7 +52,7 @@ async function handleControlCommand(p) {
                 return { metadata: { kind: "compact" } };
             }
             p.response.progress(`Compacting \`${p.state.id}\` — OpenCode summarises the conversation…`);
-            const work = (0, runs_1.compactSession)(p.state.id, p.cwd, p.state.lastModel);
+            const work = (0, runs_1.compactSession)(p.state.id, p.cwd, p.state.lastModel, true);
             const ok = p.token ? await (0, core_1.untilStop)(work, p.token) : await work;
             if (ok === undefined) {
                 core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] /compact: stopped while waiting; the summary may still finish on the server`);
@@ -129,7 +129,8 @@ async function handleControlCommand(p) {
                 if (!serverBase) {
                     throw new Error("no server of this window yet");
                 }
-                await (0, net_1.httpGetJson)(`${serverBase}/global/health`, 2000);
+                const health = await (0, net_1.httpGetJson)(`${serverBase}/global/health`, 2000);
+                const reported = typeof health.version === "string" ? ` · OpenCode ${(0, core_1.truncate)(health.version, 24)}` : "";
                 let scope = "";
                 try {
                     const mine = await (0, net_1.httpGetJson)((0, net_1.withDirectory)(`${serverBase}/session`, p.cwd), 2500);
@@ -137,7 +138,7 @@ async function handleControlCommand(p) {
                 }
                 catch {
                 }
-                rows.push(`| server | ${(0, followups_1.mark)("ok")} healthy on ${serverBase?.replace(/^http:\/\//, "")}${scope} |`);
+                rows.push(`| server | ${(0, followups_1.mark)("ok")} healthy on ${serverBase?.replace(/^http:\/\//, "")}${reported}${scope} |`);
             }
             catch {
                 rows.push(`| server | not running _(started on demand)_ |`);

@@ -1,7 +1,7 @@
 // Follow-up chips: the answer-derived ones kept per turn, and the chips a
 // finished turn gets, a pure function of its metadata (./followups.json).
 import * as vscode from "vscode";
-import { config, logChannel, stamp } from "./core";
+import { config, extensionContext, logChannel, stamp } from "./core";
 import { StepRecord } from "./metrics";
 import { CASES, ChipKey, Outcome, chipLabel, chipOf, fillPrompt } from "./followups";
 import { naturalFollowups } from "./natural";
@@ -20,6 +20,8 @@ export interface Followup {
     /** Set on every chip: Copilot keeps the last command sticky, so the kind
      * lives here and the prompt is only the sentence. */
     command: "dev" | "plan" | "parallel";
+    /** What made it (./natural), for the backoff. Never sent to the host. */
+    kind?: string;
 }
 
 // Runs inside the turn's try: a throw here would report a finished answer as
@@ -28,7 +30,8 @@ export function suggestFollowups(input: { agent: string; answer: string; steps: 
     try {
         // `autoParallel: off` takes the "Run N as lanes" chip away too.
         const lanes = config().get<string>("autoParallel", "offer") !== "off";
-        return naturalFollowups(input, 3, lanes ? splitLanes : undefined);
+        // A kind held back gives its place to the next cue.
+        return naturalFollowups(input, 3, lanes ? splitLanes : undefined, heldKinds());
     } catch (error) {
         logChannel.appendLine(`[${stamp()}] follow-up chips left out: ${error}`);
         return [];
@@ -49,6 +52,88 @@ export function rememberFollowups(sessionId: string, turns: number, chips: Follo
 
 export function recalledFollowups(sessionId: string | undefined, turns: number): Followup[] {
     return sessionId ? followupStore.get(`${sessionId}#${turns}`) ?? [] : [];
+}
+
+// ---------------------------------------------------------------------------
+// Chip backoff. claim:chip-backoff
+//
+// A cue chip (Test it, Review, Ship it, Dig deeper, Compact, …) whose kind was
+// passed over three times running is held back for the next 2 messages, then
+// 4, 8, … 32 each time it is passed over again; taking a chip of that kind
+// clears it. Counted when the next message arrives: a chip taken is that
+// message, a typed task passes over every chip shown, a control command
+// (`/help`, `/session`) is neither. The agent's own offers and choices are its
+// words, and Resume is unfinished work: never held. In globalState: the user's
+// habit, not the folder's.
+
+const BACKOFF_KEY = "opencodeCopilotBridge.chipBackoff";
+const BACKOFF_AFTER = 3;
+const BACKOFF_MAX_HOLD = 32;
+const NEVER_HELD = new Set(["offer", "choice", "RESUME_TASK"]);
+
+interface Backoff {
+    /** Messages counted so far: a hold lasts until this reaches `until`. */
+    message: number;
+    kinds: Record<string, { passed: number; until: number }>;
+}
+
+const readBackoff = (): Backoff => {
+    const stored = extensionContext?.globalState?.get<Backoff>(BACKOFF_KEY);
+    const message = typeof stored?.message === "number" && Number.isFinite(stored.message) ? stored.message : 0;
+    const kinds: Backoff["kinds"] = {};
+    for (const [kind, k] of Object.entries(stored?.kinds ?? {})) {
+        if (typeof k?.passed === "number" && typeof k.until === "number") {
+            kinds[kind] = { passed: k.passed, until: k.until };
+        }
+    }
+    return { message, kinds };
+};
+
+/** The kinds held back right now. */
+export function heldKinds(): Set<string> {
+    const b = readBackoff();
+    return new Set(Object.entries(b.kinds).filter(([, k]) => b.message < k.until).map(([kind]) => kind));
+}
+
+// What each finished turn's chips were, by `${sessionId}#${turns}`: the next
+// message in that session is read against them once.
+const offeredStore = new Map<string, Array<{ kind?: string; prompt: string; command?: string }>>();
+
+/** The message after a turn: a chip taken clears its kind, a typed task passes over the chips shown. */
+export function noteNextMessage(sessionId: string | undefined, turns: number, command: string, prompt: string, control: boolean): void {
+    const key = `${sessionId}#${turns}`;
+    const offered = sessionId ? offeredStore.get(key) : undefined;
+    const taken = offered?.find((c) => (c.command ?? "") === command && c.prompt.trim() === prompt.trim());
+    if (control && !taken) {
+        return;
+    }
+    offeredStore.delete(key);
+    const b = readBackoff();
+    b.message += 1;
+    if (taken?.kind) {
+        delete b.kinds[taken.kind];
+    } else if (offered && !taken) {
+        for (const kind of new Set(offered.map((c) => c.kind ?? ""))) {
+            if (!kind || NEVER_HELD.has(kind)) {
+                continue;
+            }
+            const k = Object.hasOwn(b.kinds, kind) ? b.kinds[kind] : { passed: 0, until: 0 };
+            k.passed += 1;
+            if (k.passed >= BACKOFF_AFTER) {
+                const hold = Math.min(2 ** (k.passed - BACKOFF_AFTER + 1), BACKOFF_MAX_HOLD);
+                k.until = b.message + hold;
+                logChannel.appendLine(`[${stamp()}] chip "${kind}" passed over ${k.passed} times running: held back for ${hold} messages`);
+            }
+            b.kinds[kind] = k;
+        }
+    }
+    void extensionContext?.globalState?.update(BACKOFF_KEY, b);
+}
+
+/** For the suite: forget the backoff and what was offered. */
+export function resetChipBackoff(): void {
+    offeredStore.clear();
+    void extensionContext?.globalState?.update(BACKOFF_KEY, undefined);
 }
 
 
@@ -146,6 +231,11 @@ export function followupsFor(metadata: Record<string, unknown>): vscode.ChatFoll
             const failed = failedLanes(stored);
             const keys: ChipKey[] = [];
             const text: Partial<Record<ChipKey, string>> = {};
+            // One task on several models: which answer holds up, before the merge.
+            if (answered >= 2 && metadata.laneSameTask === true) {
+                keys.push("COMPARE_LANES");
+                text.COMPARE_LANES = fillPrompt("COMPARE_LANES", { run: runId });
+            }
             if (answered >= 2) {
                 keys.push("MERGE_LANES");
                 text.MERGE_LANES = fillPrompt("MERGE_LANES", { run: runId });
@@ -172,9 +262,20 @@ export function followupsFor(metadata: Record<string, unknown>): vscode.ChatFoll
             const sessionId = typeof metadata.sessionId === "string" ? metadata.sessionId : undefined;
             const turns = typeof metadata.turns === "number" ? metadata.turns : 0;
             const seen = new Set<string>();
-            return [...stateChips(metadata, kind), ...recalledFollowups(sessionId, turns)]
+            const held = heldKinds();
+            const shown: Offered[] = [...stateChips(metadata, kind), ...recalledFollowups(sessionId, turns)]
                 .filter((f) => !seen.has(`${f.command}|${f.prompt}`) && Boolean(seen.add(`${f.command}|${f.prompt}`)))
+                .filter((f) => !f.kind || !held.has(f.kind))
                 .slice(0, 3);
+            if (sessionId) {
+                const key = `${sessionId}#${turns}`;
+                offeredStore.delete(key);
+                offeredStore.set(key, shown.map((f) => ({ kind: f.kind, prompt: f.prompt, command: f.command })));
+                while (offeredStore.size > FOLLOWUP_STORE_CAP) {
+                    offeredStore.delete(offeredStore.keys().next().value as string);
+                }
+            }
+            return shown.map(({ label, prompt, command }) => ({ label, prompt, command }));
         }
         default:
             return chips(CASES[outcome]);
@@ -185,8 +286,10 @@ export function followupsFor(metadata: Record<string, unknown>): vscode.ChatFoll
 // Chips from what the run recorded, not from its words: structured, so they
 // outrank the answer-derived ones. Metadata only carries the few fields they
 // need (history replays it on every later turn).
-function stateChips(metadata: Record<string, unknown>, kind: "dev" | "plan"): vscode.ChatFollowup[] {
-    const out: vscode.ChatFollowup[] = [];
+type Offered = vscode.ChatFollowup & { kind?: string };
+
+function stateChips(metadata: Record<string, unknown>, kind: "dev" | "plan"): Offered[] {
+    const out: Offered[] = [];
     const task = metadata.failedTask as { agent?: unknown; description?: unknown; taskId?: unknown } | undefined;
     if (task && typeof task.agent === "string" && task.agent) {
         const description = typeof task.description === "string" && task.description ? task.description : task.agent;
@@ -195,14 +298,14 @@ function stateChips(metadata: Record<string, unknown>, kind: "dev" | "plan"): vs
         const chip = chipOf("RESUME_TASK", kind, text);
         if (chip) {
             chip.label = `${chipLabel("RESUME_TASK")} ${task.agent}`;
-            out.push(chip);
+            out.push({ ...chip, kind: "RESUME_TASK" });
         }
     }
     if (typeof metadata.compact === "string" && metadata.compact) {
         const chip = chipOf("COMPACT", kind);
         if (chip) {
             chip.label = `${chipLabel("COMPACT")} · ${metadata.compact}`;
-            out.push(chip);
+            out.push({ ...chip, kind: "COMPACT" });
         }
     }
     return out;

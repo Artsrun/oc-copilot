@@ -4,7 +4,7 @@
 import * as vscode from "vscode";
 import * as path from "node:path";
 import { config, logChannel, secs, stamp, truncate } from "./core";
-import { StepRecord } from "./metrics";
+import { StepRecord, SubagentStep } from "./metrics";
 import { createBadger, mark } from "./followups";
 
 export interface Heartbeat {
@@ -16,9 +16,10 @@ export interface Heartbeat {
     thought: (line: string) => void;
     /** The answer started streaming: the tools before it are done. */
     activity: () => void;
-    /** What a subagent is doing now (`explore › read src/x.ts`): the live line
-     * only, paced like thoughts — every progress() call is a new line. */
-    subagent: (text: string) => void;
+    /** A subagent's tool call: a row under its parent's `task` row in the
+     * accordion, and while it runs the live line (`explore › read src/x.ts`),
+     * paced like thoughts — every progress() call is a new line. */
+    subagent: (sub: SubagentStep) => void;
     /** Ends the heartbeat. `cancelled`: the user pressed Stop, and VS Code
      * drops everything sent after that, so nothing is sent. Await it. */
     stop: (cancelled?: boolean) => Promise<void>;
@@ -113,6 +114,9 @@ export const stepLabel = (step: StepRecord, cwd?: string): string => {
 // A group that never sees a thought would grow for the whole run; past this
 // many rows it closes and the next step opens a fresh one.
 export const GROUP_MAX_ROWS = 24;
+// A subagent's calls nest under its `task` row, this many at most: the last
+// row then counts the rest. They do not count towards GROUP_MAX_ROWS.
+export const CHILD_MAX_ROWS = 8;
 // A group's rows reach the host only after its header is acknowledged, and
 // chunks after the request ends are dropped: stop() waits this out since the
 // last group sent (by anyone).
@@ -125,8 +129,19 @@ interface Group {
     open: Set<string>;
     /** Rows that name one file, by row label. */
     files: Map<string, RowFile>;
+    /** A subagent's calls, by the parent `task` row they ran under. */
+    children: Map<string, { agent: string; rows: Set<string> }>;
     openedAt: number;
 }
+
+// The rows under one `task` row: `explore › read: src/auth.ts`, plain labels
+// (no file pill: a pill renders its tool, not the `explore ›` that says whose).
+const childRows = (kids: { agent: string; rows: Set<string> } | undefined): string[] => {
+    const rows = [...(kids?.rows ?? [])];
+    return rows.length > CHILD_MAX_ROWS
+        ? [...rows.slice(0, CHILD_MAX_ROWS - 1), `${kids?.agent} › ${rows.length - CHILD_MAX_ROWS + 1} more`]
+        : rows;
+};
 
 export function startHeartbeat(response: vscode.ChatResponseStream, initial: string, timeoutMs: number, cwd?: string): Heartbeat {
     const everyMs = config().get<number>("progressHeartbeatMs", 1000);
@@ -200,7 +215,8 @@ export function startHeartbeat(response: vscode.ChatResponseStream, initial: str
             return false;
         }
         const n = g.rows.length;
-        finishedTask(response, `${g.title} · ${n} step${n === 1 ? "" : "s"} · ${secs(Date.now() - g.openedAt)}`, g.rows, g.files);
+        const rows = g.rows.flatMap((row) => [row, ...childRows(g.children.get(row))]);
+        finishedTask(response, `${g.title} · ${n} step${n === 1 ? "" : "s"} · ${secs(Date.now() - g.openedAt)}`, rows, g.files);
         lastSentAt = Date.now();
         return true;
     };
@@ -214,6 +230,7 @@ export function startHeartbeat(response: vscode.ChatResponseStream, initial: str
                 rows: [],
                 open: new Set(),
                 files: new Map(),
+                children: new Map(),
                 openedAt: Date.now()
             };
             pendingThought = "";
@@ -292,11 +309,24 @@ export function startHeartbeat(response: vscode.ChatResponseStream, initial: str
             }
             setPhase(text);
         },
-        subagent: (text: string) => {
-            if (stopped || !text) {
+        subagent: ({ agent, task, step }: SubagentStep) => {
+            if (stopped) {
                 return;
             }
-            sub = text;
+            // Under its parent's row while that row's group is still open; a
+            // group already sent keeps its rows, and an unnamed child has none.
+            const row = stepLabel(step, cwd);
+            const parent = task ? stepLabel({ tool: "task", detail: task, durationMs: undefined }, cwd) : "";
+            if (accordion && row && parent && group?.rows.includes(parent)) {
+                const kids = group.children.get(parent) ?? { agent, rows: new Set<string>() };
+                kids.rows.add(`${agent} › ${row}`);
+                group.children.set(parent, kids);
+            }
+            if (step.status !== "running") {
+                return;
+            }
+            const detail = truncate(step.detail, 60);
+            sub = `${agent} › ${step.tool}${detail ? ` ${detail}` : ""}`;
             const now = Date.now();
             // Paced: every progress() call is a new line.
             if (now - lastSubAt >= SUBAGENT_EVERY_MS) {

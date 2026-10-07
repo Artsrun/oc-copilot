@@ -54,7 +54,7 @@ flowchart LR
 
 | Method and path | Used for |
 | --- | --- |
-| `GET /global/health` | Is a server there |
+| `GET /global/health` | Is a server there, and is it OpenCode (`version`) |
 | `GET /global/event` | Shared SSE stream |
 | `POST /session` | Create, with headless permissions |
 | `GET /session?roots=true&limit=50` | `/sessions` picker |
@@ -66,9 +66,12 @@ flowchart LR
 | `POST /session/:id/fork`, `PATCH` and `DELETE /session/:id` | Fork, archive, delete, permission re-PATCH |
 | `GET /agent`, `GET /config/providers` | Agents, model catalog |
 | `POST /permission/:id/reply`, `POST /question/:id/reply` | Headless answers |
+| `POST /session/:id/permissions/:permissionID` | The same answer for a pre-1.1 server (docs, not measured) |
 
 SSE events consumed: `message.part.updated`, `message.updated`,
 `session.error`, `session.created`, `permission.asked`, `question.asked`;
+`permission.updated` (pre-1.1) is answered like `permission.asked`, and
+`permission.replied` confirms a reply (a 200 alone proves nothing, #15386).
 `server.heartbeat` is ignored for liveness.
 
 > Checked in source (`net.ts`, `sessions.ts`, `run-server.ts`, `server-session.ts`, `asks.ts`, `models.ts`):

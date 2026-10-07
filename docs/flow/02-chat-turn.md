@@ -2,7 +2,7 @@
 
 [← big picture](01-big-picture.md) · [index](README.md) · next: [Transport →](03-transport.md)
 
-Everything here happens in `handleChat` (`src/chat.ts`) **before** OpenCode runs.
+Everything here happens in `handleChat` (`src/chat.ts`) **before** OpenCode runs; the run itself, its recovery and the answer are `runTurn` (`src/chat-turn.ts`), and `/parallel` is `runParallelTurn` (`src/chat-parallel.ts`).
 
 ```mermaid
 flowchart TD

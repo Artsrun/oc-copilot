@@ -234,12 +234,13 @@ export async function sessionModel(base: string, cwd: string, sessionId: string)
 // record, else the pin) and in the turn's folder — never the catalog's first.
 const COMPACT_TIMEOUT_MS = 180000;
 // A server that would not start is not retried by every compaction: the next
-// one waits this long (each failed start costs up to 20 s and a process).
+// one waits this long (each failed start costs up to 45 s and a process).
 const COMPACT_BACKOFF_MS = 5 * 60000;
 let compactServerFailedAt = 0;
 
-export async function compactSession(sessionId: string, cwd: string, model?: string): Promise<boolean> {
-    if (Date.now() - compactServerFailedAt < COMPACT_BACKOFF_MS) {
+// `asked`: a `/compact` the user typed is never held back by the backoff.
+export async function compactSession(sessionId: string, cwd: string, model?: string, asked = false): Promise<boolean> {
+    if (!asked && Date.now() - compactServerFailedAt < COMPACT_BACKOFF_MS) {
         logChannel.appendLine(`[${stamp()}] compact skipped: the server failed to start ${Math.round((Date.now() - compactServerFailedAt) / 1000)}s ago`);
         return false;
     }

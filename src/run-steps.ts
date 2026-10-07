@@ -58,16 +58,13 @@ export function addSubagents(metrics: RunMetrics, children: readonly string[], c
     metrics.cost += cost;
 }
 
-/** A `task` call that failed or was interrupted: kept so a chip can resume it. */
+/** A `task` call that failed or was interrupted: kept so a chip can resume it, until a call completes it. */
 export function noteTask(part: Record<string, unknown>, metrics: RunMetrics): void {
     if (part.tool !== "task") {
         return;
     }
     const state = part.state as Record<string, unknown> | undefined;
     const meta = state?.metadata as Record<string, unknown> | undefined;
-    if (state?.status !== "error" && meta?.interrupted !== true) {
-        return;
-    }
     const input = state?.input as Record<string, unknown> | undefined;
     const agent = typeof input?.subagent_type === "string" ? input.subagent_type : "";
     if (!agent) {
@@ -75,6 +72,15 @@ export function noteTask(part: Record<string, unknown>, metrics: RunMetrics): vo
     }
     const description = typeof input?.description === "string" ? input.description : "";
     const sessionId = typeof meta?.sessionId === "string" ? meta.sessionId : undefined;
+    if (state?.status !== "error" && meta?.interrupted !== true) {
+        // The model retried or resumed it and it finished: nothing is left to resume.
+        if (state?.status === "completed" && metrics.failedTasks) {
+            metrics.failedTasks = metrics.failedTasks.filter(
+                (t) => !(sessionId && t.sessionId === sessionId) && !(t.agent === agent && t.description === description)
+            );
+        }
+        return;
+    }
     const list = (metrics.failedTasks ??= []);
     if (!list.some((t) => t.agent === agent && t.description === description)) {
         list.push({ agent, description, sessionId });

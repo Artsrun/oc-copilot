@@ -38,15 +38,17 @@ export const prompt = (key: PromptKey): string => PROMPTS[key];
 /** A prompt template with its own placeholders filled (`{run}`), tail included. */
 export const fillPrompt = (key: PromptKey, vars: Record<string, string>): string => fill(data.prompts[key], vars);
 
-// The Merge-lanes chip sends the run id inside its sentence, because a chip
-// carries only a prompt and a command — no metadata travels with it. The
-// matcher is built from the same template, so the words stay in the JSON.
-const MERGE_RUN = new RegExp(
-    `^\\s*${PROMPTS.MERGE_LANES.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace("\\{run\\}", "([A-Za-z0-9]{4,32})")}`
+// The Merge and Compare lanes chips send the run id inside their sentence,
+// because a chip carries only a prompt and a command — no metadata travels
+// with it. The matchers are built from the same templates, so the words stay
+// in the JSON.
+export const LANE_RUN_PROMPTS = ["MERGE_LANES", "COMPARE_LANES"] as const;
+const LANE_RUNS = LANE_RUN_PROMPTS.map(
+    (key) => new RegExp(`^\\s*${PROMPTS[key].replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace("\\{run\\}", "([A-Za-z0-9]{4,32})")}`)
 );
 
-/** The lane-run id a merge prompt names, or undefined. */
-export const mergeRunId = (text: string): string | undefined => text.match(MERGE_RUN)?.[1];
+/** The lane-run id a merge or compare prompt names, or undefined. */
+export const mergeRunId = (text: string): string | undefined => LANE_RUNS.map((re) => text.match(re)?.[1]).find(Boolean);
 
 /** `ᕦ(ò‸ó)ᕤ Retry` — recovery chips lead with a kaomoji. */
 export const chipLabel = (key: ChipKey): string => {
@@ -227,8 +229,10 @@ export const badgeMarks = (markdown: string): string => createBadger()(markdown)
 export const followupsProblems = (d: typeof data = data): string[] => {
     const problems: string[] = [];
     const prompts = d.prompts as Record<string, string>;
-    if (!prompts.MERGE_LANES?.includes("{run}")) {
-        problems.push(`prompts.MERGE_LANES has no {run}: mergeRunId would never match`);
+    for (const key of LANE_RUN_PROMPTS) {
+        if (!prompts[key]?.includes("{run}")) {
+            problems.push(`prompts.${key} has no {run}: mergeRunId would never match`);
+        }
     }
     const commands: readonly string[] = ["@kind", ...CHIP_COMMANDS];
     for (const [k, def] of Object.entries(d.chips as Record<string, { prompt: string; command: string }>)) {

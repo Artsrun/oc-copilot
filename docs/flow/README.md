@@ -63,10 +63,10 @@ change and lines drift). Find one with `grep -n "function NAME" src/*.ts`.
 | No `languageModelTools` | Checked: absent from `package.json` |
 | Selection folded only if inline or `includeEditorSelection` | Checked: `buildChatContext` |
 | Vague gate: first message, no references, setting `clarifyVaguePrompts` | Checked: `handleChat` |
-| Handoff only when no tool is running | Checked: `handleChat` |
+| Handoff only when no tool is running | Checked: `runAttempts` (`chat-turn.ts`) |
 | Untrusted workspaces cannot set `executable`, `serverHostname`, `serverPort` | Checked: `package.json` capabilities |
 | `serve` is spawned through `spawnOpenCode` | Checked: `ensureServer` |
-| A fixed `serverPort` adopts any listener saying `healthy: true`; the default is `53200`, off the common `4096`, and `0` starts a private server that adopts nothing | Measured: `scripts/probe-server-adoption.js` (the prompt and workspace path reached a fake listener) |
+| A fixed `serverPort` adopts a listener only if its health names a `version`; anything else gets one health probe and the window starts its own server. The default is `53200`, off the common `4096`, and `0` starts a private server that adopts nothing | Measured before the check: `scripts/probe-server-adoption.js` (the prompt and workspace path reached a fake listener). Since: suite group `ID` |
 | Suite checks exist for the ladder | Checked: groups `HQ` `LT4` `LT5` `SP` `PA` `DM` `GP` `LT7` appear in the suite |
 | Effort, context, autoParallel, subagent rows | Checked: groups `EF` `CX` `AP` `SG` `FT` in the suite (page 7) |
 | Mermaid syntax | Checked: all diagrams pass `mermaid` `parse()` (a deliberately broken one fails). Visual layout not inspected |

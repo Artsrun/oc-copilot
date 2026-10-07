@@ -43,6 +43,7 @@ exports.versionNotice = versionNotice;
 exports.knownServerBase = knownServerBase;
 exports.stopServer = stopServer;
 exports.ensureServer = ensureServer;
+exports.warmServer = warmServer;
 exports.lastServeLine = lastServeLine;
 exports.sessionIdFromEvent = sessionIdFromEvent;
 exports.connectSse = connectSse;
@@ -252,36 +253,47 @@ async function ensureServer(cwd, onSlowStart) {
     }
     let port = own ? managedPort : fallbackPort ?? configured;
     let base = `http://${host}:${port}`;
-    const healthy = async (timeoutMs) => {
+    const probe = async (timeoutMs) => {
         try {
             const health = await httpGetJson(`${base}/global/health`, timeoutMs);
-            if (health.healthy === true && typeof health.version === "string") {
-                serverVersions.set(base, health.version);
+            const version = typeof health.version === "string" && health.version.trim() ? health.version.trim() : undefined;
+            if (health.healthy === true && version) {
+                serverVersions.set(base, version);
             }
-            return health.healthy === true;
+            return { healthy: health.healthy === true, version };
         }
         catch {
-            return false;
+            return { healthy: false };
         }
     };
-    if (!own && !fallbackPort && (await healthy())) {
-        serveSpawnError = undefined;
+    const healthy = async (timeoutMs) => (await probe(timeoutMs)).healthy;
+    let foreign = false;
+    if (!own && !fallbackPort) {
+        const first = await probe();
         const startedHere = Boolean(serveProcess && serveProcess.exitCode === null);
-        if (!startedHere && !adoptedServers.has(base)) {
-            adoptedServers.add(base);
-            core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] adopted an OpenCode server already listening on ${base}. ` +
-                `Requests are scoped to ${cwd ?? "this workspace"} via ?directory=.`);
+        if (first.healthy && (startedHere || first.version)) {
+            serveSpawnError = undefined;
+            if (!startedHere && !adoptedServers.has(base)) {
+                adoptedServers.add(base);
+                core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] adopted an OpenCode server already listening on ${base}. ` +
+                    `Requests are scoped to ${cwd ?? "this workspace"} via ?directory=.`);
+            }
+            return base;
         }
-        return base;
+        foreign = first.healthy;
     }
     if ((own || fallbackPort) && serveAlive() && (await healthy())) {
         return base;
     }
-    if (!own && !serveAlive() && (await portTaken(host, configured))) {
+    if (!own && !serveAlive() && (foreign || (await portTaken(host, configured)))) {
         fallbackPort = await freePort(host);
-        core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] port ${configured} accepts connections but did not answer /global/health — ` +
-            `a hung server or another program. This window starts its own server on port ${fallbackPort} ` +
-            `and sends nothing to ${configured}. serverPort 0 always does this.`);
+        core_1.logChannel.appendLine(foreign
+            ? `[${(0, core_1.stamp)()}] port ${configured} answers /global/health but names no OpenCode version (a real server sends { healthy, version }) — ` +
+                `another program, or an OpenCode too old to say. This window starts its own server on port ${fallbackPort} ` +
+                `and sends nothing to ${configured} but that health probe. serverPort 0 always does this.`
+            : `[${(0, core_1.stamp)()}] port ${configured} accepts connections but did not answer /global/health — ` +
+                `a hung server or another program. This window starts its own server on port ${fallbackPort} ` +
+                `and sends nothing to ${configured}. serverPort 0 always does this.`);
         port = fallbackPort;
         base = `http://${host}:${port}`;
     }
@@ -341,6 +353,15 @@ async function ensureServer(cwd, onSlowStart) {
         }
     }
     throw exited() ?? new Error(stillStarting(base, configured));
+}
+async function warmServer(cwd, onSlowStart) {
+    try {
+        return await ensureServer(cwd, onSlowStart);
+    }
+    catch (error) {
+        core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] server unavailable, dev runs cold: ${error}`);
+        return undefined;
+    }
 }
 function stillStarting(base, configured) {
     const said = lastServeLine(serveTail);

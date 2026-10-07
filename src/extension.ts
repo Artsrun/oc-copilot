@@ -16,10 +16,10 @@ import {
     threadSession
 } from "./session";
 import { contextNote, effortFor, getModelCatalog, higherEffort, modelLabel, parseModelList, parseProviders, parseVerboseModels, resolveModelRef } from "./models";
-import { compactSession, emitKeyedDelta, isMissingSessionError, isMissingSessionRun, safeSessionId, sessionPath, sessionRoot, stepDetail, turnPermission } from "./runs";
+import { compactSession, emitKeyedDelta, isMissingSessionError, isMissingSessionRun, noteTask, safeSessionId, sessionPath, sessionRoot, setReplyConfirmWait, stepDetail, turnPermission } from "./runs";
 import { laneProblem } from "./compose";
 import { laneAgentProblem, parseAgentList } from "./agents";
-import { GROUP_MAX_ROWS, KIND_COMMAND_NAMES, LANE_ANSWER_CAP, LANE_STORE_CAP, SETTLE_MS, chatStream, commandAliases, recallLanes, rememberLanes, resolveAlias, retryLanesPrompt, ROUTED_COMMANDS, followupsFor, nextMilestone, splitLanes, startHeartbeat, stepLabel, supportsTaskProgress, suggestFollowups, thoughtLine, SLASH_COMMANDS } from "./chat-boot";
+import { CHILD_MAX_ROWS, GROUP_MAX_ROWS, KIND_COMMAND_NAMES, LANE_ANSWER_CAP, LANE_STORE_CAP, SETTLE_MS, chatStream, commandAliases, recallLanes, rememberLanes, resolveAlias, retryLanesPrompt, ROUTED_COMMANDS, followupsFor, resetChipBackoff, nextMilestone, splitLanes, startHeartbeat, stepLabel, supportsTaskProgress, suggestFollowups, thoughtLine, SLASH_COMMANDS } from "./chat-boot";
 import { handleChat } from "./chat";
 import { badge, badgeMarks, chipOf, createBadger, followupsProblems } from "./followups";
 import { laneItems, naturalFollowups } from "./natural";
@@ -123,6 +123,7 @@ export const __test = {
     parseAgentList,
     openCodeConfigModel,
     compactSession,
+    noteTask,
     chipOf,
     createBadger,
     followupsProblems,
@@ -145,7 +146,10 @@ export const __test = {
     retryLanesPrompt,
     turnPermission,
     lastServeLine,
-    setStartupDeadline
+    setStartupDeadline,
+    setReplyConfirmWait,
+    resetChipBackoff,
+    CHILD_MAX_ROWS
 };
 
 export function deactivate(): void {

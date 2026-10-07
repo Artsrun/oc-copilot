@@ -102,7 +102,9 @@ async function diagnose() {
     if (serverBase) {
         try {
             const health = await (0, net_1.httpGetJson)(`${serverBase}/global/health`);
-            serverState = health.healthy === true ? `${(0, followups_1.mark)("ok")} healthy on ${serverBase}` : `${(0, followups_1.mark)("warn")} responded, unhealthy`;
+            serverState = health.healthy === true
+                ? `${(0, followups_1.mark)("ok")} healthy on ${serverBase}${typeof health.version === "string" ? ` · OpenCode ${(0, core_1.truncate)(health.version, 24)}` : ""}`
+                : `${(0, followups_1.mark)("warn")} responded, unhealthy`;
         }
         catch {
             serverState = `not running on ${serverBase} (started on demand)`;

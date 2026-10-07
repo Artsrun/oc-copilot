@@ -132,6 +132,7 @@ exports.__test = {
     parseAgentList: agents_1.parseAgentList,
     openCodeConfigModel: env_1.openCodeConfigModel,
     compactSession: runs_1.compactSession,
+    noteTask: runs_1.noteTask,
     chipOf: followups_1.chipOf,
     createBadger: followups_1.createBadger,
     followupsProblems: followups_1.followupsProblems,
@@ -154,7 +155,10 @@ exports.__test = {
     retryLanesPrompt: chat_boot_1.retryLanesPrompt,
     turnPermission: runs_1.turnPermission,
     lastServeLine: net_1.lastServeLine,
-    setStartupDeadline: net_1.setStartupDeadline
+    setStartupDeadline: net_1.setStartupDeadline,
+    setReplyConfirmWait: runs_1.setReplyConfirmWait,
+    resetChipBackoff: chat_boot_1.resetChipBackoff,
+    CHILD_MAX_ROWS: chat_boot_1.CHILD_MAX_ROWS
 };
 function deactivate() {
     (0, net_1.stopServer)();

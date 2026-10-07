@@ -23,6 +23,14 @@ export interface StepRecord {
     filePath?: string;
 }
 
+/** A subagent's tool call (server and attached runs), and the parent's `task` call it runs under. */
+export interface SubagentStep {
+    agent: string;
+    /** The parent `task` step's detail (`explore: find auth handlers`), once that part named this child. */
+    task?: string;
+    step: StepRecord;
+}
+
 export interface RunMetrics {
     firstByteMs: number | undefined;
     totalMs: number;
@@ -103,8 +111,8 @@ export interface RunOptions {
     onText?: (text: string) => void;
     onStep?: (step: StepRecord) => void;
     onReasoning?: (text: string) => void;
-    /** A subagent's current tool, as one short line. */
-    onSubagent?: (text: string) => void;
+    /** A subagent's tool call, running or done. */
+    onSubagent?: (sub: SubagentStep) => void;
     token?: vscode.CancellationToken;
 }
 

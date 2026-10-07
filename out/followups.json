@@ -6,6 +6,7 @@
         "READ_ONLY": "Not allowed: this chat turn is read-only. Continue without it and answer with what you have. {tail}",
         "NO_QUESTIONS": "No one can answer tool questions in this chat. Ask in your reply text instead. {tail}",
         "MERGE_LANES": "Merge the lane answers from run {run}. Drop the duplicates, rank every finding by how many lanes agree, and list the disagreements on their own. {tail}",
+        "COMPARE_LANES": "Compare the lane answers from run {run}: one task, answered by different models. Say where they agree, check each disagreement against the code, and say which answer holds up. {tail}",
         "RESUME_TASK": "The {agent} subagent stopped before it finished ({description}). Call the task tool again with task_id {task} so it resumes where it was, let it finish, then report. {tail}",
         "RERUN_TASK": "The {agent} subagent stopped before it finished ({description}). Run it again, let it finish, then report. {tail}",
         "LANES_GONE": "Those lane answers are gone. They live only in this window, and it has been reloaded since, so nothing was run. Send the lanes again to merge them."
@@ -19,13 +20,14 @@
         "RUN_LANES": { "kao": "ヽ(•‿•)ノ", "label": "Run lanes", "prompt": "", "command": "parallel" },
         "COMPOSE": { "kao": "(・ω・)ノ", "label": "Compose…", "prompt": "", "command": "parallel" },
         "MERGE_LANES": { "kao": "(=^‥^)ノ", "label": "Merge lanes", "prompt": "MERGE_LANES", "command": "plan" },
+        "COMPARE_LANES": { "kao": "(°ー°〃)", "label": "Compare lanes", "prompt": "COMPARE_LANES", "command": "plan" },
         "RETRY_LANES": { "kao": "(ﾉ´･ω･)ﾉ", "label": "Retry lanes", "prompt": "", "command": "parallel" },
         "RESUME_TASK": { "kao": "(ง •̀ω•́)ง", "label": "Resume", "prompt": "RESUME_TASK", "command": "@kind" },
         "COMPACT": { "kao": "(っ˘ω˘ς)", "label": "Compact", "prompt": "", "command": "compact" }
     },
     "cases": {
         "silent": [],
-        "parallel": ["MERGE_LANES", "RETRY_LANES"],
+        "parallel": ["COMPARE_LANES", "MERGE_LANES", "RETRY_LANES"],
         "composed": ["RUN_LANES"],
         "lanesMissing": ["COMPOSE"],
         "done": [],

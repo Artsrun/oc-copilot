@@ -336,7 +336,7 @@ All under `opencodeCopilotBridge.`.
 | `transport` | `auto` | `auto`: server for plan, attached CLI for dev. `cli` or `server` for all. |
 | `serverStartupPollMs` | `350` | Longest gap between health polls while `opencode serve` starts. |
 | `serverHostname` | `127.0.0.1` | Host of the managed `opencode serve`. |
-| `serverPort` | `53200` | Port of the managed `opencode serve`; a healthy server already there is reused. `0` picks a free port for a server this window starts and adopts nothing. |
+| `serverPort` | `53200` | Port of the managed `opencode serve`. An OpenCode server already there (its health names a version) is reused; anything else on that port gets one health probe and this window starts its own server. `0` picks a free port for a server this window starts and adopts nothing. |
 | `timeoutMs` | `0` | Wall-clock cap per run, ms. 0 = none; `idleTimeoutMs` stops hung runs. |
 | `idleTimeoutMs` | `300000` | Stop a run after this long with no output, ms. 0 disables it. |
 | `model` | — | `provider/id` sent every turn. Empty: OpenCode picks. |

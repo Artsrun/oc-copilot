@@ -76,7 +76,7 @@ export async function handleControlCommand(p: ControlProps): Promise<vscode.Chat
                 return { metadata: { kind: "compact" } };
             }
             p.response.progress(`Compacting \`${p.state.id}\` — OpenCode summarises the conversation…`);
-            const work = compactSession(p.state.id, p.cwd, p.state.lastModel);
+            const work = compactSession(p.state.id, p.cwd, p.state.lastModel, true);
             const ok = p.token ? await untilStop(work, p.token) : await work;
             if (ok === undefined) {
                 logChannel.appendLine(`[${stamp()}] /compact: stopped while waiting; the summary may still finish on the server`);
@@ -170,7 +170,8 @@ export async function handleControlCommand(p: ControlProps): Promise<vscode.Chat
                 if (!serverBase) {
                     throw new Error("no server of this window yet");
                 }
-                await httpGetJson<{ healthy?: boolean }>(`${serverBase}/global/health`, 2000);
+                const health = await httpGetJson<{ healthy?: boolean; version?: unknown }>(`${serverBase}/global/health`, 2000);
+                const reported = typeof health.version === "string" ? ` · OpenCode ${truncate(health.version, 24)}` : "";
                 // One server serves many workspaces. The count for THIS directory
                 // is live proof that `?directory=` scoping reaches the server.
                 let scope = "";
@@ -183,7 +184,7 @@ export async function handleControlCommand(p: ControlProps): Promise<vscode.Chat
                 } catch {
                     // The list endpoint is advisory here; health already passed.
                 }
-                rows.push(`| server | ${mark("ok")} healthy on ${serverBase?.replace(/^http:\/\//, "")}${scope} |`);
+                rows.push(`| server | ${mark("ok")} healthy on ${serverBase?.replace(/^http:\/\//, "")}${reported}${scope} |`);
             } catch {
                 rows.push(`| server | not running _(started on demand)_ |`);
             }

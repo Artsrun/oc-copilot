@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.SETTLE_MS = exports.GROUP_MAX_ROWS = exports.stepLabel = exports.supportsTaskProgress = exports.SUBAGENT_EVERY_MS = exports.REASONING_EVERY_MS = exports.HEARTBEAT_MILESTONES_S = void 0;
+exports.SETTLE_MS = exports.CHILD_MAX_ROWS = exports.GROUP_MAX_ROWS = exports.stepLabel = exports.supportsTaskProgress = exports.SUBAGENT_EVERY_MS = exports.REASONING_EVERY_MS = exports.HEARTBEAT_MILESTONES_S = void 0;
 exports.nextMilestone = nextMilestone;
 exports.finishedTask = finishedTask;
 exports.startHeartbeat = startHeartbeat;
@@ -85,7 +85,14 @@ const stepLabel = (step, cwd) => {
 };
 exports.stepLabel = stepLabel;
 exports.GROUP_MAX_ROWS = 24;
+exports.CHILD_MAX_ROWS = 8;
 exports.SETTLE_MS = 120;
+const childRows = (kids) => {
+    const rows = [...(kids?.rows ?? [])];
+    return rows.length > exports.CHILD_MAX_ROWS
+        ? [...rows.slice(0, exports.CHILD_MAX_ROWS - 1), `${kids?.agent} › ${rows.length - exports.CHILD_MAX_ROWS + 1} more`]
+        : rows;
+};
 function startHeartbeat(response, initial, timeoutMs, cwd) {
     const everyMs = (0, core_1.config)().get("progressHeartbeatMs", 1000);
     const accordion = (0, core_1.config)().get("groupProgress", true) && (0, exports.supportsTaskProgress)(response);
@@ -147,7 +154,8 @@ function startHeartbeat(response, initial, timeoutMs, cwd) {
             return false;
         }
         const n = g.rows.length;
-        finishedTask(response, `${g.title} · ${n} step${n === 1 ? "" : "s"} · ${(0, core_1.secs)(Date.now() - g.openedAt)}`, g.rows, g.files);
+        const rows = g.rows.flatMap((row) => [row, ...childRows(g.children.get(row))]);
+        finishedTask(response, `${g.title} · ${n} step${n === 1 ? "" : "s"} · ${(0, core_1.secs)(Date.now() - g.openedAt)}`, rows, g.files);
         lastSentAt = Date.now();
         return true;
     };
@@ -159,6 +167,7 @@ function startHeartbeat(response, initial, timeoutMs, cwd) {
                 rows: [],
                 open: new Set(),
                 files: new Map(),
+                children: new Map(),
                 openedAt: Date.now()
             };
             pendingThought = "";
@@ -233,11 +242,22 @@ function startHeartbeat(response, initial, timeoutMs, cwd) {
             }
             setPhase(text);
         },
-        subagent: (text) => {
-            if (stopped || !text) {
+        subagent: ({ agent, task, step }) => {
+            if (stopped) {
                 return;
             }
-            sub = text;
+            const row = (0, exports.stepLabel)(step, cwd);
+            const parent = task ? (0, exports.stepLabel)({ tool: "task", detail: task, durationMs: undefined }, cwd) : "";
+            if (accordion && row && parent && group?.rows.includes(parent)) {
+                const kids = group.children.get(parent) ?? { agent, rows: new Set() };
+                kids.rows.add(`${agent} › ${row}`);
+                group.children.set(parent, kids);
+            }
+            if (step.status !== "running") {
+                return;
+            }
+            const detail = (0, core_1.truncate)(step.detail, 60);
+            sub = `${agent} › ${step.tool}${detail ? ` ${detail}` : ""}`;
             const now = Date.now();
             if (now - lastSubAt >= exports.SUBAGENT_EVERY_MS) {
                 lastSubAt = now;

@@ -306,45 +306,60 @@ export async function ensureServer(cwd?: string, onSlowStart?: (text: string) =>
     let port = own ? (managedPort as number) : fallbackPort ?? configured;
     let base = `http://${host}:${port}`;
 
-    const healthy = async (timeoutMs?: number): Promise<boolean> => {
+    // What a listener says at /global/health. A real OpenCode server names its
+    // version ({ healthy, version }, docs and 1.18.34); a program that only says
+    // {"healthy":true} is not one, and must not be handed prompts and paths.
+    const probe = async (timeoutMs?: number): Promise<{ healthy: boolean; version?: string }> => {
         try {
             const health = await httpGetJson<{ healthy?: boolean; version?: unknown }>(`${base}/global/health`, timeoutMs);
-            if (health.healthy === true && typeof health.version === "string") {
-                serverVersions.set(base, health.version);
+            const version = typeof health.version === "string" && health.version.trim() ? health.version.trim() : undefined;
+            if (health.healthy === true && version) {
+                serverVersions.set(base, version);
             }
-            return health.healthy === true;
+            return { healthy: health.healthy === true, version };
         } catch {
-            return false;
+            return { healthy: false };
         }
     };
+    const healthy = async (timeoutMs?: number): Promise<boolean> => (await probe(timeoutMs)).healthy;
 
-    if (!own && !fallbackPort && (await healthy())) {
-        // A server we can reach means no start is pending, so any message left
-        // over from an earlier failed spawn is now history. Clearing here and
-        // before the spawn below means the poll loop can only ever read a
-        // message belonging to the process it is actually waiting on.
-        serveSpawnError = undefined;
+    // Healthy, but no version: not adopted unless this window started it.
+    let foreign = false;
+    if (!own && !fallbackPort) {
+        const first = await probe();
         const startedHere = Boolean(serveProcess && serveProcess.exitCode === null);
-        if (!startedHere && !adoptedServers.has(base)) {
-            adoptedServers.add(base);
-            logChannel.appendLine(
-                `[${stamp()}] adopted an OpenCode server already listening on ${base}. ` +
-                `Requests are scoped to ${cwd ?? "this workspace"} via ?directory=.`
-            );
+        if (first.healthy && (startedHere || first.version)) {
+            // A server we can reach means no start is pending, so any message left
+            // over from an earlier failed spawn is now history. Clearing here and
+            // before the spawn below means the poll loop can only ever read a
+            // message belonging to the process it is actually waiting on.
+            serveSpawnError = undefined;
+            if (!startedHere && !adoptedServers.has(base)) {
+                adoptedServers.add(base);
+                logChannel.appendLine(
+                    `[${stamp()}] adopted an OpenCode server already listening on ${base}. ` +
+                    `Requests are scoped to ${cwd ?? "this workspace"} via ?directory=.`
+                );
+            }
+            return base;
         }
-        return base;
+        foreign = first.healthy;
     }
 
     if ((own || fallbackPort) && serveAlive() && (await healthy())) {
         return base;
     }
 
-    if (!own && !serveAlive() && (await portTaken(host, configured))) {
+    if (!own && !serveAlive() && (foreign || (await portTaken(host, configured)))) {
         fallbackPort = await freePort(host);
         logChannel.appendLine(
-            `[${stamp()}] port ${configured} accepts connections but did not answer /global/health — ` +
-            `a hung server or another program. This window starts its own server on port ${fallbackPort} ` +
-            `and sends nothing to ${configured}. serverPort 0 always does this.`
+            foreign
+                ? `[${stamp()}] port ${configured} answers /global/health but names no OpenCode version (a real server sends { healthy, version }) — ` +
+                `another program, or an OpenCode too old to say. This window starts its own server on port ${fallbackPort} ` +
+                `and sends nothing to ${configured} but that health probe. serverPort 0 always does this.`
+                : `[${stamp()}] port ${configured} accepts connections but did not answer /global/health — ` +
+                `a hung server or another program. This window starts its own server on port ${fallbackPort} ` +
+                `and sends nothing to ${configured}. serverPort 0 always does this.`
         );
         port = fallbackPort;
         base = `http://${host}:${port}`;
@@ -388,7 +403,7 @@ export async function ensureServer(cwd?: string, onSlowStart?: (text: string) =>
     const waitStarted = Date.now();
     const deadline = waitStarted + startupDeadlineMs;
     let told = false;
-    // Bail out early if the server process died instead of polling for 20s —
+    // Bail out early if the server process died instead of polling to the deadline —
     // checked after every poll AND at the deadline: a poll that waited out its
     // timeout must not turn a dead server into "did not become healthy".
     const exited = (): Error | undefined => {
@@ -423,6 +438,17 @@ export async function ensureServer(cwd?: string, onSlowStart?: (text: string) =>
         }
     }
     throw exited() ?? new Error(stillStarting(base, configured));
+}
+
+// Start or adopt the managed `opencode serve` for an attached CLI run or the
+// lanes. Never throws: a server that cannot start just means this turn runs cold.
+export async function warmServer(cwd: string, onSlowStart?: (text: string) => void): Promise<string | undefined> {
+    try {
+        return await ensureServer(cwd, onSlowStart);
+    } catch (error) {
+        logChannel.appendLine(`[${stamp()}] server unavailable, dev runs cold: ${error}`);
+        return undefined;
+    }
 }
 
 /** A live server that never answered: what it last said, and what to do. */

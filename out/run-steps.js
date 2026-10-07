@@ -57,9 +57,6 @@ function noteTask(part, metrics) {
     }
     const state = part.state;
     const meta = state?.metadata;
-    if (state?.status !== "error" && meta?.interrupted !== true) {
-        return;
-    }
     const input = state?.input;
     const agent = typeof input?.subagent_type === "string" ? input.subagent_type : "";
     if (!agent) {
@@ -67,6 +64,12 @@ function noteTask(part, metrics) {
     }
     const description = typeof input?.description === "string" ? input.description : "";
     const sessionId = typeof meta?.sessionId === "string" ? meta.sessionId : undefined;
+    if (state?.status !== "error" && meta?.interrupted !== true) {
+        if (state?.status === "completed" && metrics.failedTasks) {
+            metrics.failedTasks = metrics.failedTasks.filter((t) => !(sessionId && t.sessionId === sessionId) && !(t.agent === agent && t.description === description));
+        }
+        return;
+    }
     const list = (metrics.failedTasks ??= []);
     if (!list.some((t) => t.agent === agent && t.description === description)) {
         list.push({ agent, description, sessionId });

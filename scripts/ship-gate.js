@@ -52,6 +52,9 @@ const ALLOWED = [
     "extension/out/commands.js",
     "extension/out/chat-boot.js",
     "extension/out/chat.js",
+    // v205: handleChat split — the /parallel turn, and run / recover / post.
+    "extension/out/chat-parallel.js",
+    "extension/out/chat-turn.js",
     "extension/out/chat-commands.js",
     "extension/out/commands-registry.js",
     "extension/out/worktree.js",

@@ -1,8 +1,11 @@
-// Probe: ensureServer() reuses any listener whose GET /global/health answers
-// {"healthy": true}. What does the bridge then SEND to a listener that is not
-// OpenCode? Prints every request the fake received, with the prompt text found
-// (or not) in its body. Port is private to this probe; nothing is written to the
-// repo.
+// Probe: what does the bridge SEND to a listener on the server port that is not
+// OpenCode? The fake answers GET /global/health with {"healthy": true} and no
+// version. Before the identity check ensureServer() adopted it (measured, REFS):
+// POST /session and the prompt reached it. A listener that names no version is
+// not adopted any more (a real server sends { healthy, version }); this prints
+// what the fake still receives, which should be the health probe alone. The
+// executable does not exist, so a refusal cannot start a real server and spend
+// a model run. Port is private to this probe; nothing is written to the repo.
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -31,7 +34,7 @@ const server = http.createServer((req, res) => {
 });
 
 const settings = {
-    executable: process.argv[2] === "auto" ? "opencode-does-not-exist" : "opencode", transport: "server", serverHostname: "127.0.0.1", serverPort: process.argv[2] === "auto" ? 0 : PORT,
+    executable: "opencode-does-not-exist", transport: "server", serverHostname: "127.0.0.1", serverPort: process.argv[2] === "auto" ? 0 : PORT,
     timeoutMs: 3000, idleTimeoutMs: 0, sessionLogDir: "sessions", chatDensity: "minimal",
     autoCompact: false, clarifyVaguePrompts: false, autoCleanSessions: false, statusBar: false,
     progressHeartbeatMs: 0, sessionScope: "thread"

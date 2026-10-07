@@ -1799,7 +1799,7 @@ function collectConfigProperties(configuration) {
             res.end(JSON.stringify(payload));
         };
         if (req.url.startsWith("/global/health")) {
-            return send(200, { healthy: true });
+            return send(200, { healthy: true, version: "1.18.34" });
         }
         if (req.url.startsWith("/global/event")) {
             res.writeHead(200, { "content-type": "text/event-stream" });
@@ -2388,7 +2388,7 @@ function collectConfigProperties(configuration) {
         if (url.startsWith("/global/health")) {
             jbHealthGets += 1;
             res.writeHead(200, { "content-type": "application/json" });
-            return res.end(JSON.stringify({ healthy: true }));
+            return res.end(JSON.stringify({ healthy: true, version: "1.18.34" }));
         }
         if (url.startsWith("/global/event")) {
             res.writeHead(200, { "content-type": "text/event-stream" });
@@ -2477,7 +2477,7 @@ function collectConfigProperties(configuration) {
         const url = req.url || "";
         if (url.startsWith("/global/health")) {
             res.writeHead(200, { "content-type": "application/json" });
-            return res.end(JSON.stringify({ healthy: true }));
+            return res.end(JSON.stringify({ healthy: true, version: "1.18.34" }));
         }
         if (url.startsWith("/global/event")) {
             jdEventRequests += 1;
@@ -2671,7 +2671,7 @@ function collectConfigProperties(configuration) {
         const url = req.url || "";
         if (url.startsWith("/global/health")) {
             res.writeHead(200, { "content-type": "application/json" });
-            return res.end(JSON.stringify({ healthy: true }));
+            return res.end(JSON.stringify({ healthy: true, version: "1.18.34" }));
         }
         if (url.startsWith("/global/event")) {
             jfOrder.push("subscribe");
@@ -2750,7 +2750,7 @@ function collectConfigProperties(configuration) {
         const url = req.url || "";
         if (url.startsWith("/global/health")) {
             res.writeHead(200, { "content-type": "application/json" });
-            return res.end(JSON.stringify({ healthy: true }));
+            return res.end(JSON.stringify({ healthy: true, version: "1.18.34" }));
         }
         if (url.startsWith("/global/event")) {
             // Accepted and never answered: no headers, no body, no close.
@@ -3126,7 +3126,7 @@ const lbProvider = (global.__participant || {}).followupProvider;
                 res.writeHead(code, { "content-type": "application/json" });
                 res.end(JSON.stringify(payload));
             };
-            if (u.pathname === "/global/health") return send(200, { healthy: true });
+            if (u.pathname === "/global/health") return send(200, { healthy: true, version: "1.18.34" });
             if (u.pathname === "/global/event") {
                 res.writeHead(200, { "content-type": "text/event-stream" });
                 res.write(": hi\n\n");
@@ -4075,7 +4075,7 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
                 res.writeHead(code, { "content-type": "application/json" });
                 res.end(JSON.stringify(payload));
             };
-            if (u.pathname === "/global/health") return send(200, { healthy: true });
+            if (u.pathname === "/global/health") return send(200, { healthy: true, version: "1.18.34" });
             if (u.pathname === "/global/event") {
                 res.writeHead(200, { "content-type": "text/event-stream" });
                 res.write(": hi\n\n");
@@ -4339,7 +4339,7 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
     // PA (planAgent), HQ (headless asks), DM (which model answers). One fake
     // server records the wire: what the bridge sent, and what it replied.
     {
-        const v5 = { agentCalls: [], sessions: [], messages: [], replies: [], summarize: [], sse: [], asks: [], mode: "answer", sessionMsgs: {}, held: [], patches: [], aborts: [], children: {}, preEmit: [] };
+        const v5 = { agentCalls: [], sessions: [], messages: [], replies: [], summarize: [], sse: [], asks: [], mode: "answer", sessionMsgs: {}, held: [], patches: [], aborts: [], children: {}, preEmit: [], confirm: true, swallow: {}, askSession: {} };
         let v5Next = 0;
         // What GET /agent returns on 1.18.32 (trimmed): name, mode, hidden.
         const V5_AGENTS = [
@@ -4372,7 +4372,7 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
                 res.writeHead(code, { "content-type": "application/json" });
                 res.end(JSON.stringify(payload));
             };
-            if (u.pathname === "/global/health") return send(200, v5.version ? { healthy: true, version: v5.version } : { healthy: true });
+            if (u.pathname === "/global/health") return send(200, { healthy: true, version: v5.version ?? "1.18.34" });
             if (u.pathname === "/global/event") {
                 res.writeHead(200, { "content-type": "text/event-stream" });
                 res.write(": hi\n\n");
@@ -4407,9 +4407,24 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
                     return send(200, { id });
                 }
                 const reply = u.pathname.match(/^\/(permission|question)\/([^/]+)\/reply$/);
-                if (reply && req.method === "POST") {
-                    v5.replies.push({ kind: reply[1], id: reply[2], body, dir });
-                    v5Waiters.get(reply[2])?.();
+                const legacy = u.pathname.match(/^\/session\/([^/]+)\/permissions\/([^/]+)$/);
+                if ((reply || legacy) && req.method === "POST") {
+                    const askId = reply ? reply[2] : legacy[2];
+                    v5.replies.push({ kind: reply ? reply[1] : "legacy", id: askId, sid: legacy?.[1], body, dir });
+                    // #15386: a reply to an ask that is not pending answers 200/true and does nothing.
+                    if (v5.swallow[askId] > 0) {
+                        v5.swallow[askId] -= 1;
+                        return send(200, true);
+                    }
+                    v5Waiters.get(askId)?.();
+                    if (v5.confirm && (legacy || reply[1] === "permission")) {
+                        v5Emit({
+                            type: "permission.replied",
+                            properties: legacy
+                                ? { sessionID: legacy[1], permissionID: askId, response: body.response }
+                                : { sessionID: v5.askSession[askId], requestID: askId, reply: body.reply }
+                        });
+                    }
                     return send(200, true);
                 }
                 const sum = u.pathname.match(/^\/session\/([^/]+)\/summarize$/);
@@ -4468,6 +4483,7 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
                     if (v5.mode === "asks") {
                         for (const ask of v5.asks) {
                             const props = { ...ask.properties, sessionID: ask.properties.sessionID ?? sid };
+                            if (props.id) v5.askSession[props.id] = props.sessionID;
                             v5Emit({ type: ask.type, properties: props });
                             if (ask.type !== "session.created") {
                                 // A real server waits for good; the fake gives up
@@ -4734,6 +4750,61 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         const hq2 = await v5Turn("touch /tmp/x for hq", { command: "dev" });
         add("HQ an editing turn on the server approves once, like `run --auto`", rep("per_d1")?.body?.reply === "once" && !("message" in (rep("per_d1")?.body ?? {})) && /answered by/.test(hq2.md));
 
+        // The pre-1.1 ask event (the ask is the event's own properties) is answered at the
+        // session's own route with { response }; a server that sends both shapes is answered once.
+        const hqLegacySid = `ses_v5${v5.sessions.length + 1}`;
+        v5.asks = [{ type: "permission.updated", properties: { id: "per_l1", type: "bash", pattern: ["rm -rf /tmp/x"], title: "run rm" } }];
+        v5.replies.length = 0;
+        const hq5 = await v5Turn("legacy ask for hq");
+        add(
+            "HQ a pre-1.1 permission.updated ask is answered at the session's own route: reject on a read-only turn",
+            /answered by/.test(hq5.md) && rep("per_l1")?.kind === "legacy" && rep("per_l1")?.sid === hqLegacySid &&
+                JSON.stringify(rep("per_l1")?.body) === JSON.stringify({ response: "reject" }) && rep("per_l1")?.dir === work
+        );
+        v5.asks = [{ type: "permission.updated", properties: { id: "per_l2", type: "edit", pattern: "src/a.ts", title: "edit a.ts" } }];
+        v5.replies.length = 0;
+        const hq6 = await v5Turn("legacy edit ask for hq", { command: "dev" });
+        add("HQ …an editing turn approves it once", JSON.stringify(rep("per_l2")?.body) === JSON.stringify({ response: "once" }) && /answered by/.test(hq6.md));
+        v5.asks = [
+            { type: "permission.updated", properties: { id: "per_dup", type: "bash", pattern: "ls" }, wait: 50 },
+            { type: "permission.asked", properties: { id: "per_dup", permission: "bash", patterns: ["ls"] }, wait: 50 }
+        ];
+        v5.replies.length = 0;
+        await v5Turn("both shapes for hq");
+        add("HQ a server that sends both ask shapes is answered once per request", v5.replies.filter((r) => r.id === "per_dup").length === 1);
+
+        // A reply is not proof: 200/true also answers a reply to an ask that is not pending (#15386).
+        // Only permission.replied says it landed; without it the reply is sent once more, then given up on.
+        ext.__test.setReplyConfirmWait(300);
+        v5.swallow = { per_s1: 1 };
+        v5.asks = [{ type: "permission.asked", properties: { id: "per_s1", permission: "external_directory", patterns: ["/etc/*"] }, wait: 5000 }];
+        v5.replies.length = 0;
+        const hqS1T0 = Date.now();
+        const hq7 = await v5Turn("swallowed reply for hq");
+        add(
+            `HQ a reply the server took (200) but did not apply is sent once more when permission.replied does not come (${Date.now() - hqS1T0}ms)`,
+            /answered by/.test(hq7.md) && v5.replies.filter((r) => r.id === "per_s1").length === 2
+        );
+        v5.asks = [
+            { type: "permission.asked", properties: { id: "per_s2", permission: "external_directory", patterns: ["/etc/*"] }, wait: 3000 },
+            { type: "message.updated", properties: { info: { id: "msg_idle", role: "user" } }, wait: 900 }
+        ];
+        v5.replies.length = 0;
+        await v5Turn("confirmed reply for hq");
+        add("HQ …a confirmed reply is not sent again, however long the turn runs on", v5.replies.filter((r) => r.id === "per_s2").length === 1);
+        v5.swallow = { per_s3: 99 };
+        v5.asks = [{ type: "permission.asked", properties: { id: "per_s3", permission: "external_directory", patterns: ["/etc/*"] }, wait: 1200 }];
+        v5.replies.length = 0;
+        const hqLogFrom = logLines.length;
+        const hq9 = await v5Turn("never confirmed for hq");
+        add(
+            "HQ …a reply that is never confirmed is sent once more, not forever, and the log says so",
+            /answered by/.test(hq9.md) && v5.replies.filter((r) => r.id === "per_s3").length === 2 &&
+                logLines.slice(hqLogFrom).some((l) => /permission per_s3: still no permission\.replied/.test(l))
+        );
+        v5.swallow = {};
+        ext.__test.setReplyConfirmWait();
+
         // Attached: the CLI answers permission asks itself; questions it never does.
         v5.mode = "answer";
         const attachedFake = (name, query) =>
@@ -4875,6 +4946,36 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         const rt2 = await v5Turn("explain auth with no subagent for rt");
         add("RT no failed task, no Resume chip", !rt2.result?.metadata?.failedTask && !chipsOf(rt2.result).some((c) => /Resume/.test(c.label)));
 
+        // A task that failed and then completed in the same turn leaves nothing to resume.
+        const rtrSid = `ses_v5${v5.sessions.length + 1}`;
+        const rtrInput = { subagent_type: "explore", description: "find auth handlers", prompt: "look" };
+        v5.mode = "asks";
+        v5.asks = [
+            { type: "message.part.updated", properties: { part: { id: "prt_r1", sessionID: rtrSid, type: "tool", tool: "task", state: { status: "error", error: "provider overloaded", input: rtrInput, metadata: { sessionId: "ses_rt_child" }, time: { start: 0, end: 9 } } } }, wait: 1 },
+            { type: "message.part.updated", properties: { part: { id: "prt_r2", sessionID: rtrSid, type: "tool", tool: "task", state: { status: "completed", input: rtrInput, output: "found 3", metadata: { sessionId: "ses_rt_child2" }, time: { start: 10, end: 90 } } } }, wait: 1 }
+        ];
+        const rt3 = await v5Turn("explain auth with a retried subagent for rt");
+        add("RT a task that failed and then completed in the turn leaves no Resume chip", /answered by/.test(rt3.md) && !rt3.result?.metadata?.failedTask && !chipsOf(rt3.result).some((c) => /Resume/.test(c.label)));
+        v5.asks = [];
+        v5.mode = "answer";
+        const rtPart = (id, status, description = "find auth handlers", sessionId = "ses_k", meta = {}) => ({ id, type: "tool", tool: "task", state: { status, input: { subagent_type: "explore", description }, metadata: { sessionId, ...meta } } });
+        const rtNote = (...parts) => {
+            const m = {};
+            parts.forEach((p) => ext.__test.noteTask(p, m));
+            return m.failedTasks ?? [];
+        };
+        add(
+            "RT a completed task clears its failure: the same call retried, or the same child resumed under another description",
+            rtNote(rtPart("a", "error"), rtPart("b", "completed", "find auth handlers", "ses_k2")).length === 0 &&
+                rtNote(rtPart("a", "error"), rtPart("b", "completed", "find the auth handlers again", "ses_k")).length === 0
+        );
+        add(
+            "RT an interrupted task counts; an unrelated completed task clears nothing; a failure after a completion stays",
+            rtNote(rtPart("a", "running", "find auth handlers", "ses_k", { interrupted: true })).length === 1 &&
+                rtNote(rtPart("a", "error"), rtPart("b", "completed", "map the tests", "ses_other")).length === 1 &&
+                rtNote(rtPart("b", "completed"), rtPart("a", "error")).length === 1
+        );
+
         // ---- CP: /compact, and a Compact chip when autocompact is off ----
         v5.summarize.length = 0;
         v5.tokens = { input: 5, output: 2, reasoning: 0, total: 70000, cache: { read: 0, write: 0 } };
@@ -4894,6 +4995,25 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         add("CP /compact in a chat with no session runs nothing", /Nothing to compact/.test(cp4.md) && v5.summarize.length === 1);
         add("CP /compact is a control command, in /help and the manifest", ext.__test.slashCommands.includes("compact") && /`\/compact`/.test(cp4.md === "" ? "" : (await v5Turn("", { command: "help" })).md));
 
+        // After a failed server start autocompact backs off for minutes; a /compact the user typed does not.
+        const cbFree = await new Promise((resolve) => {
+            const probe = http.createServer().listen(0, "127.0.0.1", () => {
+                const p = probe.address().port;
+                probe.close(() => resolve(p));
+            });
+        });
+        const cbSaved = { exe: settings.executable, port: settings.serverPort };
+        Object.assign(settings, { executable: writeFake("fake-cb-die.js", [], "if (process.argv.includes('serve')) process.exit(1);\n"), serverPort: cbFree });
+        const cbFailed = await ext.__test.compactSession("ses_cb1", work, "given/model");
+        Object.assign(settings, { executable: cbSaved.exe, serverPort: cbSaved.port });
+        const cbBefore = v5.summarize.length;
+        const cbAuto = await ext.__test.compactSession("ses_cb1", work, "given/model");
+        const cbAsked = await v5Turn("", { command: "compact" }, v5Hist(cp1));
+        add(
+            "CP autocompact waits out a failed server start; a typed /compact does not",
+            cbFailed === false && cbAuto === false && v5.summarize.length === cbBefore + 1 && /Compacted/.test(cbAsked.md)
+        );
+
         // ---- SU: a working subagent keeps its parent alive, and is shown ----
         v5.mode = "asks";
         settings.idleTimeoutMs = 1200;
@@ -4911,7 +5031,49 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
             su1.h.main.parts.some((p) => /explore › grep redirect/.test(String(p.content ?? ""))) ||
                 su1.h.main.tasks.some((t) => t && /explore › grep redirect/.test(String(t.title ?? "")))
         );
+        // Any event of the subagent's session is activity, not only its parts.
+        const su2Sid = `ses_v5${v5.sessions.length + 1}`;
+        const su2Msg = { type: "message.updated", properties: { sessionID: "ses_su2_kid", info: { id: "msg_su2", sessionID: "ses_su2_kid", role: "assistant", cost: 0.001 } }, wait: 700 };
+        v5.asks = [{ type: "session.created", properties: { info: { id: "ses_su2_kid", parentID: su2Sid, title: "find it (@explore subagent)" } } }, su2Msg, su2Msg, su2Msg];
+        const su2 = await v5Turn("explain with a quiet subagent for su");
+        add("SU a subagent that only updates its messages also keeps the parent from the idle cap", /answered by/.test(su2.md) && !su2.result?.metadata?.timedOut);
         settings.idleTimeoutMs = 0;
+
+        // ---- SR: a subagent's calls nest under its task row in the finished accordion ----
+        const srSid = `ses_v5${v5.sessions.length + 1}`;
+        const srInput = { subagent_type: "explore", description: "map the auth flow" };
+        const srPart = (id, sessionID, tool, input, done) => ({
+            type: "message.part.updated",
+            properties: { part: { id, sessionID, type: "tool", tool, state: { status: done ? "completed" : "running", input, ...(done ? { output: "ok", time: { start: 0, end: 5 } } : {}) } } },
+            wait: 1
+        });
+        v5.asks = [
+            { type: "message.part.updated", properties: { part: { id: "prt_srt", sessionID: srSid, type: "tool", tool: "task", state: { status: "running", input: srInput, metadata: { sessionId: "ses_sr_kid" }, time: { start: Date.now() } } } }, wait: 1 },
+            { type: "session.created", properties: { info: { id: "ses_sr_kid", parentID: srSid, title: "map the auth flow (@explore subagent)" } } },
+            // A child no task call names: its calls stay off the accordion.
+            { type: "session.created", properties: { info: { id: "ses_sr_anon", parentID: srSid, title: "side work (@general subagent)" } } },
+            srPart("prt_k1", "ses_sr_kid", "read", { filePath: "src/auth.ts" }, false),
+            srPart("prt_k1", "ses_sr_kid", "read", { filePath: "src/auth.ts" }, true),
+            srPart("prt_a1", "ses_sr_anon", "read", { filePath: "src/other.ts" }, true),
+            srPart("prt_k2", "ses_sr_kid", "grep", { pattern: "redirect" }, true),
+            ...Array.from({ length: 10 }, (_, i) => srPart(`prt_g${i}`, "ses_sr_kid", "grep", { pattern: `token${i}` }, true)),
+            { type: "message.part.updated", properties: { part: { id: "prt_srt", sessionID: srSid, type: "tool", tool: "task", state: { status: "completed", input: srInput, output: "found it", metadata: { sessionId: "ses_sr_kid" }, time: { start: 0, end: 90 } } } }, wait: 1 }
+        ];
+        const sr = await v5Turn("explain with a busy subagent for sr");
+        const srTask = sr.h.main.tasks.find((t) => t && t.rows.includes("task: explore: map the auth flow"));
+        const srRows = srTask?.rows ?? [];
+        const srAt = srRows.indexOf("task: explore: map the auth flow");
+        const srKids = srRows.slice(srAt + 1);
+        add(
+            `SR a subagent's calls follow its task row, once per call, as plain rows (${JSON.stringify(srRows.slice(0, 4))})`,
+            /answered by/.test(sr.md) && srAt >= 0 && srKids[0] === "explore › read: src/auth.ts" && srKids[1] === "explore › grep: redirect" &&
+                srRows.filter((r) => /src\/auth\.ts/.test(r)).length === 1
+        );
+        add(
+            `SR …capped at ${ext.__test.CHILD_MAX_ROWS}, the last row counting the rest (${srKids.length} rows, last ${JSON.stringify(srKids[srKids.length - 1])})`,
+            srKids.length === ext.__test.CHILD_MAX_ROWS && srKids[srKids.length - 1] === `explore › ${12 - ext.__test.CHILD_MAX_ROWS + 1} more`
+        );
+        add("SR a child no task call names gets no row, and the rows do not count as steps", !srRows.some((r) => /general ›|other\.ts/.test(r)) && / · 1 step · /.test(srTask?.title ?? ""));
         v5.asks = [];
         v5.mode = "answer";
 
@@ -5366,6 +5528,28 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         await global.__handler({ prompt: "where are the auth handlers in sg" }, { history: [] }, sgSt.response, sgSt.token);
         add("SG the chat row names the subagent", sgSt.progress.concat(sgSt.chatMarkdown).some((l) => /explore: find auth handlers/.test(plain(l))));
 
+        // RT over the CLI transport: the same failed-task mark, cleared by a later completed call.
+        const rtcInput = { subagent_type: "explore", description: "find auth handlers", prompt: "Search the repo" };
+        const rtcFailed = { type: "tool_use", sessionID: "ses_rtc", part: { id: "prt_c1", tool: "task", state: { status: "error", error: "provider overloaded", input: rtcInput, metadata: { sessionId: "ses_rtc_child" }, time: { start: 0, end: 9 } } } };
+        const rtcDone = { type: "tool_use", sessionID: "ses_rtc", part: { id: "prt_c2", tool: "task", state: { status: "completed", input: rtcInput, output: "found 3", metadata: { sessionId: "ses_rtc_child2" }, time: { start: 10, end: 90 } } } };
+        const rtcEnd = [
+            { type: "text", sessionID: "ses_rtc", part: { text: "rtc answer" } },
+            { type: "step_finish", sessionID: "ses_rtc", part: { reason: "stop", cost: 0, tokens: { input: 1, output: 1, reasoning: 0, total: 2, cache: { read: 0, write: 0 } } } }
+        ];
+        const rtcTurn = async (name, events, prompt) => {
+            settings.executable = writeFake(name, events);
+            const st = stream();
+            const result = await global.__handler({ prompt }, { history: [] }, st.response, st.token);
+            return { result, chips: global.__participant.followupProvider.provideFollowups(result, {}, st.token) || [] };
+        };
+        const rtc1 = await rtcTurn("fake-rtc1.js", [rtcFailed, ...rtcEnd], "where are the auth handlers in rtc one");
+        add(
+            `RT a failed task over the CLI transport leaves its mark and a first Resume chip (${JSON.stringify(rtc1.result?.metadata?.failedTask)})`,
+            rtc1.result?.metadata?.failedTask?.taskId === "ses_rtc_child" && /Resume explore$/.test(rtc1.chips[0]?.label ?? "")
+        );
+        const rtc2 = await rtcTurn("fake-rtc2.js", [rtcFailed, rtcDone, ...rtcEnd], "where are the auth handlers in rtc two");
+        add("RT …and over the CLI transport a task that then completed leaves none", !rtc2.result?.metadata?.failedTask && !rtc2.chips.some((c) => /Resume/.test(c.label)));
+
         Object.assign(settings, efSaved);
         globalMemento.clear();
         memento.clear();
@@ -5399,6 +5583,68 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         add("FT no higher level: no Dig deeper", !ft("plan", "I'm not sure whether tax.ts rounds again.", []).some((c) => /Dig deeper/.test(c.label)));
         add("FT a settled answer: no Dig deeper", !ft("plan", "The rounding happens in subtotal() and nowhere else.", [], "high").some((c) => /Dig deeper/.test(c.label)));
         add("FT a strange level name never reaches a prompt", !ft("plan", "I'm not sure why it fails.", [], "high; rm -rf").some((c) => /Dig deeper/.test(c.label)));
+    }
+
+    // BK: chip backoff per kind, driven through real turns in one thread. A cue
+    // chip passed over three times running is held for 2 messages, then 4; a
+    // chip taken clears its kind; a control command between turns is neither;
+    // the agent's own offer is never held.
+    {
+        globalMemento.clear();
+        ext.__test.resetChipBackoff();
+        const bkSaved = settings.executable;
+        settings.executable = writeFake("fake-bk.js", [
+            { type: "tool_use", sessionID: "ses_bk", part: { id: "prt_bk", tool: "edit", state: { status: "completed", input: { filePath: "src/cart.ts" }, output: "ok", time: { start: 0, end: 5 } } } },
+            { type: "text", sessionID: "ses_bk", part: { text: "Updated the rounding in cart.ts. Want me to add a regression test for the rounding?" } },
+            { type: "step_finish", sessionID: "ses_bk", part: { reason: "stop", cost: 0, tokens: { input: 1, output: 1, reasoning: 0, total: 2, cache: { read: 0, write: 0 } } } }
+        ]);
+        const bkHistory = [];
+        const bkTurn = async (request) => {
+            const st = stream();
+            const result = await global.__handler({ command: "dev", ...request }, { history: [...bkHistory] }, st.response, st.token);
+            bkHistory.push(turnOf(result.metadata));
+            return { result, chips: global.__participant.followupProvider.provideFollowups(result, {}, st.token) || [] };
+        };
+        const typed = (n) => bkTurn({ prompt: `update the rounding in src/cart.ts, pass ${n}` });
+        const offer = (b) => b.chips.some((c) => /regression test/.test(c.label));
+        const review = (b) => b.chips.some((c) => /Review cart\.ts/.test(c.label));
+        const tests = (b) => b.chips.some((c) => /Test it/.test(c.label));
+        const labels = (b) => b.chips.map((c) => c.label).join(" | ");
+        const bk1 = await typed(1);
+        add(
+            `BK a dev turn that edited offers the agent's offer, Review and Test it (${labels(bk1)})`,
+            bk1.result?.metadata?.sessionId === "ses_bk" && offer(bk1) && review(bk1) && tests(bk1)
+        );
+        add("BK a chip reaches the host without its kind", bk1.chips.every((c) => !("kind" in c)));
+        await typed(2);
+        const bk3 = await typed(3);
+        add("BK passed over twice: nothing held yet", review(bk3) && tests(bk3));
+        // A /help, then Test it from the turn before it: the click still counts
+        // as taken. Counted as a pass, /help would hold both kinds right here.
+        const bkHelpSt = stream();
+        const bkHelp = await global.__handler({ command: "help", prompt: "" }, { history: [...bkHistory] }, bkHelpSt.response, bkHelpSt.token);
+        bkHistory.push(turnOf(bkHelp.metadata));
+        const bkTest = bk3.chips.find((c) => /Test it/.test(c.label));
+        const bk4 = await bkTurn({ command: bkTest?.command, prompt: bkTest?.prompt ?? "" });
+        add(`BK a chip taken after a control command counts as taken, and holds nothing (${labels(bk4)})`, review(bk4) && tests(bk4));
+        const bk5 = await typed(5);
+        add(
+            `BK Review passed over three times running is held back; Test it, taken since, and the agent's offer are not (${labels(bk5)})`,
+            !review(bk5) && tests(bk5) && offer(bk5)
+        );
+        const bk6 = await typed(6);
+        add("BK …still held on the next message", !review(bk6) && tests(bk6));
+        const bk7 = await typed(7);
+        add(`BK …back after two messages, while Test it reaches its own third pass (${labels(bk7)})`, review(bk7) && !tests(bk7) && offer(bk7));
+        const bk8 = await typed(8);
+        const bkState = globalMemento.get("opencodeCopilotBridge.chipBackoff");
+        add(
+            `BK a kind passed over again after its hold is held twice as long (${JSON.stringify(bkState)})`,
+            !review(bk8) && !tests(bk8) && offer(bk8) && bkState?.kinds?.review1?.passed === 4 && bkState.kinds.review1.until - bkState.message === 4
+        );
+        settings.executable = bkSaved;
+        globalMemento.clear();
+        ext.__test.resetChipBackoff();
     }
 
     // deactivate() runs near the end (AGENTS.md §5): the groups after it must not
@@ -5833,6 +6079,35 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         add("PL three unknown lane models cost one catalog fetch", plAll().filter(plIsCatalog).length === 1 && plRuns().length === 1 && (pl5b.match(/_\(not run\)_/g) || []).length === 3);
         const pl6 = await plTurn("models:a1,a2,a3,a4,a5,a6,a7 x".replace(/a(\d)/g, "acme-gateway/M$1"));
         add("PL models: has no cap either", plRuns().length === 7 && pl6.includes("on 7 models"));
+
+        // CL: one task on several models gets Compare lanes first; the chip
+        // brings the lane answers in as Merge does, and says so after a reload.
+        const clTurn = async (prompt, command = "parallel") => {
+            fs.rmSync(plLog, { force: true });
+            memento.clear();
+            const st = stream();
+            const result = await global.__handler({ prompt, command }, {}, st.response, st.token);
+            return { md: plain(st.chatMarkdown.join("")), result, chips: global.__participant.followupProvider.provideFollowups(result, {}, st.token) || [] };
+        };
+        const clLabel = (k) => `${FJ.chips[k].kao} ${FJ.chips[k].label}`;
+        const cl1 = await clTurn("models:tundra,oasis review the auth flow");
+        const clCompare = cl1.chips[0];
+        add(
+            `CL models: with two answers offers Compare lanes, then Merge lanes (${cl1.chips.map((c) => c.label).join(" | ")})`,
+            cl1.result?.metadata?.laneSameTask === true && clCompare?.label === clLabel("COMPARE_LANES") && clCompare.command === "plan" &&
+                cl1.chips[1]?.label === clLabel("MERGE_LANES") && /\*\*Compare\*\* or \*\*Merge lanes\*\* below/.test(cl1.md)
+        );
+        const cl2 = await clTurn("m:tundra review auth | m:oasis read the logs");
+        add("CL different tasks: Merge lanes only", !cl2.result?.metadata?.laneSameTask && !cl2.chips.some((c) => c.label === clLabel("COMPARE_LANES")) && cl2.chips.some((c) => c.label === clLabel("MERGE_LANES")));
+        const cl3 = await clTurn(clCompare?.prompt ?? "", clCompare?.command);
+        const clTask = plRuns()[0]?.[plRuns()[0].length - 1] ?? "";
+        add(
+            "CL the Compare chip runs one plan turn with both lane answers folded in",
+            cl3.result?.metadata?.kind === "plan" && plRuns().length === 1 && clTask.startsWith("Compare the lane answers from run") &&
+                (clTask.match(/## Lane \d/g) || []).length === 2 && /lane answer/.test(clTask)
+        );
+        const cl4 = await clTurn(FJ.prompts.COMPARE_LANES.replace("{run}", "Lgone1").replace("{tail}", FJ.tail), "plan");
+        add("CL a Compare chip after a reload runs nothing and says why", plRuns().length === 0 && cl4.md.includes(FJ.prompts.LANES_GONE) && cl4.result?.metadata?.kind === "idle");
         settings.executable = happy;
         globalMemento.clear();
     }
@@ -5982,7 +6257,7 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
                 const u = new URL(req.url, "http://x");
                 slSeen.push({ method: req.method, path: u.pathname, query: u.search, body: body ? JSON.parse(body) : undefined });
                 const send = (code, v) => { res.writeHead(code, { "content-type": "application/json" }); res.end(JSON.stringify(v)); };
-                if (u.pathname === "/global/health") return send(200, { healthy: true });
+                if (u.pathname === "/global/health") return send(200, { healthy: true, version: "1.18.34" });
                 if (u.pathname === "/session/status") return send(200, slBusy);
                 if (req.method === "GET" && u.pathname === "/session") return slListFail ? send(500, { name: "UnknownError", data: {} }) : send(200, slSessions);
                 if (req.method === "GET" && /\/message$/.test(u.pathname)) return send(200, [
@@ -6264,6 +6539,58 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         await new Promise((r) => svSquat.close(r));
         svSquat.closeAllConnections?.();
 
+        // ID: a listener on the fixed port that answers {"healthy":true} but names no version is not
+        // OpenCode and is never adopted (measured by probe-server-adoption.js: it got the prompt);
+        // the same listener with a version is. A server this window starts needs no version.
+        const idSeen = [];
+        const idListener = (version) =>
+            http.createServer((req, res) => {
+                idSeen.push(req.url);
+                res.setHeader("content-type", "application/json");
+                res.end(JSON.stringify(req.url.startsWith("/global/health") ? (version ? { healthy: true, version } : { healthy: true }) : {}));
+            });
+        const idAttachOf = () => {
+            const file = path.join(work, "fake-sv-serve.js.argv");
+            if (!fs.existsSync(file)) {
+                return NaN;
+            }
+            const argv = JSON.parse(fs.readFileSync(file, "utf8"));
+            return Number((argv[argv.indexOf("--attach") + 1] || "").split(":").pop());
+        };
+        const idImpostor = idListener(undefined);
+        await new Promise((r) => idImpostor.listen(0, "127.0.0.1", r));
+        const idImpostorPort = idImpostor.address().port;
+        settings.serverPort = idImpostorPort;
+        fs.rmSync(path.join(work, "fake-sv-serve.js.argv"), { force: true });
+        const idLog = logLines.length;
+        const idStream = stream();
+        await global.__handler({ prompt: "a for id | b for id", command: "parallel" }, {}, idStream.response, idStream.token);
+        const idOwn = idAttachOf();
+        add(
+            "ID a listener that answers healthy but names no version is not adopted: this window starts its own server",
+            Number.isInteger(idOwn) && idOwn > 0 && idOwn !== idImpostorPort &&
+                logLines.slice(idLog).some((l) => new RegExp(`port ${idImpostorPort} answers /global/health but names no OpenCode version`).test(l))
+        );
+        add(`ID …and it receives only the health probe (${idSeen.join(",")})`, idSeen.length >= 1 && idSeen.every((u) => u === "/global/health"));
+        ext.deactivate();
+        await new Promise((r) => idImpostor.close(r));
+        idImpostor.closeAllConnections?.();
+        const idReal = idListener("1.18.34");
+        await new Promise((r) => idReal.listen(0, "127.0.0.1", r));
+        const idRealPort = idReal.address().port;
+        settings.serverPort = idRealPort;
+        fs.rmSync(path.join(work, "fake-sv-serve.js.argv"), { force: true });
+        const idLog2 = logLines.length;
+        const idStream2 = stream();
+        await global.__handler({ prompt: "a for id two | b for id two", command: "parallel" }, {}, idStream2.response, idStream2.token);
+        add(
+            "ID …a listener that names its version is adopted, and the lanes attach to it",
+            idAttachOf() === idRealPort && logLines.slice(idLog2).some((l) => new RegExp(`adopted an OpenCode server already listening on http://127\\.0\\.0\\.1:${idRealPort}`).test(l))
+        );
+        ext.deactivate();
+        await new Promise((r) => idReal.close(r));
+        idReal.closeAllConnections?.();
+
         // A server that exits names why, even when the last health poll was the
         // one waiting at the deadline.
         const svDie = writeFake("fake-sv-die.js", [], "if (process.argv.includes('serve')) { process.stderr.write('Error: listen EADDRINUSE: address already in use 127.0.0.1:1\\n'); process.exit(1); }\n");
@@ -6346,6 +6673,15 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         const sb3Res = await sb3Run;
         add(`SB Stop during a server boot ends /sessions inside the second (${Date.now() - sb3T0}ms)`, Date.now() - sb3T0 < 1300 && sb3Res?.metadata?.cancelled === true);
         ext.deactivate();
+
+        // A /parallel turn warms the server before its heartbeat exists: it said nothing for the whole boot.
+        const sb4Transport = settings.transport;
+        Object.assign(settings, { executable: sbServe("fake-sb-lanes.js", 2200), serverPort: await sbPort(), transport: "server" });
+        const sb4 = stream();
+        await global.__handler({ prompt: "a for sb | b for sb", command: "parallel" }, {}, sb4.response, sb4.token);
+        add("SB a /parallel turn that waits on a first boot says so", sb4.progress.some((t) => /Starting the OpenCode server/.test(t)));
+        ext.deactivate();
+        settings.transport = sb4Transport;
         Object.assign(settings, { executable: sbSaved.exe, serverPort: sbSaved.port, serverStartupPollMs: sbSaved.poll });
 
         // SA: serverPort 0 (the default) starts the server on a free port of the
