@@ -3,6 +3,47 @@
 Full release history, newest first; releases before the last one are condensed
 to their summary and headlines. The README ships the last five.
 
+### 0.0.207
+
+Speed: the autocompact collision, streaming, a prewarmed server; follow-ups that
+fit the failure. One setting added (`prewarmServer`), none removed.
+
+- **Fixed: autocompact ran an agent turn nobody saw, then fought the next
+  message.** `/summarize` was sent with `auto: true`; OpenCode 1.18.32
+  (`compaction.ts`) ends an auto compaction with a synthetic "Continue if you
+  have next steps…" and loops once more. The summary alone keeps the session
+  busy (`prompt.ts`), so the next message aborted it (`busySessionPolicy:
+  abort` — warning, ≤3 s poll, summary lost, re-triggered next turn) or queued
+  behind it. Now `auto: false` (OpenCode's own `/compact`), one summary per
+  session at a time, and the next turn of that session waits ≤60 s for it
+  (Stop-able; `pre-run: … summary Nms`). The turn-count trigger needs a 20k
+  context (or an unmeasured one). Checks `CQ`, `DM`.
+- **Answers stream.** 1.18.32 sends text and reasoning as
+  `message.part.delta` (`partID`, no `part`) and the whole part once at its
+  end; the server path read only `part.updated`, and `opencode run --format
+  json` prints a part only at `time.end`. The server path now streams the
+  deltas; an attached `/dev` run takes them from the SSE it already watches and
+  stdout adds only the rest (a late delta is dropped). Two gates keep the
+  old whole-text guarantees over deltas: leaked context blocks and a prompt
+  said back. Checks `DS`, `DT`, `GT`.
+- **`prewarmServer`** (default on): `onStartupFinished` activation starts or
+  adopts the server 3 s later — trusted workspaces only (OpenCode loads the
+  folder's config and plugins), never on `transport: cli`. A start in flight
+  is shared: a first turn mid-boot joins it (one spawn) and is told it waits.
+  Checks `PV`.
+- **Provider retries are named**: `session.status` `retry` → `Provider retry
+  2 · Rate limited · next in 8s` on the live line and in the log; the next news
+  puts the opening line back quietly. Both transports. Checks `DS`, `GT`.
+- **Follow-ups that fit the failure.** Rate limit / quota / overload / refused
+  key / unknown model → Retry + **Pick model** (`/model`); stopped on a hung
+  tool (`stuckTool` in metadata) → **Skip it** + Continue; Stop before the
+  message was sent (`notSent`) → **Retry** with your words; last step finished
+  `length` → one line plus **Finish it**, first and never held. Checks `FX`, `DS`.
+- Not done: keeping the SSE socket open between turns. A warm socket already
+  answers `connected` at once, a fresh local connect takes a few ms, and a
+  lingering socket would hold fake servers open in the suite for its whole
+  linger.
+
 ### 0.0.206
 
 Chip telemetry and `natural.ts` in testable parts. No setting was added or

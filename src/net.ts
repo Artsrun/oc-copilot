@@ -284,7 +284,41 @@ export function stopServer(): void {
     servePort = undefined;
 }
 
-export async function ensureServer(cwd?: string, onSlowStart?: (text: string) => void): Promise<string> {
+// One start at a time: a caller that arrives while one is in flight (the
+// prewarm, a first turn, /parallel lanes) shares it rather than racing it to the
+// spawn — two spawns on one port leave one process unowned.
+let startInFlight: Promise<string> | undefined;
+const SLOW_START_TEXT = "Starting the OpenCode server — a first start loads its config, plugins and MCP servers…";
+
+export function ensureServer(cwd?: string, onSlowStart?: (text: string) => void): Promise<string> {
+    if (startInFlight) {
+        const shared = startInFlight;
+        if (onSlowStart) {
+            const timer = setTimeout(() => {
+                try {
+                    onSlowStart(SLOW_START_TEXT);
+                } catch {
+                    // a stream closed by Stop must not fail the start
+                }
+            }, SLOW_START_MS);
+            timer.unref?.();
+            const clear = (): void => clearTimeout(timer);
+            shared.then(clear, clear);
+        }
+        return shared;
+    }
+    const start = ensureServerOnce(cwd, onSlowStart);
+    startInFlight = start;
+    const done = (): void => {
+        if (startInFlight === start) {
+            startInFlight = undefined;
+        }
+    };
+    start.then(done, done);
+    return start;
+}
+
+async function ensureServerOnce(cwd?: string, onSlowStart?: (text: string) => void): Promise<string> {
     const settings = config();
     const executable = settings.get<string>("executable", "opencode");
     const host = settings.get<string>("serverHostname", "127.0.0.1");
@@ -431,7 +465,7 @@ export async function ensureServer(cwd?: string, onSlowStart?: (text: string) =>
         if (!told && onSlowStart && Date.now() - waitStarted >= SLOW_START_MS) {
             told = true;
             try {
-                onSlowStart("Starting the OpenCode server — a first start loads its config, plugins and MCP servers…");
+                onSlowStart(SLOW_START_TEXT);
             } catch {
                 // a stream closed by Stop must not fail the start
             }
@@ -449,6 +483,26 @@ export async function warmServer(cwd: string, onSlowStart?: (text: string) => vo
         logChannel.appendLine(`[${stamp()}] server unavailable, dev runs cold: ${error}`);
         return undefined;
     }
+}
+
+// claim:prewarm-server — the first @opencode message no longer pays the
+// server's boot (config, plugins, MCP: most of a minute measured on a first
+// start). Started after startup, in a trusted workspace only: OpenCode loads the
+// folder's own config and plugins. Never on `transport: cli`.
+export const PREWARM_DELAY_MS = 3000;
+
+export function prewarmServer(): Promise<string | undefined> | undefined {
+    const settings = config();
+    const trusted = (vscode.workspace as { isTrusted?: boolean }).isTrusted === true;
+    if (!settings.get<boolean>("prewarmServer", true) || settings.get<string>("transport", "auto") === "cli" || !trusted) {
+        return undefined;
+    }
+    const cwd = resolveFolder()?.folder.uri.fsPath;
+    if (!cwd) {
+        return undefined;
+    }
+    logChannel.appendLine(`[${stamp()}] prewarming the OpenCode server for ${cwd}`);
+    return warmServer(cwd);
 }
 
 /** A live server that never answered: what it last said, and what to do. */

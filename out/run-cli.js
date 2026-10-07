@@ -66,6 +66,10 @@ function runCli(options) {
         const started = Date.now();
         const runningTools = new Map();
         const toolQuietMs = Math.max(0, options.toolQuietMs ?? 0);
+        const partKinds = new Map();
+        const streamed = new Map();
+        const closedParts = new Set();
+        let lastRetry = -1;
         let sse;
         let family;
         if (options.attachUrl && options.sessionId) {
@@ -78,6 +82,22 @@ function runCli(options) {
                     return;
                 }
                 markActive();
+                (0, run_steps_1.notePartKind)(part, partKinds);
+                const delta = (0, run_steps_1.partDeltaOf)(ev, mine, partKinds);
+                if (delta) {
+                    metrics.serverActivity = true;
+                    (0, run_steps_1.applyPartDelta)(delta, metrics, options, started, streamed, closedParts);
+                    return;
+                }
+                const retry = (0, run_steps_1.providerRetryOf)(ev, mine);
+                if (retry) {
+                    if (retry.attempt !== lastRetry) {
+                        lastRetry = retry.attempt;
+                        core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] ${(0, followups_1.mark)("quiet")} provider retry ${retry.attempt}: ${retry.message || "no reason given"}`);
+                    }
+                    options.onRetry?.(retry);
+                    return;
+                }
                 (0, run_steps_1.noteModel)(ev, metrics);
                 if (part && (part.type === "tool" || part.type === "reasoning" || part.type === "text")) {
                     metrics.serverActivity = true;
@@ -105,6 +125,16 @@ function runCli(options) {
             family = (0, asks_1.watchFamily)(attachUrl, options.cwd, mine, { permissions: false, autoApprove: options.autoApprove }, { onActivity: () => markActive(), onSubagent: options.onSubagent });
         }
         const tools = new Map();
+        const wholePart = (kind, part, text) => {
+            const id = typeof part?.id === "string" ? part.id : "";
+            if (!id) {
+                return 0;
+            }
+            const key = `${kind}:${id}`;
+            closedParts.add(key);
+            const sent = streamed.get(key) ?? 0;
+            return sent <= text.length ? sent : text.length;
+        };
         let markActive = () => undefined;
         const handleEvent = (rawEvent) => {
             markActive();
@@ -163,19 +193,26 @@ function runCli(options) {
                 }
                 case "reasoning": {
                     const text = part?.text ?? "";
+                    const rest = text.slice(wholePart("r", part, text));
+                    if (rest) {
+                        metrics.reasoning += (metrics.reasoning && rest === text ? "\n" : "") + rest;
+                        options.onReasoning?.(rest);
+                    }
                     if (text) {
-                        metrics.reasoning += (metrics.reasoning ? "\n" : "") + text;
-                        options.onReasoning?.(text);
                         (0, core_1.debugLine)(`${(0, followups_1.mark)("thought")} ${(0, core_1.truncate)(text, 200)}`);
                     }
                     break;
                 }
                 case "text": {
                     const text = part?.text ?? "";
+                    const rest = text.slice(wholePart("t", part, text));
                     if (text) {
                         metrics.hadOutput = true;
-                        options.onText?.(text);
                         (0, core_1.debugLine)(`${(0, followups_1.mark)("text")} ${(0, core_1.truncate)(text, 200)}`);
+                    }
+                    if (rest) {
+                        (0, run_steps_1.markFirstByte)(metrics, started);
+                        options.onText?.(rest, typeof part?.id === "string" && part.id ? part.id : undefined);
                     }
                     break;
                 }
@@ -192,6 +229,9 @@ function runCli(options) {
                         metrics.tokens.cache.write += tokens.cache?.write ?? 0;
                     }
                     metrics.cost += part?.cost ?? 0;
+                    if (reason) {
+                        metrics.finishReason = reason;
+                    }
                     core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] ${(0, followups_1.mark)("step")} step finish (${reason}) ` +
                         `in=${tokens?.input ?? 0} out=${tokens?.output ?? 0} ` +
                         `cache_read=${tokens?.cache?.read ?? 0}`);

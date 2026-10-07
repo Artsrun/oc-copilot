@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.TESTED_OPENCODE = void 0;
+exports.PREWARM_DELAY_MS = exports.TESTED_OPENCODE = void 0;
 exports.withDirectory = withDirectory;
 exports.httpRequestJson = httpRequestJson;
 exports.httpGetJson = httpGetJson;
@@ -44,9 +44,11 @@ exports.knownServerBase = knownServerBase;
 exports.stopServer = stopServer;
 exports.ensureServer = ensureServer;
 exports.warmServer = warmServer;
+exports.prewarmServer = prewarmServer;
 exports.lastServeLine = lastServeLine;
 exports.sessionIdFromEvent = sessionIdFromEvent;
 exports.connectSse = connectSse;
+const vscode = __importStar(require("vscode"));
 const http = __importStar(require("node:http"));
 const net = __importStar(require("node:net"));
 const core_1 = require("./core");
@@ -231,7 +233,36 @@ function stopServer() {
     fallbackPort = undefined;
     servePort = undefined;
 }
-async function ensureServer(cwd, onSlowStart) {
+let startInFlight;
+const SLOW_START_TEXT = "Starting the OpenCode server — a first start loads its config, plugins and MCP servers…";
+function ensureServer(cwd, onSlowStart) {
+    if (startInFlight) {
+        const shared = startInFlight;
+        if (onSlowStart) {
+            const timer = setTimeout(() => {
+                try {
+                    onSlowStart(SLOW_START_TEXT);
+                }
+                catch {
+                }
+            }, SLOW_START_MS);
+            timer.unref?.();
+            const clear = () => clearTimeout(timer);
+            shared.then(clear, clear);
+        }
+        return shared;
+    }
+    const start = ensureServerOnce(cwd, onSlowStart);
+    startInFlight = start;
+    const done = () => {
+        if (startInFlight === start) {
+            startInFlight = undefined;
+        }
+    };
+    start.then(done, done);
+    return start;
+}
+async function ensureServerOnce(cwd, onSlowStart) {
     const settings = (0, core_1.config)();
     const executable = settings.get("executable", "opencode");
     const host = settings.get("serverHostname", "127.0.0.1");
@@ -346,7 +377,7 @@ async function ensureServer(cwd, onSlowStart) {
         if (!told && onSlowStart && Date.now() - waitStarted >= SLOW_START_MS) {
             told = true;
             try {
-                onSlowStart("Starting the OpenCode server — a first start loads its config, plugins and MCP servers…");
+                onSlowStart(SLOW_START_TEXT);
             }
             catch {
             }
@@ -362,6 +393,20 @@ async function warmServer(cwd, onSlowStart) {
         core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] server unavailable, dev runs cold: ${error}`);
         return undefined;
     }
+}
+exports.PREWARM_DELAY_MS = 3000;
+function prewarmServer() {
+    const settings = (0, core_1.config)();
+    const trusted = vscode.workspace.isTrusted === true;
+    if (!settings.get("prewarmServer", true) || settings.get("transport", "auto") === "cli" || !trusted) {
+        return undefined;
+    }
+    const cwd = (0, core_1.resolveFolder)()?.folder.uri.fsPath;
+    if (!cwd) {
+        return undefined;
+    }
+    core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] prewarming the OpenCode server for ${cwd}`);
+    return warmServer(cwd);
 }
 function stillStarting(base, configured) {
     const said = lastServeLine(serveTail);

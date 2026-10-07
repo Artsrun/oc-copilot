@@ -147,14 +147,23 @@ OpenCode's server (started on demand). Debug: the output channel logs
 - **The folder you picked is the folder it edits**: every OpenCode process gets
   it as cwd and `PWD` (`npm run probe:pwd` measures a machine).
 - **Progress stays alive**: the live line names the running tool or the latest
-  thought; finished thoughts fold into accordions (`groupProgress`).
+  thought; finished thoughts fold into accordions (`groupProgress`). A provider
+  backoff (rate limit, overload) is named on it: `Provider retry 2 · next in 8s`.
+- **Answers stream as they are written**, on the server and the attached `/dev`
+  path alike — not a whole paragraph at a time.
+- **The server is up before you ask** <!-- claim:prewarm-server -->: a trusted
+  window starts (or adopts) the OpenCode server a few seconds after VS Code
+  starts (`prewarmServer`), so the first message does not wait for its boot.
 - **Files open on click** <!-- claim:file-links -->: a workspace file the answer
   names in inline code (`src/cart.ts:42`) becomes a pill that opens it at that
   line; an accordion row that read or edited one file opens it too.
 - **Follow-ups are the answer's own next moves**: what the agent offered or
   asked ("Which do you prefer: Postgres or MySQL?"), a step 1, the file it
   edited, the tests it said fail, one more look at a higher effort when it
-  said it was unsure — else none. Recovery chips appear only after a failure or a stop.
+  said it was unsure — else none. Recovery chips appear only after a failure or a stop,
+  and fit it: a rate limit or a refused model gets **Pick model**, a hung tool
+  **Skip it**, a Stop before anything was sent **Retry** with your words, an
+  answer cut at the output limit **Finish it**.
 - **Lanes when they fit** <!-- claim:auto-parallel -->: a plan whose first
   numbered list is 2-5 read-only steps, each naming a file or call, offers
   **Run N as lanes**. With `autoParallel: auto`, a message that is itself such a
@@ -167,7 +176,8 @@ OpenCode's server (started on demand). Debug: the output channel logs
 - **Sessions are per chat thread**; a timed-out turn can hand off to the next
   model, in the same session. Long conversations compact themselves, sized as
   OpenCode sizes them (the last step's tokens, cache reads in); `/session` shows
-  `context 42k of 200k (21%)`.
+  `context 42k of 200k (21%)`. The next message waits for that summary instead
+  of stopping it.
 - **The model is yours or OpenCode's**: a pin is sent every turn; with none,
   OpenCode keeps a session on the model it last ran.
 - **Windows**: a sibling `opencode.exe` is preferred over the `.cmd` shim, else
@@ -331,6 +341,7 @@ All under `opencodeCopilotBridge.`.
 | `planAgent` | `plan` | Agent for read-only turns and `/parallel` lanes, used once OpenCode lists it (see *Read-only turns*). |
 | `readOnlySubagents` | `["explore"]` | Subagents a read-only turn may start via `task`; the rest are denied for that turn (a subagent runs with its own permissions — `general` edits). Server and attached runs. |
 | `attachDevToServer` | `true` | With transport `auto`, `/dev` attaches to the warm server instead of booting OpenCode per turn. |
+| `prewarmServer` | `true` | Start (or adopt) the OpenCode server a few seconds after VS Code starts, so the first message does not wait for its boot. Trusted workspaces only; never with transport `cli`. |
 | `toolQuietMs` | `600000` | How long a tool the server reports as running may stay silent. 0 = `idleTimeoutMs`. |
 | `busySessionPolicy` | `abort` | A session still busy with an unwatched run: `abort` it first, or `queue` behind it. |
 | `transport` | `auto` | `auto`: server for plan, attached CLI for dev. `cli` or `server` for all. |
@@ -353,7 +364,7 @@ All under `opencodeCopilotBridge.`.
 | `statusBar` | `true` | Status bar item with the session and turn count. |
 | `showThoughtProcess` | `true` | Stream OpenCode's reasoning (`--thinking`) on the progress line. |
 | `clarifyVaguePrompts` | `true` | Ask before spending a run on a bare one-word first message. |
-| `autoCompact` | `true` | Summarize the session every `autoCompactEveryTurns` turns, or once its context passes 60k tokens or 70% of the model's window. |
+| `autoCompact` | `true` | Summarize the session every `autoCompactEveryTurns` turns (once its context is 20k or more), or once its context passes 60k tokens or 70% of the model's window. |
 | `autoCompactEveryTurns` | `8` | Turns between compactions. 0 = OpenCode's own only. |
 | `editorTitleButton` | `true` | Quick Actions button in the editor title bar. |
 | `sessionScope` | `thread` | `thread`: one session per chat. `workspace`: one per folder. |
@@ -367,6 +378,22 @@ All under `opencodeCopilotBridge.`.
 ## Changelog
 
 The last five releases; the full history is `CHANGELOG.md` in the repository.
+
+### 0.0.207
+
+- **Fixed: autocompact ran a hidden agent turn and collided with your next
+  message.** It asked OpenCode for an *auto* compaction, which ends by telling
+  the agent to "continue if you have next steps" — a turn no chat showed. The
+  next message then stopped it ("still busy with an earlier run…") and the
+  summary was lost. Now a plain summary, and the next message waits for it.
+  The turn count alone no longer compacts a context under 20k.
+- **Answers stream** on the server path and attached `/dev`, word by word,
+  instead of arriving a whole part at a time.
+- **`prewarmServer`**: the server starts in the background after VS Code does.
+- Provider retries are named on the live line.
+- Chips that fit the failure: **Pick model** after a rate limit or a refused
+  model, **Skip it** after a hung tool, **Retry** after a Stop before sending,
+  **Finish it** after an answer cut at the output limit.
 
 ### 0.0.206
 
@@ -413,19 +440,3 @@ The last five releases; the full history is `CHANGELOG.md` in the repository.
 - **`a:<agent>` per lane**, checked against OpenCode's list (a subagent or an
   unknown name is refused: the CLI would run it as `build`).
 - Subagent spend joins the turn's cost; Stop aborts subagent sessions too.
-
-### 0.0.202
-
-- **Effort**: `effort:high` / `e:high` per turn, or the `effort` setting, sends
-  OpenCode's reasoning-effort variant. Checked against the model's levels first
-  (OpenCode ignores a miss silently); the picker shows each model's levels.
-- **`autoParallel`**: `auto` runs a message that is a list of 2-5 read-only
-  steps as lanes; `off` drops the lanes chip. Default `offer` is unchanged.
-- **Fixed: autocompact measured the wrong thing.** It summed `input` over every
-  step (a 3-step 25k turn read as 75k and compacted) and left out cache reads (a
-  cached 70k context read as 100 and never did). It now uses the last step's
-  tokens, as OpenCode does, and also fires at 70% of a known window. `/session`
-  shows the context size.
-- New chips: **Fix failing tests** after a dev turn that reports failures, and
-  **Dig deeper · high** when the answer says it is unsure and the model has a
-  higher level. Subagent rows name the subagent.

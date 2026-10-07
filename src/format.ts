@@ -26,6 +26,101 @@ export function isPromptEcho(text: string, prompt: string): boolean {
     return a === b || a === `${b}.` || (b.startsWith(a) && a.length < 64);
 }
 
+// Streamed answers arrive in deltas, so the two whole-text tests above need
+// gates: a leaked block or an echoed prompt split across deltas is never whole
+// in any one of them.
+
+const LEAK_OPENERS = ["<workspace-context>", "---\nFiles the user attached:", "---\n(Context only."];
+const LEAK_CLOSE = /<\/workspace-context>|\(Context only\.[^)]*\)/;
+const LEAK_TAIL = Math.max(...LEAK_OPENERS.map((o) => o.length));
+
+/** scrubLeakedContext over a stream: text from an opener on is held until its
+ * close arrives, and a tail that could still become an opener waits one chunk. */
+export function createLeakGate(): { push: (chunk: string) => string; flush: () => string } {
+    let held = "";
+    return {
+        push: (chunk: string): string => {
+            const text = held + chunk;
+            held = "";
+            const open = LEAK_OPENERS.map((o) => text.indexOf(o))
+                .filter((at) => at >= 0 && !LEAK_CLOSE.test(text.slice(at)))
+                .sort((a, b) => a - b)[0];
+            if (open !== undefined) {
+                held = text.slice(open);
+                return scrubLeakedContext(text.slice(0, open));
+            }
+            for (let n = Math.min(text.length, LEAK_TAIL); n > 0; n -= 1) {
+                const tail = text.slice(-n);
+                if (LEAK_OPENERS.some((o) => o.startsWith(tail))) {
+                    held = tail;
+                    return scrubLeakedContext(text.slice(0, -n));
+                }
+            }
+            return scrubLeakedContext(text);
+        },
+        flush: (): string => {
+            const text = held;
+            held = "";
+            return scrubLeakedContext(text);
+        }
+    };
+}
+
+/** isPromptEcho over a stream, part by part: the answer's first text is held
+ * while it could still be one of `prompts` said back; a part that is one is
+ * dropped, anything else is released. Text with one `part` id is one part; text
+ * without an id is a whole part. Once real text has gone out, all passes. */
+export function createEchoGate(prompts: readonly string[]): { push: (text: string, part?: string) => string; flush: () => string } {
+    const said = prompts.map(normLine).filter(Boolean);
+    const isEcho = (t: string): boolean => prompts.some((p) => isPromptEcho(t, p));
+    const mayBe = (t: string): boolean => {
+        const a = normLine(t);
+        return !a || said.some((b) => b.startsWith(a) || a === `${b}.`);
+    };
+    let open = true;
+    let id: string | undefined;
+    let held = "";
+    const release = (t: string): string => {
+        if (t.trim()) {
+            open = false;
+        }
+        return t;
+    };
+    const settle = (): string => {
+        const t = held;
+        held = "";
+        return !t || isEcho(t) ? "" : release(t);
+    };
+    return {
+        push: (text: string, part?: string): string => {
+            if (!open) {
+                return text;
+            }
+            if (part === undefined) {
+                const before = settle();
+                id = undefined;
+                if (!open) {
+                    return before + text;
+                }
+                return isEcho(text) ? before : before + release(text);
+            }
+            const before = part === id ? "" : settle();
+            id = part;
+            if (!open) {
+                return before + text;
+            }
+            held += text;
+            if (mayBe(held)) {
+                return before;
+            }
+            const out = held;
+            held = "";
+            return before + release(out);
+        },
+        flush: settle
+    };
+}
+
 // A compact one-line step summary: read → read → read reads as "read ×3".
 export function stepsLine(metrics: RunMetrics, max = 6): string {
     if (metrics.steps.length === 0) {

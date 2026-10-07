@@ -69,7 +69,7 @@ export function recalledFollowups(sessionId: string | undefined, turns: number):
 const BACKOFF_KEY = "opencodeCopilotBridge.chipBackoff";
 const BACKOFF_AFTER = 3;
 const BACKOFF_MAX_HOLD = 32;
-const NEVER_HELD = new Set(["offer", "choice", "RESUME_TASK", "RERUN_TASK"]);
+const NEVER_HELD = new Set(["offer", "choice", "RESUME_TASK", "RERUN_TASK", "CUT_OFF"]);
 
 interface Backoff {
     /** Messages counted so far: a hold lasts until this reaches `until`. */
@@ -151,6 +151,10 @@ const stripKind = (text: string): string => text.replace(/^\/(?:dev|plan)\b\s*/i
 // A failure that looks like the bridge could not reach OpenCode at all gets
 // Ping (check the connection) instead of Continue.
 const UNREACHABLE = /ENOENT|ECONNREFUSED|ECONNRESET|EAI_AGAIN|ETIMEDOUT|not found on PATH|could not be started|unreachable|socket hang up|fetch failed/i;
+// A failure the model or its provider caused — a rate limit, a spent quota, an
+// overload, a key or a model id it refused — gets Pick model: Continue would
+// meet the same wall.
+const MODEL_TROUBLE = /rate[ _-]?limit|too many requests|\b429\b|\bquota\b|insufficient[ _](?:quota|credits?|funds|balance)|credit balance|billing|overloaded|\bmodel\b[^.\n]{0,40}\bnot (?:found|supported|available)|unknown model|no such model|ModelNotFound|unauthori[sz]ed|\b401\b|invalid[ _-]?(?:api[ _-]?)?key|api[ _-]?key|ProviderAuth|authentication failed/i;
 
 export function outcomeOf(metadata: Record<string, unknown>): Outcome {
     switch (metadata.kind) {
@@ -176,12 +180,20 @@ export function outcomeOf(metadata: Record<string, unknown>): Outcome {
     switch (true) {
         case Boolean(error) && UNREACHABLE.test(error):
             return "failedNet";
+        case Boolean(error) && MODEL_TROUBLE.test(error):
+            return "failedModel";
+        // Stopped while a tool still ran: that tool, not the session, is the problem.
+        case Boolean(metadata.timedOut) && typeof metadata.stuckTool === "string" && Boolean(metadata.stuckTool):
+            return "failedStuck";
         // A continuing session that timed out is usually carrying a huge tool
         // output; a fresh session is the fix.
         case Boolean(metadata.timedOut) && turns > 1:
             return "failedLong";
         case Boolean(metadata.timedOut) || Boolean(error):
             return "failed";
+        // Stopped before the message reached OpenCode: there is nothing to continue.
+        case Boolean(metadata.cancelled) && metadata.notSent === true && typeof metadata.prompt === "string":
+            return "cancelledEarly";
         case Boolean(metadata.cancelled):
             return "cancelled";
         default:
@@ -209,11 +221,17 @@ export function followupsFor(metadata: Record<string, unknown>): vscode.ChatFoll
             return own === undefined ? [] : chips(CASES.clarify, { RUN_ANYWAY: own });
         case "failed":
         case "failedLong":
-        case "failedNet": {
+        case "failedNet":
+        case "failedModel":
+        case "cancelledEarly": {
             // A launch failure carries the user's words, and there may be no
             // session to "try again" in — so Retry resends them.
             const again = own ? stripKind(own) : "";
             return chips(CASES[outcome], again ? { RETRY: again } : {});
+        }
+        case "failedStuck": {
+            const tool = typeof metadata.stuckTool === "string" && metadata.stuckTool ? metadata.stuckTool : "tool";
+            return chips(CASES.failedStuck, { SKIP_STUCK: fillPrompt("SKIP_STUCK", { tool }) });
         }
         case "composed":
             // The composed lanes are the next message: a chip, not a button.
@@ -297,6 +315,13 @@ type Offered = vscode.ChatFollowup & { kind?: string };
 
 function stateChips(metadata: Record<string, unknown>, kind: "dev" | "plan"): Offered[] {
     const out: Offered[] = [];
+    // An answer cut at the output limit: the rest of it comes first.
+    if (metadata.truncated === true) {
+        const chip = chipOf("CUT_OFF", kind);
+        if (chip) {
+            out.push({ ...chip, kind: "CUT_OFF" });
+        }
+    }
     const task = metadata.failedTask as { agent?: unknown; description?: unknown; taskId?: unknown } | undefined;
     if (task && typeof task.agent === "string" && task.agent) {
         const description = typeof task.description === "string" && task.description ? task.description : task.agent;

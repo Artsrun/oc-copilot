@@ -6,7 +6,7 @@ import { mark } from "./followups";
 import { connectSse, ensureServer, httpRequestJson, sessionIdFromEvent, withDirectory } from "./net";
 import { RunMetrics, RunOptions, StepRecord, TokenUsage, contextOf } from "./metrics";
 import { watchFamily } from "./asks";
-import { EmitCursor, addSubagents, applyServerPart, blankMetrics, noteModel } from "./run-steps";
+import { EmitCursor, addSubagents, applyPartDelta, applyServerPart, blankMetrics, noteModel, notePartKind, partDeltaOf, providerRetryOf } from "./run-steps";
 import { abortChildren, applyTurnPermission, noteTurnPermission, sessionPath, turnPermission } from "./server-session";
 
 interface ServerMessageResponse {
@@ -38,6 +38,9 @@ export async function runOpenCodeServer(options: RunOptions): Promise<RunMetrics
     const emitted = new Map<string, number>();
     const tools = new Map<string, StepRecord>();
     const cursor: EmitCursor = { n: 0, last: {} };
+    // Part id → type, for the deltas that name only the id.
+    const partKinds = new Map<string, string>();
+    let lastRetry = -1;
     // Set while the bridge aborts its own run: the MessageAbortedError that
     // follows is ours, not OpenCode's error to show.
     let aborting = false;
@@ -100,6 +103,21 @@ export async function runOpenCodeServer(options: RunOptions): Promise<RunMetrics
             const props = (ev.properties as Record<string, unknown> | undefined) ?? ev;
             const part = (props.part ?? ev.part) as Record<string, unknown> | undefined;
             const type = ev.type as string | undefined;
+            notePartKind(part, partKinds);
+            const delta = partDeltaOf(ev, mine, partKinds);
+            if (delta) {
+                applyPartDelta(delta, metrics, options, started, emitted);
+                return;
+            }
+            const retry = providerRetryOf(ev, mine);
+            if (retry) {
+                if (retry.attempt !== lastRetry) {
+                    lastRetry = retry.attempt;
+                    logChannel.appendLine(`[${stamp()}] ${mark("quiet")} provider retry ${retry.attempt}: ${retry.message || "no reason given"}`);
+                }
+                options.onRetry?.(retry);
+                return;
+            }
             noteModel(ev, metrics);
             if (type === "session.error" && !aborting) {
                 const err = (props.error ?? props.message ?? ev.error) as

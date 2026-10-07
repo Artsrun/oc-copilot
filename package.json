@@ -2,7 +2,7 @@
   "name": "opencode-copilot-bridge",
   "displayName": "OpenCode Copilot Bridge",
   "description": "Delegate research, planning, and development to OpenCode from GitHub Copilot Chat.",
-  "version": "0.0.206",
+  "version": "0.0.207",
   "publisher": "local",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -36,7 +36,8 @@
   },
   "activationEvents": [
     "onChatParticipant:opencodeCopilotBridge.chat",
-    "onChatParticipant:opencodeCopilotBridge.inline"
+    "onChatParticipant:opencodeCopilotBridge.inline",
+    "onStartupFinished"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -282,6 +283,11 @@
             "type": "boolean",
             "default": true,
             "description": "With transport 'auto', run /dev as `opencode run --attach <server> --auto` so it reuses the warm managed server (config, plugins and MCP servers already loaded) instead of booting OpenCode every turn. Falls back to a cold run if the server cannot be reached."
+          },
+          "opencodeCopilotBridge.prewarmServer": {
+            "type": "boolean",
+            "default": true,
+            "description": "Start (or adopt) the managed OpenCode server a few seconds after VS Code starts, so the first @opencode message does not wait for its boot (config, plugins, MCP servers). Trusted workspaces only, and never with transport 'cli'."
           },
           "opencodeCopilotBridge.toolQuietMs": {
             "type": "number",

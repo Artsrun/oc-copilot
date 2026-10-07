@@ -238,8 +238,34 @@ const COMPACT_TIMEOUT_MS = 180000;
 const COMPACT_BACKOFF_MS = 5 * 60000;
 let compactServerFailedAt = 0;
 
+// One summary per session at a time, and the next turn of that session waits
+// for it (chat-turn prepareRun) instead of aborting it as an unwatched run:
+// the summary is a prompt loop, so the session reads busy (1.18.32 prompt.ts).
+const compactions = new Map<string, Promise<boolean>>();
+
+/** This window's summary of `sessionId` while it runs, else undefined. */
+export function compactionInFlight(sessionId: string): Promise<boolean> | undefined {
+    return compactions.get(sessionId);
+}
+
 // `asked`: a `/compact` the user typed is never held back by the backoff.
-export async function compactSession(sessionId: string, cwd: string, model?: string, asked = false): Promise<boolean> {
+export function compactSession(sessionId: string, cwd: string, model?: string, asked = false): Promise<boolean> {
+    const running = compactions.get(sessionId);
+    if (running) {
+        return running;
+    }
+    const work = summarize(sessionId, cwd, model, asked);
+    compactions.set(sessionId, work);
+    const done = (): void => {
+        if (compactions.get(sessionId) === work) {
+            compactions.delete(sessionId);
+        }
+    };
+    work.then(done, done);
+    return work;
+}
+
+async function summarize(sessionId: string, cwd: string, model: string | undefined, asked: boolean): Promise<boolean> {
     if (!asked && Date.now() - compactServerFailedAt < COMPACT_BACKOFF_MS) {
         logChannel.appendLine(`[${stamp()}] compact skipped: the server failed to start ${Math.round((Date.now() - compactServerFailedAt) / 1000)}s ago`);
         return false;
@@ -265,9 +291,13 @@ export async function compactSession(sessionId: string, cwd: string, model?: str
         }
         const parts = { providerID: spec.slice(0, index), modelID: spec.slice(index + 1) };
         // A full model pass over the context: 30s timed out on 66k tokens.
+        // `auto: false`, as OpenCode's own /compact sends it. An auto compaction
+        // (1.18.32 compaction.ts) ends by adding a synthetic "Continue if you have
+        // next steps" message, and the loop runs one more agent turn that no chat
+        // shows — keeping the session busy into the user's next message.
         const status = await httpPostJson(
             withDirectory(`${base}${sessionPath(sessionId, "summarize")}`, cwd),
-            { providerID: parts.providerID, modelID: parts.modelID, auto: true },
+            { providerID: parts.providerID, modelID: parts.modelID, auto: false },
             COMPACT_TIMEOUT_MS
         );
         logChannel.appendLine(

@@ -70,6 +70,10 @@ Sent every turn when set; never sent when empty. See page 7.
 - **One shared stream, demuxed by session id.** `message.updated` carries a
   message id, not a session id; `server.heartbeat` carries none. Only a run's
   own events prove it alive.
+- **Text and reasoning stream as `message.part.delta`** (a part id, no part);
+  the whole part follows once at its end and adds only what the deltas did
+  not. An attached `/dev` run takes the deltas from this stream too: its CLI
+  prints a part only when it ends.
 - **Every call carries `?directory=<cwd>`.** Without it the server uses its
   own cwd, which may be another window's checkout.
 - **Killing an attach client does not stop the run**, and a prompt to a busy
@@ -94,5 +98,5 @@ flowchart LR
   M --> MD["(◕‿◕) result.metadata"]:::back
   MD --> SES["setActiveSession: status bar, toasts"]:::bridge
   MD --> CH["natural chips or none"]:::back
-  MD --> AC["background autocompact: every N turns, past 60k context or 70% of the window"]:::bridge
+  MD --> AC["background autocompact (auto false): every N turns at 20k+, past 60k context or 70% of the window; the next turn waits for it"]:::bridge
 ```

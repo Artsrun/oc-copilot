@@ -20,6 +20,8 @@ async function runOpenCodeServer(options) {
     const emitted = new Map();
     const tools = new Map();
     const cursor = { n: 0, last: {} };
+    const partKinds = new Map();
+    let lastRetry = -1;
     let aborting = false;
     const base = options.serverUrl ?? (await (0, net_1.ensureServer)(options.cwd));
     const scoped = (path) => (0, net_1.withDirectory)(`${base}${path}`, options.cwd);
@@ -64,6 +66,21 @@ async function runOpenCodeServer(options) {
         const props = ev.properties ?? ev;
         const part = (props.part ?? ev.part);
         const type = ev.type;
+        (0, run_steps_1.notePartKind)(part, partKinds);
+        const delta = (0, run_steps_1.partDeltaOf)(ev, mine, partKinds);
+        if (delta) {
+            (0, run_steps_1.applyPartDelta)(delta, metrics, options, started, emitted);
+            return;
+        }
+        const retry = (0, run_steps_1.providerRetryOf)(ev, mine);
+        if (retry) {
+            if (retry.attempt !== lastRetry) {
+                lastRetry = retry.attempt;
+                core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] ${(0, followups_1.mark)("quiet")} provider retry ${retry.attempt}: ${retry.message || "no reason given"}`);
+            }
+            options.onRetry?.(retry);
+            return;
+        }
         (0, run_steps_1.noteModel)(ev, metrics);
         if (type === "session.error" && !aborting) {
             const err = (props.error ?? props.message ?? ev.error);

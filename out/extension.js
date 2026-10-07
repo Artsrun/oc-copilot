@@ -52,6 +52,7 @@ const agents_1 = require("./agents");
 const chat_boot_1 = require("./chat-boot");
 const chat_1 = require("./chat");
 const followups_1 = require("./followups");
+const format_1 = require("./format");
 const natural_1 = require("./natural");
 const commands_registry_1 = require("./commands-registry");
 const worktree_1 = require("./worktree");
@@ -70,6 +71,9 @@ function activate(context) {
         core_1.logChannel.appendLine(`inline @opencode unavailable: ${err instanceof Error ? err.message : String(err)}`);
     }
     (0, commands_registry_1.registerCommands)(context);
+    const prewarm = setTimeout(() => void (0, net_1.prewarmServer)(), net_1.PREWARM_DELAY_MS);
+    prewarm.unref?.();
+    context.subscriptions.push({ dispose: () => clearTimeout(prewarm) });
 }
 const participant = (context, id, handler) => {
     const chat = vscode.chat.createChatParticipant(id, handler);
@@ -162,7 +166,13 @@ exports.__test = {
     setStartupDeadline: net_1.setStartupDeadline,
     setReplyConfirmWait: runs_1.setReplyConfirmWait,
     resetChipBackoff: chat_boot_1.resetChipBackoff,
-    CHILD_MAX_ROWS: chat_boot_1.CHILD_MAX_ROWS
+    CHILD_MAX_ROWS: chat_boot_1.CHILD_MAX_ROWS,
+    prewarmServer: net_1.prewarmServer,
+    createLeakGate: format_1.createLeakGate,
+    createEchoGate: format_1.createEchoGate,
+    partDeltaOf: runs_1.partDeltaOf,
+    providerRetryOf: runs_1.providerRetryOf,
+    outcomeOf: chat_boot_1.outcomeOf
 };
 function deactivate() {
     (0, net_1.stopServer)();

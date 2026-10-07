@@ -481,3 +481,44 @@ a 200 proves nothing: a reply without a `permission.replied` after 3 s is sent
 once more, then given up on, with a log line either way. A pre-1.1 `reject`
 carries no message, so on such a server it ends the turn instead of being fed
 back. Not measured: any of this on a real server; the suite uses fakes (`HQ`).
+
+## Streaming, auto compaction and VS Code's per-request discovery (source read, 0.0.207)
+
+**Dated 2026-10-07. Read, not yet measured against a live server.** Sources:
+sst/opencode tag v1.18.32 (and main at 1.18.35), microsoft/vscode main@91b51fe.
+
+- **Text arrives as deltas.** `session/processor.ts` `text-delta` /
+  `reasoning-delta` publish `message.part.delta` `{ sessionID, messageID,
+  partID, field: "text", delta }` — no `part` object; `text-start` publishes the
+  empty part, `text-end` the whole part (after the `experimental.text.complete`
+  plugin hook, which may rewrite it). 0.0.206's server path read only
+  `part.updated`, so every text part reached chat whole at its end.
+- **The CLI prints parts whole.** `cli/cmd/run.ts` L753: `part.type === "text"
+  && part.time?.end` → `emit("text")`; reasoning the same. An attached run's
+  stdout is never streamed. `--auto` is `permission.reply({ reply: "once" })`
+  for every `permission.asked` (L800–820) — what `watchFamily` does with
+  `autoApprove` on the server path.
+- **An auto compaction keeps going.** `POST /session/:id/summarize` →
+  `compactSvc.create` + `promptSvc.loop` (`handlers/session.ts` L273–291). The
+  loop sets the session busy (`prompt.ts` L1089). With `auto: true` and no
+  overflow, `compaction.ts` L468–545 appends a synthetic user message "Continue
+  if you have next steps, or stop and ask for clarification…" (plugin hook
+  `experimental.compaction.autocontinue`, enabled by default) and the loop runs
+  another agent turn. `auto: false` stops after the summary.
+- **Provider backoff is a status.** `processor.ts` L674–686: each retry sets
+  `session.status` `{ type: "retry", attempt, message, action, next }` (`next`
+  a timestamp).
+- **VS Code's "discoveries" are its own, before any participant.**
+  `chatServiceImpl.ts` awaits `Promise.all([collectHooks(), collectInstructions()])`
+  before `invokeAgent`, for every participant; `chatWidget.ts` always sends
+  `instructionContext` unless a contributed session type opts out
+  (`autoAttachReferences`). The discovery lists are `CachedPromise`s; the
+  Discovery events are logged once per chat session, then "Resolve
+  Customizations … in X ms" per request (`promptsDebugContribution.ts`).
+  Uncached per request: agent-instruction file lookups in the roots and the
+  home folder; in Agent mode the customizations index (~33 KB, sent to the
+  extension host, discarded by `isIgnorableReference`); with
+  `chat.useNestedAgentsMdFiles`, a `**/AGENTS.md` workspace file search. MCP
+  autostart is awaited too (`chat.mcp.autostart`).
+  `chat.experimental.collectInstructionsInExtension` (main, experimental) skips
+  the core path.

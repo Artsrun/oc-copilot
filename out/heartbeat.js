@@ -208,8 +208,12 @@ function startHeartbeat(response, initial, timeoutMs, cwd) {
         remember(g);
     };
     return {
-        phase: (text) => {
+        phase: (text, quiet = false) => {
             if (stopped) {
+                return;
+            }
+            if (quiet) {
+                phase = text;
                 return;
             }
             sub = "";

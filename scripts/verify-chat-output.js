@@ -227,6 +227,7 @@ const settings = {
     planAgent: "plan",
     readOnlySubagents: ["explore"],
     attachDevToServer: true,
+    prewarmServer: true,
     toolQuietMs: 600000,
     busySessionPolicy: "abort",
     commandAliases: {},
@@ -4418,7 +4419,7 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
                 if (v5.agentFail) return send(500, { name: "UnknownError", data: { message: "Unexpected server error" } });
                 return send(200, V5_AGENTS);
             }
-            if (u.pathname === "/session/status") return send(200, {});
+            if (u.pathname === "/session/status") return send(200, v5.status ?? {});
             if (u.pathname === "/__ask") {
                 // An attached CLI's session asks a question and a permission.
                 const sid = u.searchParams.get("sid");
@@ -4464,6 +4465,14 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
                 const sum = u.pathname.match(/^\/session\/([^/]+)\/summarize$/);
                 if (sum && req.method === "POST") {
                     v5.summarize.push({ sid: sum[1], body, dir });
+                    // 1.18.32: the summary is a prompt loop — the session reads busy until it ends.
+                    if (v5.summarizeMs) {
+                        v5.status = { ...(v5.status ?? {}), [sum[1]]: { type: "busy" } };
+                        return setTimeout(() => {
+                            delete v5.status[sum[1]];
+                            send(200, true);
+                        }, v5.summarizeMs);
+                    }
                     return send(200, true);
                 }
                 if (req.method === "PATCH") {
@@ -5198,15 +5207,60 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         // on github-copilot/claude-sonnet-4.6).
         globalMemento.set("opencode.models.v1", { models: ["aaa/first-in-catalog", "prov/pick"], fetchedAt: Date.now() });
         Object.assign(settings, { autoCompact: true, autoCompactEveryTurns: 1 });
+        // v207: the turn count alone compacts only a context of 20k or more —
+        // below that a summary costs a model pass and loses detail for nothing.
+        const dmTokens = v5.tokens;
         v5.summarize.length = 0;
+        v5.tokens = { input: 5, output: 2, reasoning: 0, total: 5000, cache: { read: 0, write: 0 } };
+        const dmSmall = await v5Turn("which model for dm small compact");
+        await new Promise((r) => setTimeout(r, 300));
+        add(
+            "DM the turn count alone does not compact a 5k context",
+            dmSmall.result?.metadata?.context === 5000 && v5.summarize.length === 0 && !logLines.some((l) => /compacting ses_\S+: turn \d+, context 5000\b/.test(l))
+        );
+        v5.tokens = { input: 5, output: 2, reasoning: 0, total: 25000, cache: { read: 0, write: 0 } };
         const dm2 = await v5Turn("which model for dm compact");
         await waitFor(() => v5.summarize.length > 0, 3000);
+        v5.tokens = dmTokens;
         const dmSum = v5.summarize[0];
         add(
             "DM compaction summarizes with the model that answered, scoped to the turn's folder",
             !!dmSum && dmSum.sid === dm2.result?.metadata?.sessionId && dmSum.body.providerID === "oc" && dmSum.body.modelID === "server-default" && dmSum.dir === work
         );
         add("DM …never the catalog's first model", !v5.summarize.some((s) => s.body.modelID === "first-in-catalog"));
+        // CQ (v207): OpenCode's auto compaction appends "Continue if you have
+        // next steps" and runs a turn no chat shows (1.18.32 compaction.ts);
+        // the bridge asks for the manual kind, as OpenCode's own /compact does.
+        add("CQ the summary is the manual kind: auto false, no hidden continue turn", dmSum?.body?.auto === false);
+
+        // CQ: the next turn waits for this window's own summary instead of
+        // aborting it as an unwatched run (0.0.206 aborted it: busy → abort).
+        {
+            const cqTokens = v5.tokens;
+            v5.tokens = { input: 5, output: 2, reasoning: 0, total: 25000, cache: { read: 0, write: 0 } };
+            v5.summarize.length = 0;
+            v5.aborts.length = 0;
+            v5.summarizeMs = 700;
+            const cqA = await v5Turn("explain the totals for cq one");
+            await waitFor(() => v5.summarize.length > 0, 3000);
+            const cqSid = cqA.result?.metadata?.sessionId;
+            const cqLog = logLines.length;
+            Object.assign(settings, { autoCompact: false });
+            const cqB = await v5Turn("and the discounts for cq two", {}, v5Hist(cqA));
+            const cqLines = logLines.slice(cqLog);
+            add(
+                "CQ the next turn waits for its session's summary, then runs",
+                !!cqSid && cqB.result?.metadata?.sessionId === cqSid && cqLines.some((l) => /waited \d+(\.\d+)?\s*m?s for the session summary$/.test(l)) && /answered by/.test(cqB.md)
+            );
+            add("CQ …and never aborts it", !v5.aborts.includes(cqSid) && !/still busy with an earlier run/.test(cqB.md));
+            add(
+                "CQ …and says what it waits for",
+                cqB.h.main.parts.some((p) => /Finishing this session's summary first/.test(String(p.content ?? p.value ?? "")))
+            );
+            v5.summarizeMs = 0;
+            v5.tokens = cqTokens;
+            Object.assign(settings, { autoCompact: true });
+        }
         Object.assign(settings, { autoCompact: false, autoCompactEveryTurns: 8 });
 
         // No model from the turn (a cold CLI run names none): read the session.
@@ -6762,6 +6816,332 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         ext.deactivate();
         settings.transport = sb4Transport;
         Object.assign(settings, { executable: sbSaved.exe, serverPort: sbSaved.port, serverStartupPollMs: sbSaved.poll });
+
+        // ---- v207 ----
+        const occurrences = (text, needle) => text.split(needle).length - 1;
+
+        // GT: the two gates a streamed answer needs. A leaked block or an echoed
+        // prompt split across deltas is never whole in any one of them.
+        {
+            const lg = ext.__test.createLeakGate();
+            const lgOut = [lg.push("Hello <workspace-"), lg.push("context>SECRET</workspace-context> world"), lg.flush()].join("");
+            add(`GT the leak gate drops a block split across deltas (${JSON.stringify(lgOut)})`, lgOut === "Hello world");
+            const lg2 = ext.__test.createLeakGate();
+            const lg2Out = [lg2.push("a rule\n---"), lg2.push("\nmore"), lg2.flush()].join("");
+            add("GT …and keeps a markdown rule that is only a rule", lg2Out === "a rule\n---\nmore");
+            const lg3 = ext.__test.createLeakGate();
+            const lg3Out = [lg3.push("x\n---\n(Context"), lg3.push(" only. Do not repeat or summarize this block.)"), lg3.flush()].join("");
+            add("GT …and the bridge's own preamble said back in pieces", lg3Out === "x\n");
+            const eg = ext.__test.createEchoGate(["what does the cart total do"]);
+            const egOut = [eg.push("what does ", "p1"), eg.push("the cart total do", "p1"), eg.push("The total is 3.", "p2"), eg.flush()];
+            add(`GT the echo gate drops a prompt said back in deltas (${JSON.stringify(egOut)})`, egOut.join("") === "The total is 3." && egOut[0] === "" && egOut[1] === "");
+            const eg2 = ext.__test.createEchoGate(["what does the cart total do"]);
+            add(
+                "GT …and releases an answer that only starts like the prompt",
+                [eg2.push("what does", "q"), eg2.push(" it matter? It returns 3.", "q"), eg2.flush()].join("") === "what does it matter? It returns 3."
+            );
+            const eg3 = ext.__test.createEchoGate(["fix the bug"]);
+            const eg3Out = [eg3.push("Fix the bug"), eg3.push("Done: fixed.")];
+            add("GT …whole parts as before: the echo dropped, the answer kept", eg3Out[0] === "" && eg3Out[1] === "Done: fixed.");
+            const kinds = new Map([["prt_t", "text"], ["prt_r", "reasoning"], ["prt_tool", "tool"]]);
+            const d = (sid, part, delta, field = "text") => ({ type: "message.part.delta", properties: { sessionID: sid, messageID: "m", partID: part, field, delta } });
+            const pd = ext.__test.partDeltaOf(d("s1", "prt_t", "abc"), "s1", kinds);
+            add(
+                "GT a delta is read for its own session's text and reasoning parts only",
+                pd?.key === "t:prt_t" && pd.delta === "abc" && ext.__test.partDeltaOf(d("s1", "prt_r", "x"), "s1", kinds)?.kind === "reasoning" &&
+                !ext.__test.partDeltaOf(d("s2", "prt_t", "x"), "s1", kinds) && !ext.__test.partDeltaOf(d("s1", "prt_tool", "x"), "s1", kinds) &&
+                !ext.__test.partDeltaOf(d("s1", "prt_unknown", "x"), "s1", kinds) && !ext.__test.partDeltaOf(d("s1", "prt_t", "x", "metadata"), "s1", kinds)
+            );
+            const now = 1_000_000;
+            const pr = ext.__test.providerRetryOf({ type: "session.status", properties: { sessionID: "s1", status: { type: "retry", attempt: 2, message: "Rate limited", next: now + 5000 } } }, "s1", now);
+            add(
+                "GT a provider retry is read from session.status",
+                pr?.attempt === 2 && pr.message === "Rate limited" && pr.nextMs === 5000 &&
+                !ext.__test.providerRetryOf({ type: "session.status", properties: { sessionID: "s1", status: { type: "busy" } } }, "s1", now) &&
+                !ext.__test.providerRetryOf({ type: "session.status", properties: { sessionID: "s2", status: { type: "retry", attempt: 1 } } }, "s1", now)
+            );
+        }
+
+        // DS: the server transport streams deltas. 1.18.32 sends text and
+        // reasoning as message.part.delta (no `part`); the whole part comes once,
+        // at its end. 0.0.206 read only part.updated, so an answer appeared whole.
+        {
+            const dsSid = "ses_ds";
+            const dsSse = [];
+            let dsAnsweredAt = 0;
+            const emit = (o) => dsSse.forEach((r) => r.write(`data: ${JSON.stringify(o)}\n\n`));
+            const part = (p) => ({ type: "message.part.updated", properties: { sessionID: dsSid, part: { sessionID: dsSid, messageID: "msg_ds", ...p } } });
+            const delta = (id, text) => ({ type: "message.part.delta", properties: { sessionID: dsSid, messageID: "msg_ds", partID: id, field: "text", delta: text } });
+            const full = "The total is computed once. <workspace-context>SECRET-CTX</workspace-context> Done.";
+            const dsServer = http.createServer((req, res) => {
+                const u = new URL(req.url, "http://x");
+                const send = (code, payload) => {
+                    res.writeHead(code, { "content-type": "application/json" });
+                    res.end(JSON.stringify(payload));
+                };
+                if (u.pathname === "/global/health") return send(200, { healthy: true, version: "1.18.34" });
+                if (u.pathname === "/global/event") {
+                    res.writeHead(200, { "content-type": "text/event-stream" });
+                    res.write(": hi\n\n");
+                    dsSse.push(res);
+                    return;
+                }
+                if (u.pathname === "/session/status") return send(200, {});
+                req.resume();
+                req.on("end", () => {
+                    if (req.method === "POST" && u.pathname === "/session") return send(200, { id: dsSid });
+                    if (req.method === "POST" && u.pathname === `/session/${dsSid}/message`) {
+                        const plan = [
+                            [0, { type: "session.status", properties: { sessionID: dsSid, status: { type: "retry", attempt: 2, message: "Rate limited", next: Date.now() + 5000 } } }],
+                            [30, part({ id: "prt_r", type: "reasoning", text: "" })],
+                            [40, delta("prt_r", "Checking the cart totals now. ")],
+                            [50, delta("prt_r", "Totals look right.")],
+                            [60, part({ id: "prt_r", type: "reasoning", text: "Checking the cart totals now. Totals look right.", time: { start: 1, end: 2 } })],
+                            [70, part({ id: "prt_echo", type: "text", text: "" })],
+                            [80, delta("prt_echo", "what does the ")],
+                            [90, delta("prt_echo", "cart total do")],
+                            [100, part({ id: "prt_echo", type: "text", text: "what does the cart total do", time: { start: 1, end: 2 } })],
+                            [110, part({ id: "prt_t", type: "text", text: "" })],
+                            [120, delta("prt_t", "The total is ")],
+                            [130, delta("prt_t", "computed once. <workspace-")],
+                            [140, delta("prt_t", "context>SECRET-CTX</workspace-context>")],
+                            [150, delta("prt_t", " Done.")],
+                            [160, part({ id: "prt_t", type: "text", text: full, time: { start: 1, end: 2 } })],
+                            [170, part({ id: "prt_sf", type: "step-finish", reason: "length", tokens: { input: 9, output: 9, total: 18, reasoning: 0, cache: { read: 0, write: 0 } } })]
+                        ];
+                        for (const [ms, ev] of plan) setTimeout(() => emit(ev), ms);
+                        setTimeout(() => {
+                            dsAnsweredAt = Date.now();
+                            send(200, {
+                                info: { sessionID: dsSid, providerID: "oc", modelID: "ds", cost: 0, tokens: { input: 9, output: 9, total: 18, reasoning: 0, cache: { read: 0, write: 0 } } },
+                                parts: [
+                                    { id: "prt_r", sessionID: dsSid, type: "reasoning", text: "Checking the cart totals now. Totals look right." },
+                                    { id: "prt_echo", sessionID: dsSid, type: "text", text: "what does the cart total do" },
+                                    { id: "prt_t", sessionID: dsSid, type: "text", text: full },
+                                    { id: "prt_sf", sessionID: dsSid, type: "step-finish", reason: "length" }
+                                ]
+                            });
+                        }, 600);
+                        return;
+                    }
+                    return send(200, {});
+                });
+            });
+            await new Promise((r) => dsServer.listen(0, "127.0.0.1", r));
+            const dsSaved = { t: settings.transport, p: settings.serverPort };
+            Object.assign(settings, { transport: "server", serverPort: dsServer.address().port });
+            memento.clear();
+            const ds = stream();
+            const dsAt = [];
+            const dsMd = ds.response.markdown;
+            ds.response.markdown = (v) => {
+                dsAt.push([Date.now(), String(typeof v === "string" ? v : v.value)]);
+                dsMd(v);
+            };
+            const dsResult = await global.__handler({ prompt: "what does the cart total do" }, {}, ds.response, ds.token);
+            const dsChat = ds.chatMarkdown.join("");
+            // Streamed means in pieces, as they come: the part's first words reach
+            // chat on their own, before its last delta exists — not the whole part
+            // at its end (which also beats the POST reply, so that proves nothing).
+            const dsFirst = dsAt.find(([, t]) => t.includes("The total is"));
+            const dsLast = dsAt.find(([, t]) => t.includes("Done."));
+            add(
+                `DS the answer streams in pieces, before the part ends (first words ${dsFirst && dsLast ? dsLast[0] - dsFirst[0] : "?"} ms before the last)`,
+                !!dsFirst && !!dsLast && !dsFirst[1].includes("Done.") && dsFirst[0] < dsLast[0] && dsAnsweredAt > 0 && dsFirst[0] < dsAnsweredAt
+            );
+            add("DS each piece of the answer arrives once", occurrences(dsChat, "The total is") === 1 && occurrences(dsChat, "computed once.") === 1 && occurrences(dsChat, "Done.") === 1);
+            add("DS a prompt said back in deltas is dropped", !dsChat.includes("what does the cart total do"));
+            add("DS a context block leaked across deltas is dropped", !/SECRET-CTX|workspace-context/.test(dsChat));
+            add("DS reasoning deltas reach the live thought line", ds.progress.some((p) => /Checking the cart totals now/.test(p)));
+            add("DS a provider retry names the wait", ds.progress.some((p) => /Provider retry 2 · Rate limited · next in \d+s/.test(p)));
+            add("DS an answer cut at the output limit says so", /output limit/.test(dsChat) && dsResult?.metadata?.truncated === true);
+            const dsChips = global.__participant.followupProvider.provideFollowups(dsResult);
+            add(
+                `DS …and its first chip finishes it (${dsChips.map((c) => c.label).join(" | ")})`,
+                dsChips[0]?.label?.endsWith("Finish it") && dsChips[0].prompt === P.CUT_OFF && dsChips[0].command === "plan"
+            );
+            dsSse.forEach((r) => r.end());
+            dsServer.closeAllConnections?.();
+            await new Promise((r) => dsServer.close(r));
+            Object.assign(settings, { transport: dsSaved.t, serverPort: dsSaved.p });
+            memento.clear();
+        }
+
+        // DT: an attached /dev run streams the same deltas from the SSE it
+        // already watches; the CLI prints a part only when it ends (1.18.32
+        // run.ts `part.time?.end`), so stdout then adds only the rest.
+        {
+            const dtSse = [];
+            const dtSid = "ses_dt";
+            const emit = (o) => dtSse.forEach((r) => r.write(`data: ${JSON.stringify(o)}\n\n`));
+            const dtServer = http.createServer((req, res) => {
+                const u = new URL(req.url, "http://x");
+                const send = (code, payload) => {
+                    res.writeHead(code, { "content-type": "application/json" });
+                    res.end(JSON.stringify(payload));
+                };
+                if (u.pathname === "/global/health") return send(200, { healthy: true, version: "1.18.34" });
+                if (u.pathname === "/global/event") {
+                    res.writeHead(200, { "content-type": "text/event-stream" });
+                    res.write(": hi\n\n");
+                    dtSse.push(res);
+                    return;
+                }
+                if (u.pathname === "/session/status") return send(200, {});
+                if (u.pathname === "/__go") {
+                    const sid = u.searchParams.get("sid");
+                    emit({ type: "message.part.updated", properties: { sessionID: sid, part: { id: "prt_dt", sessionID: sid, type: "text", text: "" } } });
+                    emit({ type: "message.part.delta", properties: { sessionID: sid, partID: "prt_dt", field: "text", delta: "Attached streaming works." } });
+                    emit({ type: "message.part.delta", properties: { sessionID: sid, partID: "prt_dt", field: "text", delta: " All good." } });
+                    return send(200, {});
+                }
+                if (u.pathname === "/__late") {
+                    const sid = u.searchParams.get("sid");
+                    emit({ type: "message.part.delta", properties: { sessionID: sid, partID: "prt_dt", field: "text", delta: " LATE-DELTA" } });
+                    return send(200, {});
+                }
+                req.resume();
+                req.on("end", () => (req.method === "POST" && u.pathname === "/session" ? send(200, { id: dtSid }) : send(200, {})));
+            });
+            await new Promise((r) => dtServer.listen(0, "127.0.0.1", r));
+            const dtPrinted = path.join(work, "dt-printed-at");
+            const dtFake = writeFake(
+                "fake-dt-attach.js",
+                [],
+                "const http = require('http');\n" +
+                "const a = process.argv; const url = a[a.indexOf('--attach') + 1];\n" +
+                "const sid = a.includes('--session') ? a[a.indexOf('--session') + 1] : 'none';\n" +
+                "const hit = (p) => new Promise((r) => http.get(url + p, (res) => { res.resume(); res.on('end', r); }).on('error', r));\n" +
+                "const wait = (ms) => new Promise((r) => setTimeout(r, ms));\n" +
+                "(async () => { await hit('/__go?sid=' + sid); await wait(300);\n" +
+                "  fs.writeFileSync(" + JSON.stringify(dtPrinted) + ", String(Date.now()));\n" +
+                "  process.stdout.write(JSON.stringify({ type: 'text', sessionID: sid, part: { id: 'prt_dt', type: 'text', text: 'Attached streaming works. All good.', time: { start: 1, end: 2 } } }) + '\\n');\n" +
+                "  process.stdout.write(JSON.stringify({ type: 'step_finish', sessionID: sid, part: { type: 'step-finish', reason: 'stop', tokens: { input: 1, output: 1, total: 2, reasoning: 0, cache: { read: 0, write: 0 } }, cost: 0 } }) + '\\n');\n" +
+                "  await wait(60); await hit('/__late?sid=' + sid); await wait(200); })();\n"
+            );
+            const dtSaved = { t: settings.transport, p: settings.serverPort, e: settings.executable, a: settings.attachDevToServer };
+            Object.assign(settings, { transport: "auto", attachDevToServer: true, serverPort: dtServer.address().port, executable: dtFake });
+            memento.clear();
+            const dt = stream();
+            const dtAt = [];
+            const dtMd = dt.response.markdown;
+            dt.response.markdown = (v) => {
+                dtAt.push([Date.now(), String(typeof v === "string" ? v : v.value)]);
+                dtMd(v);
+            };
+            await global.__handler({ prompt: "make the totals stream", command: "dev" }, {}, dt.response, dt.token);
+            const dtChat = dt.chatMarkdown.join("");
+            const printedAt = fs.existsSync(dtPrinted) ? Number(fs.readFileSync(dtPrinted, "utf8")) : 0;
+            const dtFirst = dtAt.find(([, t]) => t.includes("Attached streaming works"));
+            add(`DT an attached run streams before its CLI prints the part (${dtFirst && printedAt ? printedAt - dtFirst[0] : "?"} ms ahead)`, !!dtFirst && printedAt > 0 && dtFirst[0] < printedAt);
+            add("DT …and the whole part from stdout adds nothing twice", occurrences(dtChat, "Attached streaming works.") === 1 && occurrences(dtChat, "All good.") === 1);
+            add("DT a delta after the whole part is ignored", !dtChat.includes("LATE-DELTA"));
+            dtSse.forEach((r) => r.end());
+            dtServer.closeAllConnections?.();
+            await new Promise((r) => dtServer.close(r));
+            Object.assign(settings, { transport: dtSaved.t, serverPort: dtSaved.p, executable: dtSaved.e, attachDevToServer: dtSaved.a });
+            memento.clear();
+        }
+
+        // FX: follow-ups that fit the failure. Continue after a rate limit meets
+        // the same wall; after a hung tool it runs the tool again; after a Stop
+        // before sending there is nothing to continue.
+        {
+            const fx = (metadata) => global.__participant.followupProvider.provideFollowups({ metadata });
+            const fxModel = { kind: "plan", agent: "plan", turns: 2, error: "429 Too Many Requests: rate limit exceeded" };
+            const fxM = fx(fxModel);
+            add(
+                `FX a rate limit gets Retry and Pick model (${fxM.map((c) => `${c.label}/${c.command}`).join(" | ")})`,
+                ext.__test.outcomeOf(fxModel) === "failedModel" && fxM.length === 2 && fxM[0].label.endsWith("Retry") && fxM[1].label.endsWith("Pick model") && fxM[1].command === "model"
+            );
+            add(
+                "FX …and so do a refused key and an unknown model",
+                ["401 Unauthorized: invalid x-api-key", "ProviderModelNotFoundError: model gpt-9 not found"].every((error) => ext.__test.outcomeOf({ kind: "plan", turns: 1, error }) === "failedModel")
+            );
+            add(
+                "FX a connection failure stays Ping, any other error stays Continue",
+                ext.__test.outcomeOf({ kind: "plan", turns: 1, error: "connect ECONNREFUSED 127.0.0.1:53200" }) === "failedNet" &&
+                ext.__test.outcomeOf({ kind: "plan", turns: 1, error: 'Agent not found: "ghost"' }) === "failed"
+            );
+            const fxStuck = { kind: "dev", agent: "dev", turns: 3, timedOut: true, stuckTool: "bash" };
+            const fxS = fx(fxStuck);
+            add(
+                `FX a run stopped on a hung tool gets Skip it, under its own kind (${fxS.map((c) => c.label).join(" | ")})`,
+                ext.__test.outcomeOf(fxStuck) === "failedStuck" && fxS[0]?.label.endsWith("Skip it") && /^The bash call hung and was stopped\./.test(fxS[0].prompt) && fxS[0].command === "dev" && fxS[1]?.label.endsWith("Continue")
+            );
+            memento.clear();
+            const fxStop = stream();
+            fxStop.token.cancel();
+            const fxStopped = await global.__handler({ prompt: "fix the rounding in src/cart.js", command: "dev" }, {}, fxStop.response, fxStop.token);
+            const fxE = fx(fxStopped?.metadata ?? {});
+            add(
+                `FX Stop before the message was sent offers it again, not Continue (${fxE.map((c) => `${c.label}/${c.command}: ${c.prompt}`).join(" | ")})`,
+                fxStopped?.metadata?.notSent === true && ext.__test.outcomeOf(fxStopped.metadata) === "cancelledEarly" &&
+                fxE.length === 1 && fxE[0].label.endsWith("Retry") && fxE[0].prompt === "fix the rounding in src/cart.js" && fxE[0].command === "dev"
+            );
+            add("FX a Stop mid-run is still Continue", ext.__test.outcomeOf({ kind: "plan", turns: 1, cancelled: true }) === "cancelled");
+            const fxCut = fx({ kind: "plan", agent: "plan", sessionId: "ses_fx_cut", turns: 4, truncated: true });
+            add("FX a cut-off answer's first chip is Finish it, never held back", fxCut[0]?.label.endsWith("Finish it") && fxCut[0].prompt === P.CUT_OFF);
+            memento.clear();
+        }
+
+        // PV: the server boots before the first message. Trusted workspaces
+        // only (OpenCode loads the folder's config and plugins), never on
+        // transport cli; a turn that arrives mid-boot joins the same start.
+        {
+            ext.deactivate();
+            const pvSaved = { exe: settings.executable, port: settings.serverPort, t: settings.transport, poll: settings.serverStartupPollMs, pre: settings.prewarmServer };
+            const pvSpawns = path.join(work, "pv-spawns.txt");
+            const pvFake = writeFake(
+                "fake-pv-serve.js",
+                [],
+                "const i = process.argv.indexOf('--port');\n" +
+                "if (process.argv.includes('serve') && i > 0) {\n" +
+                "  fs.appendFileSync(" + JSON.stringify(pvSpawns) + ", 'spawn\\n');\n" +
+                "  const t0 = Date.now();\n" +
+                "  require('http').createServer((q, s) => {\n" +
+                "    if (Date.now() - t0 < 1900) return; // booting: accepts, never answers\n" +
+                "    s.setHeader('content-type', 'application/json');\n" +
+                "    s.end(q.url.startsWith('/global/health') ? JSON.stringify({ healthy: true, version: '1.18.34' }) : q.url.startsWith('/session') ? '[]' : '{}');\n" +
+                "  }).listen(Number(process.argv[i + 1]), '127.0.0.1');\n" +
+                "}\n"
+            );
+            Object.assign(settings, { executable: pvFake, serverPort: await sbPort(), transport: "auto", serverStartupPollMs: 100, prewarmServer: true });
+            delete vscodeStub.workspace.isTrusted;
+            const pvUntrusted = ext.__test.prewarmServer();
+            vscodeStub.workspace.isTrusted = true;
+            settings.transport = "cli";
+            const pvCli = ext.__test.prewarmServer();
+            settings.transport = "auto";
+            settings.prewarmServer = false;
+            const pvOff = ext.__test.prewarmServer();
+            settings.prewarmServer = true;
+            add(
+                "PV no prewarm in an untrusted workspace, on transport cli, or with prewarmServer off",
+                pvUntrusted === undefined && pvCli === undefined && pvOff === undefined && !fs.existsSync(pvSpawns)
+            );
+            const pvLog = logLines.length;
+            const pv = ext.__test.prewarmServer();
+            const pvTurn = stream();
+            await global.__handler({ prompt: "", command: "sessions" }, { history: [] }, pvTurn.response, pvTurn.token);
+            const pvBase = await pv;
+            const pvSpawned = fs.existsSync(pvSpawns) ? fs.readFileSync(pvSpawns, "utf8").trim().split("\n").length : 0;
+            add(
+                `PV a trusted window starts the server in the background (${pvBase})`,
+                typeof pvBase === "string" && /^http:\/\/127\.0\.0\.1:\d+$/.test(pvBase) && logLines.slice(pvLog).some((l) => l.includes(`prewarming the OpenCode server for ${work}`))
+            );
+            add(`PV a turn mid-boot joins that start: one spawn (saw ${pvSpawned})`, pvSpawned === 1 && /No OpenCode sessions in/.test(pvTurn.chatMarkdown.join("")));
+            add("PV …and is told it waits on a boot", pvTurn.progress.some((t) => /Starting the OpenCode server/.test(t)));
+            const pvPkg = JSON.parse(fs.readFileSync(path.join(repoDir, "package.json"), "utf8"));
+            add(
+                "PV activation schedules it after startup, off the activation path",
+                pvPkg.activationEvents.includes("onStartupFinished") &&
+                /setTimeout\(\(\) => void prewarmServer\(\), PREWARM_DELAY_MS\)/.test(fs.readFileSync(path.join(repoDir, "src", "extension.ts"), "utf8"))
+            );
+            ext.deactivate();
+            delete vscodeStub.workspace.isTrusted;
+            Object.assign(settings, { executable: pvSaved.exe, serverPort: pvSaved.port, transport: pvSaved.t, serverStartupPollMs: pvSaved.poll, prewarmServer: pvSaved.pre });
+        }
 
         // SA: serverPort 0 (the default) starts the server on a free port of the
         // bridge's choosing and never adopts a listener it did not start. The

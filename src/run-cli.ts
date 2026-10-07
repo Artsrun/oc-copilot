@@ -8,7 +8,7 @@ import { killTree, spawnOpenCode } from "./proc";
 import { connectSse, sessionIdFromEvent } from "./net";
 import { RunMetrics, RunOptions, StepRecord, TokenUsage, contextOf, stepOutput, toolFilePath } from "./metrics";
 import { FamilyWatch, watchFamily } from "./asks";
-import { addSubagents, blankMetrics, noteModel, noteTask, stepDetail } from "./run-steps";
+import { addSubagents, applyPartDelta, blankMetrics, markFirstByte, noteModel, notePartKind, noteTask, partDeltaOf, providerRetryOf, stepDetail } from "./run-steps";
 import { applyTurnPermission, safeSessionId } from "./server-session";
 
 // Enough for any real stack trace or OpenCode error dump; small enough that a
@@ -86,6 +86,14 @@ function runCli(options: RunOptions): Promise<RunMetrics> {
         // from the session's SSE, rendering from stdout (1.18.32).
         const runningTools = new Map<string, { tool: string; since: number; detail: string }>();
         const toolQuietMs = Math.max(0, options.toolQuietMs ?? 0);
+        // The attached CLI prints a text or reasoning part only when it ENDS
+        // (1.18.32 run.ts: `part.time?.end`); the same server streams it as
+        // deltas. Deltas go out as they come, counted per part, and stdout's
+        // whole part then adds only the rest; a delta after that is late.
+        const partKinds = new Map<string, string>();
+        const streamed = new Map<string, number>();
+        const closedParts = new Set<string>();
+        let lastRetry = -1;
         let sse: { close: () => void } | undefined;
         let family: FamilyWatch | undefined;
         if (options.attachUrl && options.sessionId) {
@@ -101,6 +109,22 @@ function runCli(options: RunOptions): Promise<RunMetrics> {
                         return;
                     }
                     markActive();
+                    notePartKind(part, partKinds);
+                    const delta = partDeltaOf(ev, mine, partKinds);
+                    if (delta) {
+                        metrics.serverActivity = true;
+                        applyPartDelta(delta, metrics, options, started, streamed, closedParts);
+                        return;
+                    }
+                    const retry = providerRetryOf(ev, mine);
+                    if (retry) {
+                        if (retry.attempt !== lastRetry) {
+                            lastRetry = retry.attempt;
+                            logChannel.appendLine(`[${stamp()}] ${mark("quiet")} provider retry ${retry.attempt}: ${retry.message || "no reason given"}`);
+                        }
+                        options.onRetry?.(retry);
+                        return;
+                    }
                     noteModel(ev, metrics);
                     if (part && (part.type === "tool" || part.type === "reasoning" || part.type === "text")) {
                         metrics.serverActivity = true;
@@ -142,6 +166,19 @@ function runCli(options: RunOptions): Promise<RunMetrics> {
         // Keyed as the server runner keys it: both transports give identical steps,
         // and two genuine `read x` calls stay two.
         const tools = new Map<string, StepRecord>();
+
+        // How much of a whole part the deltas already sent; its key takes no
+        // more deltas after this.
+        const wholePart = (kind: "t" | "r", part: Record<string, unknown> | undefined, text: string): number => {
+            const id = typeof part?.id === "string" ? part.id : "";
+            if (!id) {
+                return 0;
+            }
+            const key = `${kind}:${id}`;
+            closedParts.add(key);
+            const sent = streamed.get(key) ?? 0;
+            return sent <= text.length ? sent : text.length;
+        };
 
         let markActive: () => void = () => undefined;
         const handleEvent = (rawEvent: Record<string, unknown>): void => {
@@ -207,19 +244,26 @@ function runCli(options: RunOptions): Promise<RunMetrics> {
                 }
                 case "reasoning": {
                     const text = (part?.text as string) ?? "";
+                    const rest = text.slice(wholePart("r", part, text));
+                    if (rest) {
+                        metrics.reasoning += (metrics.reasoning && rest === text ? "\n" : "") + rest;
+                        options.onReasoning?.(rest);
+                    }
                     if (text) {
-                        metrics.reasoning += (metrics.reasoning ? "\n" : "") + text;
-                        options.onReasoning?.(text);
                         debugLine(`${mark("thought")} ${truncate(text, 200)}`);
                     }
                     break;
                 }
                 case "text": {
                     const text = (part?.text as string) ?? "";
+                    const rest = text.slice(wholePart("t", part, text));
                     if (text) {
                         metrics.hadOutput = true;
-                        options.onText?.(text);
                         debugLine(`${mark("text")} ${truncate(text, 200)}`);
+                    }
+                    if (rest) {
+                        markFirstByte(metrics, started);
+                        options.onText?.(rest, typeof part?.id === "string" && part.id ? part.id : undefined);
                     }
                     break;
                 }
@@ -236,6 +280,9 @@ function runCli(options: RunOptions): Promise<RunMetrics> {
                         metrics.tokens.cache.write += tokens.cache?.write ?? 0;
                     }
                     metrics.cost += (part?.cost as number) ?? 0;
+                    if (reason) {
+                        metrics.finishReason = reason;
+                    }
                     logChannel.appendLine(
                         `[${stamp()}] ${mark("step")} step finish (${reason}) ` +
                         `in=${tokens?.input ?? 0} out=${tokens?.output ?? 0} ` +

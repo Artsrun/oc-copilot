@@ -9,6 +9,8 @@
         "COMPARE_LANES": "Compare the lane answers from run {run}: one task, answered by different models. Say where they agree, check each disagreement against the code, and say which answer holds up. {tail}",
         "RESUME_TASK": "The {agent} subagent stopped before it finished ({description}). Call the task tool again with task_id {task} so it resumes where it was, let it finish, then report. {tail}",
         "RERUN_TASK": "The {agent} subagent stopped before it finished ({description}). Run it again, let it finish, then report. {tail}",
+        "CUT_OFF": "Your last answer was cut off at the output limit. Continue exactly where it stopped. {tail}",
+        "SKIP_STUCK": "The {tool} call hung and was stopped. Continue without running it again; if you need what it would return, use a bounded variant with a timeout. {tail}",
         "LANES_GONE": "Those lane answers are gone. They live only in this window, and it has been reloaded since, so nothing was run. Send the lanes again to merge them."
     },
     "chips": {
@@ -24,7 +26,10 @@
         "RETRY_LANES": { "kao": "(ﾉ´･ω･)ﾉ", "label": "Retry lanes", "prompt": "", "command": "parallel" },
         "RESUME_TASK": { "kao": "(ง •̀ω•́)ง", "label": "Resume", "prompt": "RESUME_TASK", "command": "@kind" },
         "RERUN_TASK": { "kao": "(ง •̀_•́)ง", "label": "Rerun", "prompt": "RERUN_TASK", "command": "@kind" },
-        "COMPACT": { "kao": "(っ˘ω˘ς)", "label": "Compact", "prompt": "", "command": "compact" }
+        "COMPACT": { "kao": "(っ˘ω˘ς)", "label": "Compact", "prompt": "", "command": "compact" },
+        "MODEL": { "kao": "(・・;)ゞ", "label": "Pick model", "prompt": "", "command": "model" },
+        "SKIP_STUCK": { "kao": "┐(￣ヘ￣)┌", "label": "Skip it", "prompt": "SKIP_STUCK", "command": "@kind" },
+        "CUT_OFF": { "kao": "(•̀ω•́)ゞ", "label": "Finish it", "prompt": "CUT_OFF", "command": "@kind" }
     },
     "cases": {
         "silent": [],
@@ -36,7 +41,10 @@
         "failed": ["RETRY", "CONTINUE"],
         "failedLong": ["RETRY", "CONTINUE", "NEW"],
         "failedNet": ["RETRY", "PING"],
-        "cancelled": ["CONTINUE"]
+        "failedModel": ["RETRY", "MODEL"],
+        "failedStuck": ["SKIP_STUCK", "CONTINUE"],
+        "cancelled": ["CONTINUE"],
+        "cancelledEarly": ["RETRY"]
     },
     "natural": {
         "maxLabel": 56,

@@ -16,7 +16,7 @@ export type MarkKey = keyof typeof data.marks;
 export type Outcome = keyof typeof data.cases;
 export type NaturalKey = Exclude<keyof typeof data.natural, "maxLabel">;
 /** The commands a chip may name besides "@kind" — one table for the type and the check. */
-export const CHIP_COMMANDS = ["dev", "plan", "new", "ping", "parallel", "compact"] as const;
+export const CHIP_COMMANDS = ["dev", "plan", "new", "ping", "parallel", "compact", "model"] as const;
 export type ChipCommand = (typeof CHIP_COMMANDS)[number];
 
 /** The one phrase every sent prompt ends with. */

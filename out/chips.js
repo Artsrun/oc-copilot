@@ -38,7 +38,7 @@ function recalledFollowups(sessionId, turns) {
 const BACKOFF_KEY = "opencodeCopilotBridge.chipBackoff";
 const BACKOFF_AFTER = 3;
 const BACKOFF_MAX_HOLD = 32;
-const NEVER_HELD = new Set(["offer", "choice", "RESUME_TASK", "RERUN_TASK"]);
+const NEVER_HELD = new Set(["offer", "choice", "RESUME_TASK", "RERUN_TASK", "CUT_OFF"]);
 const readBackoff = () => {
     const stored = core_1.extensionContext?.globalState?.get(BACKOFF_KEY);
     const message = typeof stored?.message === "number" && Number.isFinite(stored.message) ? stored.message : 0;
@@ -92,6 +92,7 @@ function resetChipBackoff() {
 }
 const stripKind = (text) => text.replace(/^\/(?:dev|plan)\b\s*/i, "");
 const UNREACHABLE = /ENOENT|ECONNREFUSED|ECONNRESET|EAI_AGAIN|ETIMEDOUT|not found on PATH|could not be started|unreachable|socket hang up|fetch failed/i;
+const MODEL_TROUBLE = /rate[ _-]?limit|too many requests|\b429\b|\bquota\b|insufficient[ _](?:quota|credits?|funds|balance)|credit balance|billing|overloaded|\bmodel\b[^.\n]{0,40}\bnot (?:found|supported|available)|unknown model|no such model|ModelNotFound|unauthori[sz]ed|\b401\b|invalid[ _-]?(?:api[ _-]?)?key|api[ _-]?key|ProviderAuth|authentication failed/i;
 function outcomeOf(metadata) {
     switch (metadata.kind) {
         case "new":
@@ -114,10 +115,16 @@ function outcomeOf(metadata) {
     switch (true) {
         case Boolean(error) && UNREACHABLE.test(error):
             return "failedNet";
+        case Boolean(error) && MODEL_TROUBLE.test(error):
+            return "failedModel";
+        case Boolean(metadata.timedOut) && typeof metadata.stuckTool === "string" && Boolean(metadata.stuckTool):
+            return "failedStuck";
         case Boolean(metadata.timedOut) && turns > 1:
             return "failedLong";
         case Boolean(metadata.timedOut) || Boolean(error):
             return "failed";
+        case Boolean(metadata.cancelled) && metadata.notSent === true && typeof metadata.prompt === "string":
+            return "cancelledEarly";
         case Boolean(metadata.cancelled):
             return "cancelled";
         default:
@@ -140,9 +147,15 @@ function followupsFor(metadata) {
             return own === undefined ? [] : chips(followups_1.CASES.clarify, { RUN_ANYWAY: own });
         case "failed":
         case "failedLong":
-        case "failedNet": {
+        case "failedNet":
+        case "failedModel":
+        case "cancelledEarly": {
             const again = own ? stripKind(own) : "";
             return chips(followups_1.CASES[outcome], again ? { RETRY: again } : {});
+        }
+        case "failedStuck": {
+            const tool = typeof metadata.stuckTool === "string" && metadata.stuckTool ? metadata.stuckTool : "tool";
+            return chips(followups_1.CASES.failedStuck, { SKIP_STUCK: (0, followups_1.fillPrompt)("SKIP_STUCK", { tool }) });
         }
         case "composed":
             return typeof metadata.composedLanes === "string" && metadata.composedLanes
@@ -206,6 +219,12 @@ function followupsFor(metadata) {
 }
 function stateChips(metadata, kind) {
     const out = [];
+    if (metadata.truncated === true) {
+        const chip = (0, followups_1.chipOf)("CUT_OFF", kind);
+        if (chip) {
+            out.push({ ...chip, kind: "CUT_OFF" });
+        }
+    }
     const task = metadata.failedTask;
     if (task && typeof task.agent === "string" && task.agent) {
         const description = typeof task.description === "string" && task.description ? task.description : task.agent;

@@ -2,7 +2,90 @@
 // reasoning as keyed deltas, the model that answered. Shared by both runners so
 // the CLI and the server give identical steps. Pure over its arguments.
 import { truncate } from "./core";
-import { RunMetrics, RunOptions, StepRecord, emptyTokens, stepOutput, toolFilePath } from "./metrics";
+import { ProviderRetry, RunMetrics, RunOptions, StepRecord, emptyTokens, stepOutput, toolFilePath } from "./metrics";
+
+// ---------------------------------------------------------------------------
+// Streaming. 1.18.32 sends text and reasoning as `message.part.delta`
+// { sessionID, messageID, partID, field: "text", delta } — no `part` — and the
+// whole part once, in `message.part.updated`, at its end (processor.ts
+// text-delta / text-end; reasoning the same). The part's type is known only
+// from the `part.updated` that opened it (empty text), so it is remembered.
+
+/** Remember what type each part id is, from any event that carries the part. */
+export function notePartKind(part: Record<string, unknown> | undefined, kinds: Map<string, string>): void {
+    if (part && typeof part.id === "string" && typeof part.type === "string" && !kinds.has(part.id)) {
+        kinds.set(part.id, part.type);
+    }
+}
+
+export interface PartDelta {
+    /** `t:<partID>` or `r:<partID>`: the key `emitKeyedDelta` uses for the same part. */
+    key: string;
+    part: string;
+    kind: "text" | "reasoning";
+    delta: string;
+}
+
+/** A `message.part.delta` of `sessionId` that extends a text or reasoning part, else undefined. */
+export function partDeltaOf(ev: Record<string, unknown>, sessionId: string, kinds: ReadonlyMap<string, string>): PartDelta | undefined {
+    if (ev.type !== "message.part.delta") {
+        return undefined;
+    }
+    const p = (ev.properties as Record<string, unknown> | undefined) ?? {};
+    const part = typeof p.partID === "string" ? p.partID : "";
+    const kind = kinds.get(part);
+    if (p.sessionID !== sessionId || p.field !== "text" || typeof p.delta !== "string" || !p.delta || (kind !== "text" && kind !== "reasoning")) {
+        return undefined;
+    }
+    return { key: `${kind === "text" ? "t" : "r"}:${part}`, part, kind, delta: p.delta };
+}
+
+/** A delta into the run: counted under its part's key, so the whole part —
+ * when it arrives — adds only what the deltas did not; a key in `closed` (its
+ * whole part already arrived by another channel) takes no more. */
+export function applyPartDelta(
+    d: PartDelta,
+    metrics: RunMetrics,
+    options: RunOptions,
+    started: number,
+    emitted: Map<string, number>,
+    closed?: ReadonlySet<string>
+): void {
+    if (closed?.has(d.key)) {
+        return;
+    }
+    const before = emitted.get(d.key) ?? 0;
+    emitted.set(d.key, before + d.delta.length);
+    markFirstByte(metrics, started);
+    if (d.kind === "text") {
+        metrics.hadOutput = true;
+        options.onText?.(d.delta, d.part);
+        return;
+    }
+    if (!before && metrics.reasoning && !metrics.reasoning.endsWith("\n")) {
+        metrics.reasoning += "\n";
+    }
+    metrics.reasoning += d.delta;
+    options.onReasoning?.(d.delta);
+}
+
+/** `session.status` `{ type: "retry", attempt, message, next }` of `sessionId` (`next` is a timestamp). */
+export function providerRetryOf(ev: Record<string, unknown>, sessionId: string, now = Date.now()): ProviderRetry | undefined {
+    if (ev.type !== "session.status") {
+        return undefined;
+    }
+    const p = (ev.properties as Record<string, unknown> | undefined) ?? {};
+    const status = p.status as { type?: unknown; attempt?: unknown; message?: unknown; next?: unknown } | undefined;
+    if (p.sessionID !== sessionId || status?.type !== "retry") {
+        return undefined;
+    }
+    const next = typeof status.next === "number" && status.next > now ? status.next - now : undefined;
+    return {
+        attempt: typeof status.attempt === "number" ? status.attempt : 0,
+        message: typeof status.message === "string" ? truncate(status.message.replace(/\s+/g, " ").trim(), 80) : "",
+        ...(next !== undefined ? { nextMs: next } : {})
+    };
+}
 
 // One label per tool call, on every path (CLI, server, running and done). A
 // subagent call (the `task` tool) is labelled by who does it: "explore: find
@@ -169,7 +252,13 @@ export function applyServerPart(
         }
         markFirstByte(metrics, started);
         metrics.hadOutput = true;
-        options.onText?.(delta);
+        options.onText?.(delta, typeof part.id === "string" && part.id ? part.id : undefined);
+        return;
+    }
+    if (type === "step-finish" || type === "step_finish") {
+        if (typeof part.reason === "string" && part.reason) {
+            metrics.finishReason = part.reason;
+        }
         return;
     }
     if (type === "tool" || type === "tool_use") {

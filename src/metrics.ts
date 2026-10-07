@@ -73,6 +73,16 @@ export interface RunMetrics {
     /** `task` calls that ended in an error or were interrupted, with the child
      * session to resume (1.18.20: a failed subagent's task_id is resumable). */
     failedTasks?: Array<{ agent: string; description: string; sessionId?: string }>;
+    /** The last step's finish reason (`stop`, `tool-calls`, `length` …): `length` means the answer was cut at the output limit. */
+    finishReason?: string;
+}
+
+/** A provider backoff OpenCode reported (`session.status` → `{ type: "retry" }`, 1.18.32 processor.ts). */
+export interface ProviderRetry {
+    attempt: number;
+    message: string;
+    /** Milliseconds until the next attempt, when the server said. */
+    nextMs?: number;
 }
 
 /** OpenCode's own context count for one step's tokens. */
@@ -108,9 +118,12 @@ export interface RunOptions {
     thinking: boolean;
     /** OpenCode's model variant (reasoning effort): `--variant`, or `variant` in the prompt body. */
     variant?: string;
-    onText?: (text: string) => void;
+    /** Answer text: a whole part, or a delta of one. `part` is OpenCode's part id when known — text with one id is one part. */
+    onText?: (text: string, part?: string) => void;
     onStep?: (step: StepRecord) => void;
     onReasoning?: (text: string) => void;
+    /** The provider is being retried (rate limit, overload): the run is waiting, not hung. */
+    onRetry?: (retry: ProviderRetry) => void;
     /** A subagent's tool call, running or done. */
     onSubagent?: (sub: SubagentStep) => void;
     token?: vscode.CancellationToken;

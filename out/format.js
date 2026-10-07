@@ -2,6 +2,8 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.scrubLeakedContext = scrubLeakedContext;
 exports.isPromptEcho = isPromptEcho;
+exports.createLeakGate = createLeakGate;
+exports.createEchoGate = createEchoGate;
 exports.stepsLine = stepsLine;
 exports.composeVisibleAnswer = composeVisibleAnswer;
 exports.metricsLogLine = metricsLogLine;
@@ -18,6 +20,88 @@ function isPromptEcho(text, prompt) {
         return false;
     }
     return a === b || a === `${b}.` || (b.startsWith(a) && a.length < 64);
+}
+const LEAK_OPENERS = ["<workspace-context>", "---\nFiles the user attached:", "---\n(Context only."];
+const LEAK_CLOSE = /<\/workspace-context>|\(Context only\.[^)]*\)/;
+const LEAK_TAIL = Math.max(...LEAK_OPENERS.map((o) => o.length));
+function createLeakGate() {
+    let held = "";
+    return {
+        push: (chunk) => {
+            const text = held + chunk;
+            held = "";
+            const open = LEAK_OPENERS.map((o) => text.indexOf(o))
+                .filter((at) => at >= 0 && !LEAK_CLOSE.test(text.slice(at)))
+                .sort((a, b) => a - b)[0];
+            if (open !== undefined) {
+                held = text.slice(open);
+                return scrubLeakedContext(text.slice(0, open));
+            }
+            for (let n = Math.min(text.length, LEAK_TAIL); n > 0; n -= 1) {
+                const tail = text.slice(-n);
+                if (LEAK_OPENERS.some((o) => o.startsWith(tail))) {
+                    held = tail;
+                    return scrubLeakedContext(text.slice(0, -n));
+                }
+            }
+            return scrubLeakedContext(text);
+        },
+        flush: () => {
+            const text = held;
+            held = "";
+            return scrubLeakedContext(text);
+        }
+    };
+}
+function createEchoGate(prompts) {
+    const said = prompts.map(core_1.normLine).filter(Boolean);
+    const isEcho = (t) => prompts.some((p) => isPromptEcho(t, p));
+    const mayBe = (t) => {
+        const a = (0, core_1.normLine)(t);
+        return !a || said.some((b) => b.startsWith(a) || a === `${b}.`);
+    };
+    let open = true;
+    let id;
+    let held = "";
+    const release = (t) => {
+        if (t.trim()) {
+            open = false;
+        }
+        return t;
+    };
+    const settle = () => {
+        const t = held;
+        held = "";
+        return !t || isEcho(t) ? "" : release(t);
+    };
+    return {
+        push: (text, part) => {
+            if (!open) {
+                return text;
+            }
+            if (part === undefined) {
+                const before = settle();
+                id = undefined;
+                if (!open) {
+                    return before + text;
+                }
+                return isEcho(text) ? before : before + release(text);
+            }
+            const before = part === id ? "" : settle();
+            id = part;
+            if (!open) {
+                return before + text;
+            }
+            held += text;
+            if (mayBe(held)) {
+                return before;
+            }
+            const out = held;
+            held = "";
+            return before + release(out);
+        },
+        flush: settle
+    };
 }
 function stepsLine(metrics, max = 6) {
     if (metrics.steps.length === 0) {

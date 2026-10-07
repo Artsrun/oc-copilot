@@ -13,6 +13,7 @@ exports.abortChildren = abortChildren;
 exports.abortServerRun = abortServerRun;
 exports.createServerSession = createServerSession;
 exports.sessionModel = sessionModel;
+exports.compactionInFlight = compactionInFlight;
 exports.compactSession = compactSession;
 exports.resetCompactBackoff = resetCompactBackoff;
 const core_1 = require("./core");
@@ -172,7 +173,26 @@ async function sessionModel(base, cwd, sessionId) {
 const COMPACT_TIMEOUT_MS = 180000;
 const COMPACT_BACKOFF_MS = 5 * 60000;
 let compactServerFailedAt = 0;
-async function compactSession(sessionId, cwd, model, asked = false) {
+const compactions = new Map();
+function compactionInFlight(sessionId) {
+    return compactions.get(sessionId);
+}
+function compactSession(sessionId, cwd, model, asked = false) {
+    const running = compactions.get(sessionId);
+    if (running) {
+        return running;
+    }
+    const work = summarize(sessionId, cwd, model, asked);
+    compactions.set(sessionId, work);
+    const done = () => {
+        if (compactions.get(sessionId) === work) {
+            compactions.delete(sessionId);
+        }
+    };
+    work.then(done, done);
+    return work;
+}
+async function summarize(sessionId, cwd, model, asked) {
     if (!asked && Date.now() - compactServerFailedAt < COMPACT_BACKOFF_MS) {
         core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] compact skipped: the server failed to start ${Math.round((Date.now() - compactServerFailedAt) / 1000)}s ago`);
         return false;
@@ -197,7 +217,7 @@ async function compactSession(sessionId, cwd, model, asked = false) {
             return false;
         }
         const parts = { providerID: spec.slice(0, index), modelID: spec.slice(index + 1) };
-        const status = await (0, net_1.httpPostJson)((0, net_1.withDirectory)(`${base}${(0, exports.sessionPath)(sessionId, "summarize")}`, cwd), { providerID: parts.providerID, modelID: parts.modelID, auto: true }, COMPACT_TIMEOUT_MS);
+        const status = await (0, net_1.httpPostJson)((0, net_1.withDirectory)(`${base}${(0, exports.sessionPath)(sessionId, "summarize")}`, cwd), { providerID: parts.providerID, modelID: parts.modelID, auto: false }, COMPACT_TIMEOUT_MS);
         core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] summarize ${sessionId} with ${parts.providerID}/${parts.modelID} → HTTP ${status}`);
         return status >= 200 && status < 300;
     }

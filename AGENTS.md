@@ -215,6 +215,14 @@ history belongs in `CHANGELOG.md`, not in the source.
 - **Every `progress()` call is a new line** (no in-place update): elapsed time
   renders only at milestones (`LF`).
 - **Copilot's Thinking part and tool rows are proposed API** — not used.
+- **OpenCode streams text as `message.part.delta`** (`partID`, `field`, `delta`;
+  no `part`) and sends the whole part once at its end; `opencode run --format
+  json` prints a part only at its end. Deltas are counted per part (`t:`/`r:` +
+  id) so the whole part adds only the rest; streamed text passes the leak and
+  echo gates (`DS`, `DT`, `GT`).
+- **Never compact with `auto: true`**: an auto compaction ends with a synthetic
+  "Continue if you have next steps" and runs a turn nobody sees. A summary keeps
+  the session busy: the next turn waits for this window's own (`CQ`).
 - **`opencode run --agent <unknown>` runs `build`** (exit 0, stderr warning); the
   server answers HTTP 500. `planAgent` is sent only once OpenCode lists it, and a
   server's confirmation holds for that server only (`PA`).
@@ -288,4 +296,5 @@ Every capability the README states is tagged `<!-- claim:id -->` and anchored by
 `claim:id` in a comment beside the code; gate 4 fails on a tag with no anchor.
 Current: `worktrees`, `worktree-command`, `inline-participant`, `model-names`,
 `parallel-models`, `command-aliases`, `sessions`, `parallel-composer`,
-`file-links`, `effort`, `auto-parallel`, `lane-agents`, `read-only-subagents`.
+`file-links`, `effort`, `auto-parallel`, `lane-agents`, `read-only-subagents`,
+`prewarm-server`.

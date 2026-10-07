@@ -8,8 +8,9 @@ import { StepRecord, SubagentStep } from "./metrics";
 import { createBadger, mark } from "./followups";
 
 export interface Heartbeat {
-    /** A status line of the bridge's own ("handing off…", "retrying via cli"). */
-    phase: (text: string) => void;
+    /** A status line of the bridge's own ("handing off…", "retrying via cli").
+     * `quiet`: becomes the line's text for the next milestone, sends nothing now. */
+    phase: (text: string, quiet?: boolean) => void;
     /** A tool step from the run, running or done. */
     step: (step: StepRecord) => void;
     /** The latest reasoning sentence (already reduced by thoughtLine). */
@@ -273,8 +274,12 @@ export function startHeartbeat(response: vscode.ChatResponseStream, initial: str
     };
 
     return {
-        phase: (text: string) => {
+        phase: (text: string, quiet = false) => {
             if (stopped) {
+                return;
+            }
+            if (quiet) {
+                phase = text;
                 return;
             }
             sub = "";

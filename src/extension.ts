@@ -2,7 +2,7 @@ import * as vscode from "vscode";
 
 import { logChannel, resolveFolder, setExtensionContext, setLogChannel, stamp } from "./core";
 import { expandShimVar, readShimTarget, resolveExecutable, tokenizeCmdLine } from "./proc";
-import { httpGetJson, httpPostJson, lastServeLine, setStartupDeadline, stopServer, withDirectory } from "./net";
+import { PREWARM_DELAY_MS, httpGetJson, httpPostJson, lastServeLine, prewarmServer, setStartupDeadline, stopServer, withDirectory } from "./net";
 import { toolFilePath } from "./metrics";
 import { discoverOpenCodeEnv, openCodeConfigModel, readJsonc, summariseEnv } from "./env";
 import { isVaguePrompt, planTimeout } from "./prompt";
@@ -16,12 +16,13 @@ import {
     threadSession
 } from "./session";
 import { contextNote, effortFor, getModelCatalog, higherEffort, modelLabel, parseModelList, parseProviders, parseVerboseModels, resolveModelRef } from "./models";
-import { compactSession, emitKeyedDelta, isMissingSessionError, isMissingSessionRun, noteTask, safeSessionId, sessionPath, sessionRoot, setReplyConfirmWait, stepDetail, turnPermission } from "./runs";
+import { compactSession, emitKeyedDelta, isMissingSessionError, isMissingSessionRun, noteTask, partDeltaOf, providerRetryOf, safeSessionId, sessionPath, sessionRoot, setReplyConfirmWait, stepDetail, turnPermission } from "./runs";
 import { laneProblem } from "./compose";
 import { laneAgentProblem, parseAgentList } from "./agents";
-import { CHILD_MAX_ROWS, GROUP_MAX_ROWS, KIND_COMMAND_NAMES, LANE_ANSWER_CAP, LANE_STORE_CAP, SETTLE_MS, chatStream, commandAliases, recallLanes, rememberLanes, resolveAlias, retryLanesPrompt, ROUTED_COMMANDS, followupsFor, resetChipBackoff, nextMilestone, splitLanes, startHeartbeat, stepLabel, supportsTaskProgress, suggestFollowups, thoughtLine, SLASH_COMMANDS } from "./chat-boot";
+import { CHILD_MAX_ROWS, GROUP_MAX_ROWS, KIND_COMMAND_NAMES, LANE_ANSWER_CAP, LANE_STORE_CAP, SETTLE_MS, chatStream, commandAliases, outcomeOf, recallLanes, rememberLanes, resolveAlias, retryLanesPrompt, ROUTED_COMMANDS, followupsFor, resetChipBackoff, nextMilestone, splitLanes, startHeartbeat, stepLabel, supportsTaskProgress, suggestFollowups, thoughtLine, SLASH_COMMANDS } from "./chat-boot";
 import { handleChat } from "./chat";
 import { badge, badgeMarks, chipOf, createBadger, followupsProblems } from "./followups";
+import { createEchoGate, createLeakGate } from "./format";
 import { laneItems, naturalFollowups } from "./natural";
 import { registerCommands } from "./commands-registry";
 import { slugify } from "./worktree";
@@ -51,6 +52,10 @@ export function activate(context: vscode.ExtensionContext): void {
         logChannel.appendLine(`inline @opencode unavailable: ${err instanceof Error ? err.message : String(err)}`);
     }
     registerCommands(context);
+    // claim:prewarm-server — off the activation path, cancelled on deactivate.
+    const prewarm = setTimeout(() => void prewarmServer(), PREWARM_DELAY_MS);
+    prewarm.unref?.();
+    context.subscriptions.push({ dispose: () => clearTimeout(prewarm) });
 }
 
 const participant = (
@@ -158,7 +163,13 @@ export const __test = {
     setStartupDeadline,
     setReplyConfirmWait,
     resetChipBackoff,
-    CHILD_MAX_ROWS
+    CHILD_MAX_ROWS,
+    prewarmServer,
+    createLeakGate,
+    createEchoGate,
+    partDeltaOf,
+    providerRetryOf,
+    outcomeOf
 };
 
 export function deactivate(): void {

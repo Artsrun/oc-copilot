@@ -12,6 +12,8 @@ const session_1 = require("./session");
 const runs_1 = require("./runs");
 const models_1 = require("./models");
 const chat_boot_1 = require("./chat-boot");
+const SUMMARY_WAIT_MS = 60000;
+const COMPACT_MIN_TOKENS = 20000;
 async function runTurn(t) {
     const live = await openTurn(t);
     try {
@@ -41,11 +43,12 @@ async function openTurn(t) {
         }
     };
     const attachUrl = !useServer && attachDev ? await (0, core_1.untilStop)(timed("server", () => (0, net_1.warmServer)(cwd, (text) => response.progress(text))), token) : undefined;
-    const beat = (0, chat_boot_1.startHeartbeat)(response, `${continuing ? "Continuing" : "Starting"} the OpenCode ${agentLabel} session` +
+    const opening = `${continuing ? "Continuing" : "Starting"} the OpenCode ${agentLabel} session` +
         (useServer ? " via server" : attachUrl ? " via server (attached)" : " via cli") +
-        (model ? ` (${model})` : ""), timeoutMs, cwd);
+        (model ? ` (${model})` : "");
+    const beat = (0, chat_boot_1.startHeartbeat)(response, opening, timeoutMs, cwd);
     const linker = (0, context_1.createFileLinker)(cwd);
-    return { beat, linker, preRun, timed, attachUrl };
+    return { beat, linker, preRun, timed, attachUrl, opening };
 }
 async function prepareRun(t, live) {
     const { response, token, settings, state, cwd, kind, agentLabel, isBuild, devAgent, task, useServer } = t;
@@ -73,13 +76,24 @@ async function prepareRun(t, live) {
     if (agentNote) {
         response.markdown(`> ${(0, followups_1.mark)("warn")} ${agentNote}\n\n`);
     }
+    const summary = sessionId ? (0, runs_1.compactionInFlight)(sessionId) : undefined;
+    let summaryStillRunning = false;
+    if (summary && !token.isCancellationRequested) {
+        beat.phase("Finishing this session's summary first");
+        const began = Date.now();
+        const finished = await timed("summary", () => (0, core_1.untilStop)(Promise.race([summary.then(() => true), (0, core_1.delay)(SUMMARY_WAIT_MS).then(() => false)]), token));
+        summaryStillRunning = finished === false;
+        core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] waited ${(0, core_1.secs)(Date.now() - began)} for the session summary${summaryStillRunning ? " — still running" : ""}`);
+    }
     if (guardBase && sessionId && busyPolicy !== "queue" && !token.isCancellationRequested) {
         if (await timed("busy-check", () => (0, runs_1.sessionBusy)(guardBase, sessionId, cwd))) {
             beat.phase("Stopping an unfinished earlier run in this session");
-            const stopped = await (0, runs_1.abortServerRun)(guardBase, sessionId, cwd, "busy before send");
-            response.markdown(stopped
-                ? "> " + (0, followups_1.mark)("stop") + " This session was still busy with an earlier run nobody was watching, so I stopped it first — otherwise this message would have waited behind it. If turns stay slow, `/new` starts a clean session.\n\n"
-                : "> " + (0, followups_1.mark)("warn") + " This session is still busy with an earlier run and it did not stop. This message may wait behind it — `/new` starts a clean session.\n\n");
+            const stopped = await (0, runs_1.abortServerRun)(guardBase, sessionId, cwd, summaryStillRunning ? "summary still running" : "busy before send");
+            response.markdown(stopped && summaryStillRunning
+                ? "> " + (0, followups_1.mark)("stop") + ` This session's summary was still running after ${Math.round(SUMMARY_WAIT_MS / 1000)} s, so I stopped it; the session keeps its full context.\n\n`
+                : stopped
+                    ? "> " + (0, followups_1.mark)("stop") + " This session was still busy with an earlier run nobody was watching, so I stopped it first — otherwise this message would have waited behind it. If turns stay slow, `/new` starts a clean session.\n\n"
+                    : "> " + (0, followups_1.mark)("warn") + " This session is still busy with an earlier run and it did not stop. This message may wait behind it — `/new` starts a clean session.\n\n");
         }
     }
     if (preRun.length) {
@@ -89,13 +103,13 @@ async function prepareRun(t, live) {
         await beat.stop(true);
         core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] stopped by the user before the run started`);
         (0, session_1.refreshStatus)(cwd);
-        return { result: { metadata: { kind, agent: agentLabel, sessionId, cwd, turns: state.turns, cancelled: true } } };
+        return { result: { metadata: { kind, agent: agentLabel, sessionId, cwd, turns: state.turns, cancelled: true, notSent: true, prompt: t.replay } } };
     }
     return { sessionId, guardBase, agent };
 }
 async function runAttempts(t, live, ready) {
     const { response, token, settings, cwd, isBuild, task, taskForModel, executable, pure, useServer, timeoutMs, idleTimeoutMs, chain, variantFor } = t;
-    const { beat, linker, attachUrl } = live;
+    const { beat, linker, attachUrl, opening } = live;
     const { guardBase } = ready;
     let { sessionId, agent } = ready;
     const toolQuietMs = Math.max(0, settings.get("toolQuietMs", 600000));
@@ -109,6 +123,37 @@ async function runAttempts(t, live, ready) {
     let metrics;
     let answer = "";
     let streamed = false;
+    const show = (text) => {
+        if (!text) {
+            return;
+        }
+        answer += text;
+        streamed = true;
+        beat.activity();
+        (0, context_1.emitAnswerParts)(response, linker.push(text));
+    };
+    const openSink = (attemptTask) => {
+        const leak = (0, format_1.createLeakGate)();
+        const echo = (0, format_1.createEchoGate)([task, attemptTask]);
+        let lastPart;
+        return {
+            push: (raw, part) => {
+                lastPart = part;
+                show(echo.push(leak.push(raw), part));
+            },
+            flush: () => {
+                show(echo.push(leak.flush(), lastPart));
+                show(echo.flush());
+            }
+        };
+    };
+    let retrying = false;
+    const settleRetry = () => {
+        if (retrying) {
+            retrying = false;
+            beat.phase(opening, true);
+        }
+    };
     let serverTransport = useServer;
     let sessionRestarted = false;
     let lastAttempt = 0;
@@ -129,6 +174,15 @@ async function runAttempts(t, live, ready) {
                 ? (0, followups_1.prompt)("CONTINUE")
                 : `${(0, followups_1.prompt)("CONTINUE")}\n\n${taskForModel}`
             : taskForModel;
+        let sink = openSink(attemptTask);
+        const rerun = (shown = false) => {
+            if (shown) {
+                sink.flush();
+            }
+            answer = "";
+            streamed = false;
+            sink = openSink(attemptTask);
+        };
         const runOpts = {
             executable,
             task: attemptTask,
@@ -148,18 +202,24 @@ async function runAttempts(t, live, ready) {
             serverUrl: serverTransport && attempt === 0 ? guardBase : undefined,
             toolQuietMs,
             token,
-            onStep: streamStep,
-            onReasoning: streamReasoning,
+            onStep: (step) => {
+                settleRetry();
+                streamStep(step);
+            },
+            onReasoning: (text) => {
+                settleRetry();
+                streamReasoning(text);
+            },
             onSubagent: (sub) => beat.subagent(sub),
-            onText: (rawText) => {
-                const text = (0, format_1.scrubLeakedContext)(rawText);
-                if (!text || (!answer.trim() && ((0, format_1.isPromptEcho)(text, task) || (0, format_1.isPromptEcho)(text, attemptTask)))) {
-                    return;
-                }
-                answer += text;
-                streamed = true;
-                beat.activity();
-                (0, context_1.emitAnswerParts)(response, linker.push(text));
+            onText: (rawText, part) => {
+                settleRetry();
+                sink.push(rawText, part);
+            },
+            onRetry: (r) => {
+                retrying = true;
+                beat.phase(`${(0, followups_1.mark)("quiet")} Provider retry ${r.attempt || ""}`.trimEnd() +
+                    (r.message ? ` · ${r.message}` : "") +
+                    (r.nextMs ? ` · next in ${Math.ceil(r.nextMs / 1000)}s` : ""));
             }
         };
         try {
@@ -169,8 +229,7 @@ async function runAttempts(t, live, ready) {
             if ((0, runs_1.isMissingSessionError)(error) && runOpts.sessionId && !token.isCancellationRequested) {
                 metrics = await (0, runs_1.restartAfterMissingSession)(runOpts, serverTransport, beat, response, cwd);
                 sessionRestarted = true;
-                answer = "";
-                streamed = false;
+                rerun(true);
             }
             else if (!serverTransport || token.isCancellationRequested) {
                 throw error;
@@ -179,8 +238,7 @@ async function runAttempts(t, live, ready) {
                 core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] server failed, falling back to CLI: ${error}`);
                 beat.phase("Server transport unavailable — retrying via cli");
                 serverTransport = false;
-                answer = "";
-                streamed = false;
+                rerun();
                 if (!isBuild && agent !== "plan" && guardBase) {
                     core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] planAgent "${agent}" was confirmed by the server only — the CLI runs this turn as plan`);
                     response.markdown(`> ${(0, followups_1.mark)("warn")} OpenCode's server failed, so the CLI ran this turn as the built-in \`plan\`: \`${agent}\` is not confirmed there.\n\n`);
@@ -195,16 +253,15 @@ async function runAttempts(t, live, ready) {
             core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] attach to ${runOpts.attachUrl} failed — running cold`);
             beat.phase("Server unreachable — starting OpenCode directly");
             runOpts.attachUrl = undefined;
-            answer = "";
-            streamed = false;
+            rerun();
             metrics = await (0, runs_1.runOpenCode)(runOpts);
         }
         if (!sessionRestarted && (0, runs_1.isMissingSessionRun)(metrics) && runOpts.sessionId && !token.isCancellationRequested) {
             metrics = await (0, runs_1.restartAfterMissingSession)(runOpts, serverTransport, beat, response, cwd);
             sessionRestarted = true;
-            answer = "";
-            streamed = false;
+            rerun(true);
         }
+        sink.flush();
         sessionId = metrics.sessionId ?? sessionId;
         lastAttempt = attempt;
         if (attempt === 0) {
@@ -263,6 +320,10 @@ async function finishTurn(t, live, outcome) {
     if (metrics?.error) {
         response.markdown(`\n\n> ${(0, followups_1.mark)("fail")} OpenCode reported an error: \`${metrics.error}\``);
     }
+    const cutOff = Boolean(metrics && !metrics.error && !metrics.timedOut && !metrics.cancelled && metrics.finishReason === "length");
+    if (cutOff) {
+        response.markdown(`\n\n> ${(0, followups_1.mark)("warn")} The answer stopped at the model's output limit, so it is cut off here.`);
+    }
     if (metrics?.timedOut && metrics.stuckTool && !metrics.cancelled) {
         response.markdown(`\n\n> ${(0, followups_1.mark)("quiet")} Stopped while \`${metrics.stuckTool}\` was still running on the server; the run was aborted there too. ` +
             "Raise `toolQuietMs` if that tool is legitimately slow.");
@@ -311,7 +372,7 @@ async function finishTurn(t, live, outcome) {
     if (autoCompact &&
         sessionId &&
         turns > 0 &&
-        (turns % compactEvery === 0 ||
+        ((turns % compactEvery === 0 && (contextTokens === 0 || contextTokens >= COMPACT_MIN_TOKENS)) ||
             contextTokens > COMPACT_CONTEXT_TOKENS ||
             (contextLimit !== undefined && contextTokens >= contextLimit * COMPACT_CONTEXT_SHARE))) {
         core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] compacting ${sessionId}: turn ${turns}, context ${contextTokens}` + (contextLimit ? ` of ${contextLimit}` : ""));
@@ -351,6 +412,8 @@ async function finishTurn(t, live, outcome) {
             ...(failedTask
                 ? { failedTask: { agent: failedTask.agent, description: (0, core_1.truncate)(failedTask.description, 80), ...(failedTask.sessionId ? { taskId: (0, runs_1.safeSessionId)(failedTask.sessionId) } : {}) } }
                 : {}),
+            ...(cutOff ? { truncated: true } : {}),
+            ...(metrics?.timedOut && metrics.stuckTool && !metrics.cancelled ? { stuckTool: (0, core_1.truncate)(metrics.stuckTool, 40) } : {}),
             timedOut: Boolean(metrics?.timedOut),
             cancelled: Boolean(metrics?.cancelled),
             error: metrics?.error
