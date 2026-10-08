@@ -224,7 +224,9 @@ const SLOW_START_MS = 1500;
 // What each server said it is (`/global/health` → `version`, 1.18.34). The
 // bridge leans on behaviour measured on these versions only (REFS); outside
 // them it still runs, and says so once per window and version.
-export const TESTED_OPENCODE = { min: "1.18.27", max: "1.18.34" } as const;
+// 1.18.35 was read, not run: its one runtime change drops non-PNG/JPEG/WebP
+// tool-result images for xAI models (session/message-v2.ts) — REFS.
+export const TESTED_OPENCODE = { min: "1.18.27", max: "1.18.35" } as const;
 const serverVersions = new Map<string, string>();
 const versionsNoted = new Set<string>();
 

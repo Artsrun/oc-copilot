@@ -3,6 +3,15 @@
 Full release history, newest first; releases before the last one are condensed
 to their summary and headlines. The README ships the last five.
 
+### 0.0.208
+
+- **Tested range is 1.18.27–1.18.35.** Reported on 0.0.207: a 1.18.35 server
+  got the version note. 1.18.34 → 1.18.35 was diffed (tags `v1.18.34`,
+  `v1.18.35`): the only change under `packages/opencode/src` filters
+  non-PNG/JPEG/WebP tool-result images for xAI models (`session/message-v2.ts`);
+  server routes, events, the CLI, permissions and compaction are unchanged, and
+  `sdk`, `server`, `core` changed their version only. Checks `VN`.
+
 ### 0.0.207
 
 Speed: the autocompact collision, streaming, a prewarmed server; follow-ups that

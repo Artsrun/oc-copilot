@@ -522,3 +522,14 @@ sst/opencode tag v1.18.32 (and main at 1.18.35), microsoft/vscode main@91b51fe.
   autostart is awaited too (`chat.mcp.autostart`).
   `chat.experimental.collectInstructionsInExtension` (main, experimental) skips
   the core path.
+
+## OpenCode 1.18.35: nothing the bridge uses changed (diffed, 0.0.208)
+
+**Dated 2026-10-08.** `git diff v1.18.34 v1.18.35` in sst/opencode: under
+`packages/opencode/src` one file, `session/message-v2.ts` — tool-result image
+attachments other than PNG, JPEG and WebP are dropped for `@ai-sdk/xai` models
+(xAI rejected the whole request with `invalid_image`). `packages/sdk`,
+`packages/server` and `packages/core` changed only their `version`. The rest
+of the 157 files are the web docs, the stats and console apps. Tested range
+raised to 1.18.35; not run against a live 1.18.35 server here.
+

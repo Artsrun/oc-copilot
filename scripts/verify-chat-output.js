@@ -5153,12 +5153,17 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         // ---- VN: a server outside the tested versions says so, once ----
         v5.version = "1.18.30";
         const vn0 = await v5Turn("explain the cart for vn tested");
+        // Reported on 0.0.207: 1.18.35 got the note. Its only runtime change
+        // (xAI image attachments, message-v2.ts) touches nothing the bridge uses.
+        v5.version = "1.18.35";
+        const vn35 = await v5Turn("explain the cart for vn latest");
         v5.version = "1.19.2";
         const vn1 = await v5Turn("explain the cart for vn new");
         const vn2 = await v5Turn("explain the cart for vn again");
         v5.version = undefined;
         add("VN a version inside the tested range says nothing", !/outside the versions/.test(vn0.md));
-        add("VN …one outside it says so once per window, and the turn runs", /OpenCode 1\.19\.2 is outside the versions this bridge was tested with \(1\.18\.27–1\.18\.34\)/.test(vn1.md) && /answered by/.test(vn1.md) && !/outside the versions/.test(vn2.md));
+        add("VN 1.18.35, the newest measured, says nothing", !/outside the versions/.test(vn35.md) && /answered by/.test(vn35.md));
+        add("VN …one outside it says so once per window, and the turn runs", /OpenCode 1\.19\.2 is outside the versions this bridge was tested with \(1\.18\.27–1\.18\.35\)/.test(vn1.md) && /answered by/.test(vn1.md) && !/outside the versions/.test(vn2.md));
 
 
         // demux hands unattributed events to every subscriber, and v184 counted

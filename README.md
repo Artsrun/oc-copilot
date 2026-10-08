@@ -379,6 +379,12 @@ All under `opencodeCopilotBridge.`.
 
 The last five releases; the full history is `CHANGELOG.md` in the repository.
 
+### 0.0.208
+
+- OpenCode 1.18.35 no longer gets the "outside the versions this bridge was
+  tested with" line: its one runtime change (image attachments for xAI models)
+  touches nothing the bridge uses.
+
 ### 0.0.207
 
 - **Fixed: autocompact ran a hidden agent turn and collided with your next
@@ -428,15 +434,3 @@ The last five releases; the full history is `CHANGELOG.md` in the repository.
 - The live line shows what a subagent is doing, and a working subagent keeps
   its parent from being idle-capped.
 - One line when the OpenCode server is outside the tested 1.18.27–1.18.34.
-
-### 0.0.203
-
-- **Fixed: a read-only turn could edit through a subagent** (`general` runs
-  with its own permissions). Plan turns now allow only `readOnlySubagents`
-  (default `explore`) on the server and attached paths.
-- **Fixed: a hung listener on a fixed `serverPort`** cost every turn 20 s and
-  hid the cause. The window starts its own server on a free port; a server
-  that exits says why (`exited (code 1): Error: listen EADDRINUSE …`).
-- **`a:<agent>` per lane**, checked against OpenCode's list (a subagent or an
-  unknown name is refused: the CLI would run it as `build`).
-- Subagent spend joins the turn's cost; Stop aborts subagent sessions too.
