@@ -4,7 +4,7 @@
 // two runners; imports no runner.
 import { config, delay, logChannel, stamp, truncate } from "./core";
 import { ensureServer } from "./net";
-import { api, safeSessionId, sessionPath, sessionRoot } from "./oc-api";
+import { api, safeSessionId, serverMajor, sessionPath, sessionRoot } from "./oc-api";
 import { ReadOnlyEnforcement, RunMetrics } from "./metrics";
 import { PermissionRule, isPermissionRule, listAgents } from "./agents";
 import { coldEnforcement, enforcedConfigContent, judgeReadOnly, readOnlySubagents } from "./enforce";
@@ -118,6 +118,19 @@ export const serverEnforcement = (base: string, cwd: string, agent: string): Pro
 /** A reopened agent stops the turn before anything is sent (a send barrier,
  * like permission preparation): no CLI fallback, Retry offered. */
 export function assertReadOnly(evidence: ReadOnlyEnforcement | undefined): void {
+    // OpenCode 2's built-in plan writes (`echo > f`, plan → explore, plan →
+    // general: CREATED on 2.0.29 and 2.0.32): rules that cannot be read back
+    // there are not a warning, they stop the turn.
+    if (evidence?.kind === "unverified" && evidence.base && serverMajor(evidence.base) === 2) {
+        logChannel.appendLine(`[${stamp()}] ${evidence.agent}: no verified read-only rules on the OpenCode 2 server ${evidence.base} — not sent`);
+        throw Object.assign(
+            new Error(
+                `Nothing was sent: the OpenCode 2 server at ${evidence.base} does not list the bridge's read-only rules for \`${evidence.agent}\`, ` +
+                "and OpenCode 2's own plan can write. Retry; if it repeats, `/ping` and the debug log say what the server reported, or ask with `/dev`."
+            ),
+            { code: "ETURNPERMISSION" }
+        );
+    }
     if (evidence?.kind !== "reopened") {
         return;
     }

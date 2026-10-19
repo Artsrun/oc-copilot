@@ -8,6 +8,33 @@ import type { ReadOnlyEnforcement } from "./metrics";
 export const ENFORCED_MARKER = "ocb-enforced";
 
 const FORBIDDEN_SUBAGENTS = new Set(["plan", "build", "general"]);
+
+// Which major each executable named at `--version` (net.ts records it), so a
+// spawn gets the overrides that major reads: 1.x rejects 2.x's `agents` key
+// (ConfigInvalidError) and 2.x given both applied neither (0.0.222, measured).
+const majors = new Map<string, 1 | 2>();
+export function noteExecutableMajor(executable: string, major: number): void {
+    majors.set(executable, major === 2 ? 2 : 1);
+}
+/** 1 until `--version` named another. */
+export const executableMajor = (executable: string): 1 | 2 => majors.get(executable) ?? 1;
+
+/** 1.x rules `{permission, pattern, action}` as 2.x's `{action, resource, effect}`; a
+ * `task` rule also as `subagent`, 2.x's name for it. */
+export function toV2Rules(rules: ReadonlyArray<{ permission: string; pattern: string; action: string }>): Array<{ action: string; resource: string; effect: string }> {
+    return rules.flatMap((r) => (r.permission === "task" ? ["task", "subagent"] : [r.permission]).map((action) => ({ action, resource: r.pattern, effect: r.action })));
+}
+/** 2.x rules as 1.x's, names kept (`subagent` stays `subagent`: readOnlyLeaks reads both). */
+export function toV1Rules(rules: unknown): ListedRule[] {
+    return (Array.isArray(rules) ? rules : [])
+        .filter((r): r is { action: string; resource: string; effect: string } => Boolean(r) && typeof r.action === "string" && typeof r.resource === "string" && typeof r.effect === "string")
+        .map((r) => ({ permission: r.action, pattern: r.resource, action: r.effect }));
+}
+// A permission object (key order is rule order) as the rule list both majors list.
+const asRules = (permission: Record<string, unknown>): ListedRule[] =>
+    Object.entries(permission).flatMap(([k, v]) =>
+        typeof v === "string" ? [{ permission: k, pattern: "*", action: v }] : Object.entries((v ?? {}) as Record<string, string>).map(([p, a]) => ({ permission: k, pattern: p, action: a }))
+    );
 let refusedSubagents = "";
 
 /** The subagents a read-only turn may start (`readOnlySubagents`). */
@@ -130,7 +157,7 @@ export function readOnlyLeaks(rules: readonly ListedRule[], subagents: readonly 
             READ_ONLY_REACH.has(r.permission) ||
             (r.permission === "read" && (r.pattern === "*" || r.pattern === "*.env.example")) ||
             tools.some((t) => wildcard(t).test(r.permission)) ||
-            (r.permission === "task" && (sessionTask || subagents.includes(r.pattern)))
+            ((r.permission === "task" || r.permission === "subagent") && (sessionTask || subagents.includes(r.pattern)))
         ))
         .map((r) => `${r.permission}${r.pattern === "*" ? "" : ` ${r.pattern}`}: ${r.action}`);
 }
@@ -192,7 +219,7 @@ let refusedUserContent = "";
  * off, or a user value that is not a JSON object: it is left alone). A user's
  * own value is merged, and these agents' `permission` replaces theirs.
  */
-export function enforcedConfigContent(existing = process.env.OPENCODE_CONFIG_CONTENT): string | undefined {
+export function enforcedConfigContent(existing = process.env.OPENCODE_CONFIG_CONTENT, major: 1 | 2 = 1): string | undefined {
     if (!config().get<boolean>("enforceReadOnly", true)) {
         return undefined;
     }
@@ -214,10 +241,14 @@ export function enforcedConfigContent(existing = process.env.OPENCODE_CONFIG_CON
     }
     const subagents = readOnlySubagents();
     const tools = readOnlyTools();
-    const agents = { ...((base.agent as Record<string, unknown> | undefined) ?? {}) };
+    // 2.x: `agents.<name>.permissions`, a rule list APPENDED after the agent's
+    // own and after the config files' (2.0.29/2.0.32, measured): same rules, its shape.
+    const key = major === 2 ? "agents" : "agent";
+    const agents = { ...((base[key] as Record<string, unknown> | undefined) ?? {}) };
     const withPermission = (name: string, permission: Record<string, unknown>): void => {
         const own = agents[name];
-        agents[name] = { ...(own && typeof own === "object" ? (own as Record<string, unknown>) : {}), permission };
+        const rules = major === 2 ? { permissions: toV2Rules(asRules(permission)) } : { permission };
+        agents[name] = { ...(own && typeof own === "object" ? (own as Record<string, unknown>) : {}), ...rules };
     };
     withPermission("plan", readOnlyPermission(subagents, tools));
     for (const name of subagents) {
@@ -229,7 +260,7 @@ export function enforcedConfigContent(existing = process.env.OPENCODE_CONFIG_CON
         noted = true;
         logChannel?.appendLine(`[${stamp()}] read-only by permission in the processes the bridge starts: plan${subagents.length ? `, ${subagents.join(", ")}` : ""} (enforceReadOnly)`);
     }
-    return JSON.stringify({ ...base, agent: agents });
+    return JSON.stringify({ ...base, [key]: agents });
 }
 
 // Said once per install, after the first plan turn that ran enforced, and at

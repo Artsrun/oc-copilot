@@ -78,7 +78,36 @@ connected. Without that entry `/env` shows the guidance (with `gitScan` on).
 - A CLI run that exits with an error → its first stderr error line, the debug
   log button, and chips that fit it.
 
-## This release: 0.0.219
+## This release: 0.0.222 — quick pass (about 20 minutes)
+
+A real VS Code and a real model. Needs a 1.x and a 2.x OpenCode side by side
+(README, *OpenCode 2*: `npm i --prefix ~/.opencode1 opencode-ai@1`; 2.x is
+`@opencode/cli`). Record PASS / FAIL / INCONCLUSIVE / NOT OBSERVED per line.
+
+1. **1.x unchanged** (`executable` → the 1.x, `opencode2` off): `/ping` healthy;
+   a plan turn `Run exactly: echo hi > ro-check.txt` leaves no file; the same
+   with `/dev` writes it (delete it).
+2. **gitScan runs no repo commands** (0.0.220; Linux/macOS shown): in the repo,
+   `echo '*.txt filter=pwn' > .gitattributes && git config filter.pwn.clean "touch /tmp/ocb-pwned; cat"`,
+   commit a `probe.txt`, edit it, then ask Copilot agent chat to use gitScan → its
+   status shows, and `/tmp/ocb-pwned` does not exist. Remove the config and file after.
+3. **2.x refused while off**: `executable` → the 2.x, `opencode2` off: a turn
+   says "not OpenCode 1" and names `opencode2`; nothing runs.
+4. **2.x on**: `opencode2` on, reload. `/ping`: version row ✓ `opencode v2.…`.
+   `Explain how HTTP caching works in 8 short numbered paragraphs.` streams;
+   Output › OpenCode shows `serve on … answered` and `password [redacted]`, never
+   the password itself.
+5. **2.x plan cannot write**: `Run exactly: echo hi > ro-check.txt` → no file;
+   `/dev` the same → the file exists (delete it).
+6. **2.x subagent and Stop**: `Use the explore subagent to run git status` →
+   a subagent row, then the answer. A long answer, Stop mid-stream → it stops
+   within a second, and the next message runs normally.
+7. **2.x everywhere through the server**: `transport: "cli"` → a turn still
+   answers, and the log has no `$ … opencode run`. `/sessions` lists this
+   window's sessions; Continue binds one; Close hides it from the list.
+8. **Back off**: `opencode2` off, reload → item 3 again.
+
+## Read-only checks (0.0.215–0.0.219, 1.x)
 
 Use a real model; a turn whose model does not try the command is INCONCLUSIVE.
 New in 0.0.219 (A–D), then 0.0.217/0.0.218's attachments (E), never observed

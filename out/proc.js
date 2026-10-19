@@ -225,7 +225,7 @@ function spawnOpenCode(executable, args, cwd) {
     const resolved = resolveExecutable(executable);
     const full = resolved.prefixArgs.length ? [...resolved.prefixArgs, ...args] : args;
     core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] $ ${resolved.target} ${full.join(" ")}`);
-    const enforced = (0, enforce_1.enforcedConfigContent)();
+    const enforced = (0, enforce_1.enforcedConfigContent)(process.env.OPENCODE_CONFIG_CONTENT, (0, enforce_1.executableMajor)(executable));
     const env = { ...process.env, ...(cwd ? { PWD: cwd } : {}), ...(enforced ? { OPENCODE_CONFIG_CONTENT: enforced } : {}) };
     if (resolved.viaCmd) {
         const line = `"${[resolved.target, ...full].map(quoteCmdArg).join(" ")}"`;

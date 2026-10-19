@@ -1,6 +1,9 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.ENFORCED_DENY_TOOLS = exports.ENFORCED_MARKER = void 0;
+exports.ENFORCED_DENY_TOOLS = exports.executableMajor = exports.ENFORCED_MARKER = void 0;
+exports.noteExecutableMajor = noteExecutableMajor;
+exports.toV2Rules = toV2Rules;
+exports.toV1Rules = toV1Rules;
 exports.readOnlySubagents = readOnlySubagents;
 exports.readOnlyTools = readOnlyTools;
 exports.hasEnforcedMarker = hasEnforcedMarker;
@@ -13,6 +16,21 @@ exports.enforcedReadOnlyNotice = enforcedReadOnlyNotice;
 const core_1 = require("./core");
 exports.ENFORCED_MARKER = "ocb-enforced";
 const FORBIDDEN_SUBAGENTS = new Set(["plan", "build", "general"]);
+const majors = new Map();
+function noteExecutableMajor(executable, major) {
+    majors.set(executable, major === 2 ? 2 : 1);
+}
+const executableMajor = (executable) => majors.get(executable) ?? 1;
+exports.executableMajor = executableMajor;
+function toV2Rules(rules) {
+    return rules.flatMap((r) => (r.permission === "task" ? ["task", "subagent"] : [r.permission]).map((action) => ({ action, resource: r.pattern, effect: r.action })));
+}
+function toV1Rules(rules) {
+    return (Array.isArray(rules) ? rules : [])
+        .filter((r) => Boolean(r) && typeof r.action === "string" && typeof r.resource === "string" && typeof r.effect === "string")
+        .map((r) => ({ permission: r.action, pattern: r.resource, action: r.effect }));
+}
+const asRules = (permission) => Object.entries(permission).flatMap(([k, v]) => typeof v === "string" ? [{ permission: k, pattern: "*", action: v }] : Object.entries((v ?? {})).map(([p, a]) => ({ permission: k, pattern: p, action: a })));
 let refusedSubagents = "";
 function readOnlySubagents() {
     const dev = (0, core_1.config)().get("devAgent", "build").trim();
@@ -86,7 +104,7 @@ function readOnlyLeaks(rules, subagents, sessionTask) {
         .filter((r) => !(READ_ONLY_REACH.has(r.permission) ||
         (r.permission === "read" && (r.pattern === "*" || r.pattern === "*.env.example")) ||
         tools.some((t) => wildcard(t).test(r.permission)) ||
-        (r.permission === "task" && (sessionTask || subagents.includes(r.pattern)))))
+        ((r.permission === "task" || r.permission === "subagent") && (sessionTask || subagents.includes(r.pattern)))))
         .map((r) => `${r.permission}${r.pattern === "*" ? "" : ` ${r.pattern}`}: ${r.action}`);
 }
 function judgeReadOnly(rules, agent, where) {
@@ -125,7 +143,7 @@ function coldEnforcement(content, agent) {
 }
 let noted = false;
 let refusedUserContent = "";
-function enforcedConfigContent(existing = process.env.OPENCODE_CONFIG_CONTENT) {
+function enforcedConfigContent(existing = process.env.OPENCODE_CONFIG_CONTENT, major = 1) {
     if (!(0, core_1.config)().get("enforceReadOnly", true)) {
         return undefined;
     }
@@ -148,10 +166,12 @@ function enforcedConfigContent(existing = process.env.OPENCODE_CONFIG_CONTENT) {
     }
     const subagents = readOnlySubagents();
     const tools = readOnlyTools();
-    const agents = { ...(base.agent ?? {}) };
+    const key = major === 2 ? "agents" : "agent";
+    const agents = { ...(base[key] ?? {}) };
     const withPermission = (name, permission) => {
         const own = agents[name];
-        agents[name] = { ...(own && typeof own === "object" ? own : {}), permission };
+        const rules = major === 2 ? { permissions: toV2Rules(asRules(permission)) } : { permission };
+        agents[name] = { ...(own && typeof own === "object" ? own : {}), ...rules };
     };
     withPermission("plan", readOnlyPermission(subagents, tools));
     for (const name of subagents) {
@@ -163,7 +183,7 @@ function enforcedConfigContent(existing = process.env.OPENCODE_CONFIG_CONTENT) {
         noted = true;
         core_1.logChannel?.appendLine(`[${(0, core_1.stamp)()}] read-only by permission in the processes the bridge starts: plan${subagents.length ? `, ${subagents.join(", ")}` : ""} (enforceReadOnly)`);
     }
-    return JSON.stringify({ ...base, agent: agents });
+    return JSON.stringify({ ...base, [key]: agents });
 }
 const NOTED_KEY = "shellFreeReadOnlyNoted";
 let notedWindow = false;

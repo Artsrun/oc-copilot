@@ -10,7 +10,7 @@ the checkout you already have open; isolation into a Git worktree is opt-in.
 
 Requires Git, OpenCode 1.x installed and authenticated (`opencode` on `PATH`,
 or the `executable` setting), and VS Code with GitHub Copilot Chat. OpenCode 2
-is not driven yet — see [OpenCode 2](#opencode-2) to keep both.
+is refused unless `opencode2` is on (experimental) — see [OpenCode 2](#opencode-2).
 
 ## The extension
 
@@ -221,6 +221,29 @@ two share OpenCode's data folder — sessions show in both (measured: 1.19.0 and
 2.0.27) — and its config files, and OpenCode's migration guide says a config
 converted for 2.x is not for 1.x. `…/.bin/opencode auth list` shows whether
 the 1.x has your credentials; if not, log it in as your organization says.
+
+#### Experimental: `opencode2`  <!-- claim:opencode-2-api -->
+
+With `opencodeCopilotBridge.opencode2` on, an `opencode` whose `--version`
+says 2.x is driven through its HTTP API instead (measured on 2.0.29 and 2.0.32):
+
+- **One server, this window's own.** Every turn — plan, `/dev`, lanes,
+  `/worktree`, `transport: cli` too — goes through the `opencode serve` the
+  bridge starts. 2.x's `run` takes none of the bridge's flags, and a cold
+  run's rules cannot be read back. Its API answers only the password the server
+  printed (kept in memory, never logged); another window's or your own 2.x
+  server is never adopted.
+- **Read-only, verified or not sent.** OpenCode 2's own `plan` writes (a plan
+  turn ran `echo > file`, and so did its `explore` and `general` subagents, on
+  both versions). The bridge's overrides go in 2.x's format, and a plan turn is
+  sent only when the server lists them for `plan`; otherwise nothing is sent.
+- **Not yet:** MCP tools on read-only turns (2.x reaches them through Code
+  Mode's `execute`, which stays denied), answering OpenCode's questions, and
+  **Close** in `/sessions` keeps the session listed in OpenCode's own apps
+  (2.x has no archive call; the bridge marks it hidden for itself).
+
+Both majors keep sessions in the same data folder, so turning `opencode2` on
+or off keeps your history.
 
 ## Read-only turns: enforced, `planAgent` and `look`
 
@@ -443,6 +466,7 @@ All under `opencodeCopilotBridge.`.
 | `devAgent` | `build` | Agent `/dev` runs, always passed as `--agent`. |
 | `planAgent` | `plan` | Agent for read-only turns and `/parallel` lanes, used once OpenCode lists it (see *Read-only turns*). |
 | `readOnlySubagents` | `["explore"]` | Literal subagent names a read-only turn may start via `task`; trimmed and deduplicated, `*` and `?` rejected. With `enforceReadOnly` only agents with verified shell-free permissions are available. |
+| `opencode2` | `false` | Experimental: drive OpenCode 2 through its HTTP API (2.0.29–2.0.32) instead of refusing it — every turn through this window's own server, read-only turns only when it lists the bridge's rules (see *OpenCode 2*). |
 | `enforceReadOnly` | `true` | Read-only turns read-only by permission in every OpenCode process the bridge starts: no edits or shell, `readOnlyTools`, read-only subagents (see *Read-only turns*). `/dev` is unchanged. Off: 0.0.214, read-only by instruction. |
 | `readOnlyTools` | `["git-scan_gitScan"]` | With `enforceReadOnly`, the MCP tools a read-only turn may use, by OpenCode permission name (`<server>_<tool>`, wildcards allowed). A name that would allow a tool that writes, runs commands or starts subagents is left out. 1.x only. |
 | `attachDevToServer` | `true` | With transport `auto`, `/dev` attaches to the warm server instead of booting OpenCode per turn. |
@@ -484,6 +508,15 @@ All under `opencodeCopilotBridge.`.
 ## Changelog
 
 The last five releases; the full history is `CHANGELOG.md` in the repository.
+
+### 0.0.222
+
+- **OpenCode 2, experimental** (`opencode2`, off by default): a 2.x
+  `opencode` is driven through its HTTP API instead of refused — every turn
+  through this window's own server, its events read as 1.x's, read-only turns
+  sent only when that server lists the bridge's rules ([OpenCode 2](#opencode-2)).
+  Measured end to end on real 2.0.29 and 2.0.32 (`scripts/probe-opencode2.js`:
+  9 rows each); the suite replays frames recorded from both majors. Checks `TW`.
 
 ### 0.0.221
 
@@ -532,10 +565,3 @@ The last five releases; the full history is `CHANGELOG.md` in the repository.
 - Enforce UTF-8 byte limits on editor excerpts and bound diagnostic text.
 - Report omitted unsaved editor text and potentially stale disk contents when no excerpt fits.
 - Closed-file ranges remain path-based, avoiding synchronous whole-file reads on the extension host.
-
-### 0.0.217
-
-- **Close config merge-order bypass on enforced read-only agents:** OpenCode deep-merges config objects and keeps earlier keys in place (`opencode.json` with `edit: "allow"` or `bash: { "*": "deny", "git *": "allow" }` after `"*"`). Enforced rules now explicitly set scalar `"deny"` on every writing/running tool (`bash`, `edit`, `write`, `patch`, `apply_patch`, `multiedit`, `shell`, `execute`, `question`, `plan_enter`, `plan_exit`), replacing any earlier pattern map.
-- **Attached dirty buffers, line ranges, untitled editors & `#problems`:** unsaved editor buffers, line-range file attachments, open untitled documents, and `#problems` diagnostics are now folded into bounded context sections (`Attached text excerpts:` and `Attached problems:`) and scrubbed by the leak gate.
-- **Custom `planAgent` (`look`) & `/parallel` enforcement:** custom read-only agents whose rules deny writing tools are recognized without requiring the bridge's `ocb-enforced` marker; `readOnlySubagents` verifies `task * deny` and excludes primary/dev agents (`build`, `general`); read-only `/parallel` turns surface enforcement notices and deduplicate concurrent `GET /agent` lookups.
-- **Server agent cache & release ledger:** `listAgents` cache keys include the server generation; the release gate verifies every delivered VSIX in `dist/` against `docs/released.txt`.

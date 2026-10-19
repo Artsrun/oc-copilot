@@ -2,7 +2,7 @@
   "name": "opencode-copilot-bridge",
   "displayName": "OpenCode Copilot Bridge",
   "description": "Delegate research, planning, and development to OpenCode from GitHub Copilot Chat.",
-  "version": "0.0.221",
+  "version": "0.0.222",
   "publisher": "local",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -292,6 +292,11 @@
             "type": "boolean",
             "default": true,
             "markdownDescription": "In every OpenCode process the bridge starts, `plan` and literal `readOnlySubagents` get read/search, web and `readOnlyTools`; edits and shell are denied. Git inspection uses gitScan. Before each read-only turn the bridge checks the agent's effective rules (a server's `GET /agent`, or `opencode agent list` for a cold run): if a config file gives back anything beyond that reach — an MCP tool, a custom tool, `task` to another agent — nothing is sent and the turn names the rule. An older or independently started server keeps its own rules and may be unverified. `/dev` is unchanged. Off: read-only by instruction. A custom `planAgent` keeps its own rules."
+          },
+          "opencodeCopilotBridge.opencode2": {
+            "type": "boolean",
+            "default": false,
+            "markdownDescription": "Experimental: drive OpenCode 2 (`@opencode/cli`, measured on 2.0.29–2.0.32) through its HTTP API instead of refusing it. Every turn goes through the server this window starts (its password stays in memory); read-only turns are sent only when that server lists the bridge's read-only rules for `plan`. Off: an OpenCode 2 `opencode` is refused, as before."
           },
           "opencodeCopilotBridge.readOnlyTools": {
             "type": "array",

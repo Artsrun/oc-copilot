@@ -5,6 +5,8 @@ const core_1 = require("./core");
 const followups_1 = require("./followups");
 const proc_1 = require("./proc");
 const net_1 = require("./net");
+const enforce_1 = require("./enforce");
+const run_server_1 = require("./run-server");
 const metrics_1 = require("./metrics");
 const asks_1 = require("./asks");
 const run_steps_1 = require("./run-steps");
@@ -28,6 +30,9 @@ async function runOpenCode(options) {
     const ready = await untilStopped((0, net_1.ensureCliIdentity)(options.executable, options.cwd).then(() => true), options);
     if (!ready || options.token?.isCancellationRequested) {
         return (0, run_steps_1.blankMetrics)(options.sessionId);
+    }
+    if ((0, enforce_1.executableMajor)(options.executable) === 2) {
+        return (0, run_server_1.runOpenCodeServer)({ ...options, serverUrl: options.attachUrl });
     }
     if (options.attachUrl && options.sessionId && !options.token?.isCancellationRequested) {
         await (0, server_session_1.applyTurnPermission)(options.attachUrl, options.cwd, options.sessionId, Boolean(options.readOnly), options.agent);
