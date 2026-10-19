@@ -9,6 +9,7 @@ exports.laneMergeContext = laneMergeContext;
 const core_1 = require("./core");
 const metrics_1 = require("./metrics");
 const format_1 = require("./format");
+const enforce_1 = require("./enforce");
 const runs_1 = require("./runs");
 const followups_1 = require("./followups");
 const models_1 = require("./models");
@@ -70,8 +71,7 @@ async function runParallelLanes(opts) {
             tokens: (0, metrics_1.emptyTokens)(),
             cost: 0,
             hadOutput: false,
-            sessionId: undefined,
-            reasoning: ""
+            sessionId: undefined
         };
         if (specs[i].error) {
             blank.error = specs[i].error;
@@ -136,12 +136,18 @@ async function runParallelLanes(opts) {
     const totalMs = Math.max(...results.map((r) => r.metrics.totalMs), 0);
     const serialMs = results.reduce((n, r) => n + r.metrics.totalMs, 0);
     const cost = results.reduce((n, r) => n + r.metrics.cost, 0);
-    opts.response.markdown(`\n\n---\n\n**${ok}/${results.length} lanes returned.** ` +
+    const laneEnforcement = !opts.write
+        ? results.map((r, i) => (!specs[i].error ? r.metrics.readOnlyEnforcement : undefined)).filter((e) => Boolean(e))
+        : [];
+    const enforcementNotice = (0, enforce_1.enforcedReadOnlyNotice)(laneEnforcement.find((e) => e?.kind === "unverified") ?? laneEnforcement.find((e) => e?.kind === "enforced"));
+    opts.response.markdown((enforcementNotice ? `\n\n> ${(0, followups_1.mark)("step")} ${enforcementNotice}` : "") +
+        `\n\n---\n\n**${ok}/${results.length} lanes returned.** ` +
         `Wall clock ${(0, core_1.secs)(totalMs)} vs ${(0, core_1.secs)(serialMs)} sequential` +
         (cost > 0 ? ` · $${cost.toFixed(4)}` : "") +
         ".\n\nLanes ran in isolated sessions, so nothing above is in your ongoing " +
         (results.filter((r, i) => !specs[i].error && r.answer.trim()).length >= 2
-            ? `conversation. ${sameTask ? "**Compare** or **Merge lanes**" : "**Merge lanes**"} below brings their answers into it.`
+            ? `conversation. ${sameTask ? "**Compare** or **Merge lanes**" : "**Merge lanes**"} below brings ` +
+                `${results.length > LANE_COUNT_CAP ? `the first ${LANE_COUNT_CAP} lanes' answers` : "their answers"} into it.`
             : "conversation. Paste the parts you want to keep into a normal `@opencode` turn."));
     return results.map((r, i) => ({
         task: specs[i].task,

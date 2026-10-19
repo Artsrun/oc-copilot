@@ -48,10 +48,11 @@ flowchart LR
 
 | Risk | Why it matters |
 | --- | --- |
-| Undocumented OpenCode behaviour | Pinned to versions 1.18.27 to 1.18.34: `?directory=` semantics, message-vs-session ids, fork dropping permission rules, attach kill not stopping the run. A server outside that range earns one line saying so (0.0.204); nothing negotiates, so an update can still break it |
+| Undocumented OpenCode behaviour | Pinned to the measured range (`TESTED_OPENCODE` in `net.ts`): `?directory=` semantics, message-vs-session ids, fork dropping permission rules, session rules that only append, attach kill not stopping the run. A server outside that range earns one line saying so (0.0.204); nothing negotiates, so an update can still break it |
+| OpenCode 2 | A different program with the same name, refused rather than driven (0.0.212): an organization that moves to 2.x needs a 1.x next to it for the bridge until a 2.x transport exists |
 | Proposed API | `chatParticipantAdditions` blocks Marketplace publishing and needs cast hacks that rot as the API stabilises |
 | Windows weight | `proc.ts` is dominated by `cmd.exe` workarounds; other platforms are less exercised |
-| Big modules | `runs.ts` (0.0.203), `chat-boot.ts` (0.0.204) and `handleChat` (0.0.205: `chat.ts` about 310 lines, `chat-turn.ts` 560, `chat-parallel.ts` 170) were split; the largest module is now `net.ts` (about 670); 33 modules are reachable from `chat.js` (a require walk over `out/`) |
+| Big modules | `runs.ts` (0.0.203), `chat-boot.ts` (0.0.204) and `handleChat` (0.0.205) were split; `net.ts` and `chat-turn.ts` are the largest now (`wc -l src/*.ts`). The suite's `LY` checks the layering has no cycle |
 | Heuristic streaming | `emitKeyedDelta` guesses ids when parts lack them; duplicate or lost text is possible |
 | Metadata is the only binding | A lost blob silently starts a new session |
 | Chat UI limits | No Thinking part or tool rows (proposed), no in-place progress, badges are inline-code pills |
@@ -68,8 +69,10 @@ flowchart LR
    `chat-turn.ts` opens, prepares, runs the recovery ladder and posts,
    `chat-parallel.ts` runs `/parallel`. (`runs.ts` was split in 0.0.203.)
 5. **Decide the proposed-API stance:** sideloaded VSIX only, or wait.
-6. **Keep these docs honest:** a suite check that fails if a function named in
-   `docs/flow` disappears (needs a version bump and the next free check code).
+6. **Keep these docs honest.** Done (0.0.212): the gate fails when a code
+   name AGENTS.md or `docs/flow` cites in backticks is gone from the code.
+7. **Drive OpenCode 2.** Both majors speak ACP over `opencode acp` (REFS,
+   0.0.212): one transport could serve 1.x and 2.x.
 
-(°ロ°) Items 1 to 4 change code or the suite, so each needs a version bump and
-a green `npm run ship`.
+(°ロ°) Items 1 to 4, 6 and 7 change code, the suite or the gate, so each needs a
+version bump and a green `npm run ship`.

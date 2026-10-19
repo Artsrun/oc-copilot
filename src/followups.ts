@@ -219,9 +219,6 @@ export const createBadger = (): ((chunk: string) => string) => {
     };
 };
 
-/** One-shot form: a whole markdown string, fresh state. */
-export const badgeMarks = (markdown: string): string => createBadger()(markdown);
-
 /**
  * followups.json cross-references, as a list of problems: checked by the suite
  * (MB), logged at activation, never thrown (a typo must not stop activation).

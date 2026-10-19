@@ -3,11 +3,44 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { config, refUri, relTo } from "./core";
 import { ChatKind, StepRecord } from "./metrics";
+import { CONTEXT_EXCERPTS, CONTEXT_FILES, CONTEXT_INLINE, CONTEXT_NOTE, CONTEXT_PROBLEMS, CONTEXT_RULE, CONTEXT_SELECTION, EXCERPT_BYTES_CAP, PROBLEMS_MAX_ITEMS, PROBLEM_BYTES_CAP, TOTAL_EXCERPT_BYTES_CAP } from "./context-markers";
+
+const MIN_EXCERPT_BYTES = 32;
 
 export interface ChatContextBlock {
     preamble: string;
     uris: vscode.Uri[];
+    /** What became of each reference the host sent: the log line and the chat note read it. */
+    notes: ReferenceNote[];
 }
+
+/** One reference the host sent, and what the bridge did with it. */
+export interface ReferenceNote {
+    id: string;
+    kind: "file" | "range" | "text" | "image" | "binary" | "diagnostics" | "resource" | "other";
+    /** A path relative to the folder (absolute outside it), a MIME type, or the id. */
+    label: string;
+    kept: boolean;
+    /** Dropped without a chat note: the host added it, not the user. */
+    automatic?: boolean;
+    why?: string;
+    /** Kept, but outside the folder: a read-only turn cannot open it. */
+    outside?: boolean;
+    /** The disk path was kept, but editor text could not fit. */
+    omittedText?: boolean;
+    /** Its text went into the prompt as an excerpt. */
+    excerpted?: boolean;
+    /** Its text was kept out: a `.env` file on a read-only turn. */
+    withheld?: boolean;
+}
+
+// The read tool's own deny on read-only turns (enforce.ts readOnlyPermission:
+// `*.env`, `*.env.*`, `*.env.example` allowed). An excerpt would hand the model
+// what its read is refused.
+export const readDeniedOnReadOnly = (fsPath: string): boolean => {
+    const p = fsPath.replace(/\\/g, "/");
+    return !/\.env\.example$/.test(p) && (/\.env$/.test(p) || /\.env\./.test(p));
+};
 
 // OpenCode already loads AGENTS.md / CLAUDE.md / .github/copilot-instructions.md
 // itself. Re-sending them as "the user attached this" is pure token waste and
@@ -18,57 +51,277 @@ export function isInstructionFile(uri: vscode.Uri): boolean {
     return INSTRUCTION_FILES.test(uri.fsPath);
 }
 
-export function isIgnorableReference(id: string, value: unknown): boolean {
+// What the host adds by itself: instruction and prompt files, Copilot's
+// "<instructions>…" STRING blob (folding it in leaked a raw <workspace-context>
+// into the reply), and the implicit current-file / selection chip.
+const AUTOMATIC_ID = /instruction|prompt|copilot\./i;
+const IMPLICIT_ID = /vscode\.implicit/i;
+
+// What a reference with no file is, from its value's shape: VS Code's
+// ChatReferenceBinaryData (`mimeType`, `data()`) and ChatReferenceDiagnostic
+// (`diagnostics`) carry nothing to point OpenCode at.
+function droppedKind(value: unknown): ReferenceNote["kind"] {
+    const v = value as { mimeType?: unknown; diagnostics?: unknown } | undefined;
     if (typeof value === "string") {
-        return true;
+        return "text";
     }
-    return /instruction|prompt|copilot\.|vscode\.implicit/i.test(id);
+    if (typeof v?.mimeType === "string") {
+        return v.mimeType.startsWith("image/") ? "image" : "binary";
+    }
+    if (Array.isArray(v?.diagnostics)) {
+        return "diagnostics";
+    }
+    return "other";
 }
 
 // Attachments the user explicitly added (#file, drag-drop, "Add context") are
 // included by default because attaching them *is* the intent. The active editor
 // selection is opt-in so nothing is ever sent that was not asked for.
 // An inline (Ctrl+I) turn always sends its selection, or the file and cursor line.
+// Files on disk go by path (OpenCode reads them itself); dirty buffers, line-range
+// excerpts, open untitled editors, and #problems diagnostics are folded into
+// bounded context sections; every reference, kept or not, is noted for the log
+// and the chat line.
+
+interface DocLike {
+    uri?: vscode.Uri;
+    isDirty?: boolean;
+    getText?: () => string;
+}
+
+function findOpenDocument(uri: vscode.Uri): DocLike | undefined {
+    const scheme = String((uri as { scheme?: unknown }).scheme ?? "file");
+    const docs = (vscode.workspace as { textDocuments?: readonly DocLike[] }).textDocuments ?? [];
+    const found = docs.find((d) => String((d.uri as { scheme?: unknown } | undefined)?.scheme ?? "file") === scheme && d.uri?.fsPath === uri.fsPath);
+    if (found) {
+        return found;
+    }
+    const active = vscode.window.activeTextEditor?.document as DocLike | undefined;
+    if (active && String((active.uri as { scheme?: unknown } | undefined)?.scheme ?? "file") === scheme && active.uri?.fsPath === uri.fsPath) {
+        return active;
+    }
+    return undefined;
+}
+
+function safeFence(text: string): string {
+    let run = 3;
+    for (const m of text.matchAll(/`{3,}/g)) {
+        if (m[0].length >= run) {
+            run = m[0].length + 1;
+        }
+    }
+    return "`".repeat(run);
+}
+
+function clampExcerpt(text: string, cap: number): string {
+    const normalized = text.replace(/\r\n?/g, "\n").replace(/\n+$/, "");
+    if (Buffer.byteLength(normalized, "utf8") <= cap) {
+        return normalized;
+    }
+    const marker = "\n…(truncated)";
+    const budget = Math.max(0, cap - Buffer.byteLength(marker, "utf8"));
+    const bytes = Buffer.from(normalized, "utf8");
+    let end = budget;
+    while (end > 0 && (bytes[end] & 0xc0) === 0x80) {
+        end -= 1;
+    }
+    return cap < Buffer.byteLength(marker, "utf8") ? "" : bytes.subarray(0, end).toString("utf8") + marker;
+}
+
+function lineExcerpt(text: string, start: number, end: number, cap: number): string {
+    let from = 0;
+    for (let line = 0; line < start; line += 1) {
+        const next = text.indexOf("\n", from);
+        if (next < 0) {
+            return "";
+        }
+        from = next + 1;
+    }
+    let to = from;
+    for (let line = start; line <= end; line += 1) {
+        const next = text.indexOf("\n", to);
+        if (next < 0 || next - from > cap) {
+            return text.slice(from, Math.min(text.length, from + cap + 1));
+        }
+        to = next + 1;
+    }
+    return text.slice(from, to);
+}
+
+function diagSeverity(sev: unknown): string {
+    if (typeof sev === "string" && sev.trim()) {
+        return sev.trim().toLowerCase();
+    }
+    switch (sev) {
+        case 0: return "error";
+        case 1: return "warning";
+        case 2: return "info";
+        case 3: return "hint";
+        default: return "problem";
+    }
+}
+
 export function buildChatContext(
     request: vscode.ChatRequest,
     cwd: string,
-    origin: { inline?: boolean } = {}
+    origin: { inline?: boolean; readOnly?: boolean } = {}
 ): ChatContextBlock {
     const lines: string[] = [];
+    const excerpts: string[] = [];
+    const problemLines: string[] = [];
+    let excerptBytes = 0;
+    let problemOverflow = 0;
     const uris: vscode.Uri[] = [];
+    const notes: ReferenceNote[] = [];
     const seen = new Set<string>();
     const settings = config();
+    const include = settings.get<boolean>("includeChatReferences", true);
 
-    if (settings.get<boolean>("includeChatReferences", true)) {
-        for (const ref of (request as { references?: readonly unknown[] }).references ?? []) {
-            const value = (ref as { value?: unknown }).value;
-            const id = String((ref as { id?: unknown }).id ?? "");
-            // Only real file attachments. Copilot silently adds its own
-            // instruction-file references plus a multi-hundred-word
-            // "<instructions>…" STRING blob; folding those into the preamble is
-            // what leaks a raw <workspace-context> into the reply. A
-            // string-valued reference is never a user attachment.
-            if (isIgnorableReference(id, value)) {
-                continue;
-            }
-            const uri = refUri(value);
-            if (!uri || isInstructionFile(uri)) {
-                continue;
-            }
-            const key = uri.fsPath;
-            if (seen.has(key)) {
-                continue;
-            }
-            seen.add(key);
-            uris.push(uri);
-            const range = (value as { range?: { start?: { line?: number }; end?: { line?: number } } })
-                .range;
-            const span =
-                range?.start?.line !== undefined && range?.end?.line !== undefined
-                    ? `:${range.start.line + 1}-${range.end.line + 1}`
-                    : "";
-            lines.push(`- ${relTo(cwd, uri)}${span}`);
+    const pushExcerpt = (heading: string, rawText: string): boolean => {
+        const cleaned = rawText.replace(/\r\n?/g, "\n").trimEnd();
+        if (!cleaned.trim() || TOTAL_EXCERPT_BYTES_CAP - excerptBytes < MIN_EXCERPT_BYTES) {
+            return false;
         }
+        const budget = Math.min(EXCERPT_BYTES_CAP, TOTAL_EXCERPT_BYTES_CAP - excerptBytes);
+        const body = clampExcerpt(cleaned, budget);
+        if (!body) {
+            return false;
+        }
+        excerptBytes += Buffer.byteLength(body, "utf8");
+        const fence = safeFence(body);
+        excerpts.push(`### ${heading}\n${fence}\n${body}\n${fence}`);
+        return true;
+    };
+
+    for (const ref of (request as { references?: readonly unknown[] }).references ?? []) {
+        const value = (ref as { value?: unknown }).value;
+        const id = String((ref as { id?: unknown }).id ?? "");
+        const uri = typeof value === "string" ? undefined : refUri(value);
+        const kind: ReferenceNote["kind"] = uri ? ((value as { range?: unknown }).range ? "range" : "file") : droppedKind(value);
+        const label = uri
+            ? relTo(cwd, uri)
+            : kind === "image" || kind === "binary"
+                ? String((value as { mimeType: string }).mimeType)
+                : kind === "diagnostics"
+                    ? "Problems"
+                    : id || kind;
+        if (!include) {
+            notes.push({ id, kind, label: kind === "diagnostics" ? id || kind : label, kept: false, automatic: true, why: "includeChatReferences is off" });
+            continue;
+        }
+        if (IMPLICIT_ID.test(id)) {
+            notes.push({ id, kind, label, kept: false, why: "implicit context" });
+            continue;
+        }
+        if (AUTOMATIC_ID.test(id) || (uri && isInstructionFile(uri))) {
+            notes.push({ id, kind, label, kept: false, automatic: true, why: uri ? "instruction file, OpenCode loads its own" : "added by the host" });
+            continue;
+        }
+        if (!uri && kind === "diagnostics") {
+            const tuples = (value as { diagnostics?: unknown[] } | undefined)?.diagnostics ?? [];
+            let addedForRef = 0;
+            for (const entry of tuples) {
+                if (!Array.isArray(entry) || entry.length < 2) {
+                    continue;
+                }
+                const dUri = refUri(entry[0]);
+                const dList = Array.isArray(entry[1]) ? entry[1] : [];
+                const fileLabel = dUri ? (String((dUri as { scheme?: unknown }).scheme ?? "file") === "file" ? relTo(cwd, dUri) : `${String((dUri as { scheme?: unknown }).scheme)}:${dUri.fsPath}`) : "workspace";
+                if (dUri && String((dUri as { scheme?: unknown }).scheme ?? "file") === "file") {
+                    uris.push(dUri);
+                }
+                for (const d of dList) {
+                    const item = d as { message?: unknown; severity?: unknown; code?: unknown; range?: { start?: { line?: number } } } | undefined;
+                    const msg = clampExcerpt(String(item?.message ?? "").slice(0, PROBLEM_BYTES_CAP * 2).replace(/\s+/g, " ").trim(), PROBLEM_BYTES_CAP);
+                    if (!msg) {
+                        continue;
+                    }
+                    addedForRef += 1;
+                    if (problemLines.length >= PROBLEMS_MAX_ITEMS) {
+                        problemOverflow += 1;
+                        continue;
+                    }
+                    const lineNo = typeof item?.range?.start?.line === "number" ? `:${item.range.start.line + 1}` : "";
+                    const sev = diagSeverity(item?.severity);
+                    const rawCode = item?.code && typeof item.code === "object" ? (item.code as { value?: unknown }).value : item?.code;
+                    const codeStr = rawCode !== undefined && rawCode !== null && String(rawCode).trim() ? ` [${String(rawCode).trim()}]` : "";
+                    problemLines.push(clampExcerpt(`- ${fileLabel}${lineNo} (${sev}${codeStr}): ${msg}`, PROBLEM_BYTES_CAP));
+                }
+            }
+            if (addedForRef > 0) {
+                notes.push({ id, kind: "diagnostics", label: "Problems", kept: true });
+            } else {
+                notes.push({ id, kind: "diagnostics", label: id || "diagnostics", kept: false, why: "no problems listed" });
+            }
+            continue;
+        }
+        if (!uri) {
+            notes.push({ id, kind, label, kept: false, why: "not a file" });
+            continue;
+        }
+        const scheme = String((uri as { scheme?: unknown }).scheme ?? "file");
+        if (scheme === "untitled") {
+            const untitledLabel = `${scheme}:${uri.fsPath}`;
+            const doc = findOpenDocument(uri);
+            const text = typeof doc?.getText === "function" ? doc.getText() : "";
+            if (text.trim() && pushExcerpt(`${untitledLabel} (unsaved)`, text)) {
+                notes.push({ id, kind: "text", label: untitledLabel, kept: true });
+            } else {
+                notes.push({ id, kind: "resource", label: untitledLabel, kept: false, why: text.trim() ? "excerpt budget exhausted" : "never saved" });
+            }
+            continue;
+        }
+        if (scheme !== "file") {
+            notes.push({ id, kind: "resource", label: `${scheme}:${uri.fsPath}`, kept: false, why: "not a file on disk" });
+            continue;
+        }
+        const range = (value as { range?: { start?: { line?: number }; end?: { line?: number } } }).range;
+        const startLine = range?.start?.line;
+        const endLine = range?.end?.line;
+        const span =
+            startLine !== undefined && endLine !== undefined
+                ? `:${startLine + 1}-${endLine + 1}`
+                : "";
+        const key = `${uri.fsPath}${span}`;
+        if (seen.has(key)) {
+            notes.push({ id, kind, label: `${label}${span}`, kept: false, automatic: true, why: "duplicate" });
+            continue;
+        }
+        seen.add(key);
+        uris.push(uri);
+        const doc = findOpenDocument(uri);
+        const dirty = Boolean(doc?.isDirty && typeof doc.getText === "function");
+        const outside = path.isAbsolute(label);
+        let excerptKept = false;
+        const wouldExcerpt = Boolean(doc?.getText) && (dirty || (startLine !== undefined && endLine !== undefined));
+        const withheld = wouldExcerpt && Boolean(origin.readOnly) && settings.get<boolean>("enforceReadOnly", true) && readDeniedOnReadOnly(uri.fsPath);
+        // Closed files stay path-based: OpenCode reads the requested range.
+        // Never synchronously load a whole attachment on the extension host.
+        if (withheld) {
+            // the path stays; plan's read refuses it, as it would without the excerpt
+        } else if (TOTAL_EXCERPT_BYTES_CAP - excerptBytes >= MIN_EXCERPT_BYTES && startLine !== undefined && endLine !== undefined) {
+            const sourceText = typeof doc?.getText === "function" ? doc.getText() : undefined;
+            if (sourceText !== undefined) {
+                const lo = Math.max(0, Math.min(startLine, endLine));
+                const hi = Math.max(startLine, endLine);
+                const slice = lineExcerpt(sourceText, lo, hi, EXCERPT_BYTES_CAP);
+                excerptKept = pushExcerpt(`${label}${span}${dirty ? " (unsaved)" : ""}`, slice);
+            }
+        } else if (TOTAL_EXCERPT_BYTES_CAP - excerptBytes >= MIN_EXCERPT_BYTES && dirty && doc?.getText) {
+            excerptKept = pushExcerpt(`${label} (unsaved buffer)`, doc.getText());
+        }
+        // relTo answers an absolute path for a file outside the folder.
+        notes.push({
+            id,
+            kind,
+            label: `${label}${span}`,
+            kept: true,
+            ...(outside ? { outside: true } : {}),
+            ...(dirty && !excerptKept && !withheld ? { omittedText: true } : {}),
+            ...(excerptKept ? { excerpted: true } : {}),
+            ...(withheld ? { withheld: true } : {})
+        });
+        lines.push(`- ${label}${span}${dirty && !withheld ? (excerptKept ? " (unsaved changes in editor)" : " (unsaved editor text omitted; disk contents may be stale)") : ""}`);
     }
 
     let selectionBlock = "";
@@ -77,7 +330,7 @@ export function buildChatContext(
         const sel = editor?.selection;
         if (origin.inline && editor && sel && (sel.isEmpty || !editor.document.getText(sel).trim())) {
             const name = relTo(cwd, editor.document.uri);
-            selectionBlock = `\nInline chat — ${name}:${sel.active.line + 1} (cursor, nothing selected)\n`;
+            selectionBlock = `\n${CONTEXT_INLINE}${name}:${sel.active.line + 1} (cursor, nothing selected)\n`;
             if (!seen.has(editor.document.uri.fsPath)) {
                 uris.push(editor.document.uri);
             }
@@ -85,26 +338,111 @@ export function buildChatContext(
             const text = editor.document.getText(sel);
             if (text.trim()) {
                 const name = relTo(cwd, editor.document.uri);
-                selectionBlock =
-                    `\nActive selection — ${name}:${sel.start.line + 1}-${sel.end.line + 1}\n` +
-                    "```\n" +
-                    text +
-                    "\n```\n";
-                if (!seen.has(editor.document.uri.fsPath)) {
-                    uris.push(editor.document.uri);
+                const span = `:${sel.start.line + 1}-${sel.end.line + 1}`;
+                if (Boolean(origin.readOnly) && settings.get<boolean>("enforceReadOnly", true) && readDeniedOnReadOnly(editor.document.uri.fsPath)) {
+                    notes.push({ id: "vscode.selection", kind: "range", label: `${name}${span}`, kept: true, withheld: true });
+                } else {
+                    selectionBlock =
+                        `\n${CONTEXT_SELECTION}${name}${span}\n` +
+                        "```\n" +
+                        text +
+                        "\n```\n";
+                    if (!seen.has(editor.document.uri.fsPath)) {
+                        uris.push(editor.document.uri);
+                    }
                 }
             }
         }
     }
 
-    if (lines.length === 0 && !selectionBlock) {
-        return { preamble: "", uris };
+    if (lines.length === 0 && excerpts.length === 0 && problemLines.length === 0 && !selectionBlock) {
+        return { preamble: "", uris, notes };
     }
-    const attached = lines.length ? `Files the user attached:\n${lines.join("\n")}\n` : "";
+    const attached = lines.length ? `${CONTEXT_FILES}\n${lines.join("\n")}\n` : "";
+    const excerptSection = excerpts.length
+        ? `${attached ? "\n" : ""}${CONTEXT_EXCERPTS}\n${excerpts.join("\n")}\n`
+        : "";
+    if (problemOverflow > 0) {
+        problemLines.push(`- …${problemOverflow} more problems`);
+    }
+    const problemSection = problemLines.length
+        ? `${attached || excerptSection ? "\n" : ""}${CONTEXT_PROBLEMS}\n${problemLines.join("\n")}\n`
+        : "";
     return {
-        preamble: `\n\n---\n${attached}${selectionBlock}(Context only. Do not repeat or summarize this block.)`,
-        uris
+        preamble: `\n\n${CONTEXT_RULE}${attached}${excerptSection}${problemSection}${selectionBlock}${CONTEXT_NOTE}`,
+        uris,
+        notes
     };
+}
+
+/** The Output line for a turn's references: every one, kept or dropped, and why. */
+export function referenceLogLine(notes: readonly ReferenceNote[]): string | undefined {
+    if (!notes.length) {
+        return undefined;
+    }
+    const kept = notes.filter((n) => n.kept).map((n) => `${n.label} (${n.kind}${n.outside ? ", outside the folder" : ""})`);
+    const dropped = notes
+        .filter((n) => !n.kept)
+        .map((n) => `${n.id || "(no id)"}${n.label && n.label !== n.id ? ` ${n.label}` : ""} (${n.kind}: ${n.why})`);
+    return `references (${notes.length}): kept ${kept.join(", ") || "none"}; dropped ${dropped.join(", ") || "none"}`;
+}
+
+const NOT_SENT: Record<string, [string, string]> = {
+    image: ["an image", "images"],
+    binary: ["a binary attachment", "binary attachments"],
+    diagnostics: ["Problems", "Problems"],
+    text: ["a text attachment", "text attachments"],
+    other: ["an attachment of another kind", "attachments of other kinds"]
+};
+let implicitNoted = false;
+
+/**
+ * The one chat line a turn's references earn, or undefined: what the user
+ * attached that OpenCode will not get, and — read-only turns under
+ * enforceReadOnly — attached files outside the folder it cannot open. VS Code's
+ * implicit current-file chip rides along on every turn: said once per window.
+ */
+export function contextNotice(notes: readonly ReferenceNote[], readOnly: boolean): string | undefined {
+    const parts: string[] = [];
+    const omitted = notes.filter((n) => n.omittedText).map((n) => `\`${n.label}\``);
+    if (omitted.length) {
+        parts.push(`Unsaved editor text not sent for ${omitted.join(", ")}: no excerpt fit. OpenCode only gets the disk path; its contents may be stale.`);
+    }
+    const counts = new Map<string, number>();
+    const resources: string[] = [];
+    for (const n of notes) {
+        if (n.kept || n.automatic || n.why === "implicit context") {
+            continue;
+        }
+        if (n.kind === "resource") {
+            resources.push(`\`${n.label}\` (${n.why})`);
+        } else {
+            counts.set(n.kind, (counts.get(n.kind) ?? 0) + 1);
+        }
+    }
+    const names = [...counts].map(([kind, n]) => {
+        const [one, many] = NOT_SENT[kind] ?? NOT_SENT.other;
+        return n === 1 || kind === "diagnostics" ? one : `${n} ${many}`;
+    });
+    names.push(...resources);
+    if (names.length) {
+        parts.push(`Not sent to OpenCode: ${names.join(", ")}. The bridge passes files on disk, by path.`);
+    }
+    if (!implicitNoted && notes.some((n) => n.why === "implicit context")) {
+        implicitNoted = true;
+        parts.push("VS Code's current-file chip is not sent: attach the file with `#file`, or set `includeEditorSelection` for a selection.");
+    }
+    const withheld = notes.filter((n) => n.withheld).map((n) => `\`${n.label}\``);
+    if (withheld.length) {
+        parts.push(`Text of ${withheld.join(", ")} not sent: a read-only turn keeps \`.env\` files out, as plan's read does (\`/dev\` sends it).`);
+    }
+    // An excerpt already carries the text: only a path-only file outside is out of reach.
+    const outside = notes.filter((n) => n.kept && n.outside && !n.excerpted).map((n) => `\`${n.label}\``);
+    if (readOnly && outside.length && config().get<boolean>("enforceReadOnly", true)) {
+        const one = outside.length === 1;
+        parts.push(`${outside.join(", ")} ${one ? "is" : "are"} outside this folder: a read-only turn cannot open ${one ? "it" : "them"} (\`/dev\` can).`);
+    }
+    return parts.length ? parts.join(" ") : undefined;
 }
 
 // `response.reference` renders a "Used N references" chip in Copilot Chat. Older

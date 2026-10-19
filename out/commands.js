@@ -33,7 +33,6 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.runCapture = runCapture;
 exports.diagnose = diagnose;
 exports.quickActions = quickActions;
 const vscode = __importStar(require("vscode"));
@@ -46,36 +45,6 @@ const net_1 = require("./net");
 const session_1 = require("./session");
 const models_1 = require("./models");
 const env_1 = require("./env");
-function runCapture(executable, args, cwd, timeoutMs = 8000) {
-    return new Promise((resolve) => {
-        let child;
-        try {
-            child = (0, proc_1.spawnOpenCode)(executable, args, cwd);
-        }
-        catch (error) {
-            resolve(`error: ${error.message}`);
-            return;
-        }
-        let out = "";
-        const timer = setTimeout(() => {
-            (0, proc_1.killTree)(child);
-            resolve(out.trim() || "timed out");
-        }, timeoutMs);
-        child.stdin?.end();
-        child.stdout.setEncoding("utf8");
-        child.stderr.setEncoding("utf8");
-        child.stdout.on("data", (c) => (out += c));
-        child.stderr.on("data", (c) => (out += c));
-        child.on("error", (err) => {
-            clearTimeout(timer);
-            resolve(`error: ${err.message}`);
-        });
-        child.on("close", () => {
-            clearTimeout(timer);
-            resolve(out.trim() || "(no output)");
-        });
-    });
-}
 async function diagnose() {
     const settings = (0, core_1.config)();
     const executable = settings.get("executable", "opencode");
@@ -94,8 +63,9 @@ async function diagnose() {
         lines.push(row("executable", `${(0, followups_1.mark)("fail")} \`${executable}\` not found on PATH`));
     }
     if (resolved) {
-        const version = await runCapture(executable, ["--version"], cwd);
-        lines.push(row("version", `\`${(0, core_1.truncate)(version, 80)}\``));
+        const version = await (0, proc_1.runCapture)(executable, ["--version"], cwd);
+        const major = (0, net_1.majorVersionNote)(executable, version);
+        lines.push(row("version", `\`${(0, core_1.truncate)(version, 80)}\`${major ? ` — ${(0, followups_1.mark)("fail")} ${major}` : ""}`));
     }
     let serverState = "not running (started on demand)";
     const serverBase = (0, net_1.knownServerBase)();
@@ -178,7 +148,7 @@ async function quickActions() {
         },
         {
             label: "$(stethoscope) Diagnose",
-            detail: "Check executable, server, models, log dir",
+            detail: "Check executable, server, models, environment",
             run: () => vscode.commands.executeCommand("opencodeCopilotBridge.diagnose")
         },
         {

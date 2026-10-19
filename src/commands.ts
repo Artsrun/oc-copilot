@@ -1,44 +1,13 @@
 import * as vscode from "vscode";
-import { ChildProcessWithoutNullStreams } from "node:child_process";
 import * as path from "node:path";
 import { platform } from "node:process";
 import { config, resolveFolder, truncate } from "./core";
 import { mark } from "./followups";
-import { killTree, resolveExecutable, spawnOpenCode } from "./proc";
-import { httpGetJson, knownServerBase } from "./net";
+import { resolveExecutable, runCapture } from "./proc";
+import { httpGetJson, knownServerBase, majorVersionNote } from "./net";
 import { getActiveSession } from "./session";
 import { catalogAge, getModelCatalog } from "./models";
 import { discoverOpenCodeEnv, summariseEnv } from "./env";
-
-export function runCapture(executable: string, args: string[], cwd: string, timeoutMs = 8000): Promise<string> {
-    return new Promise((resolve) => {
-        let child: ChildProcessWithoutNullStreams;
-        try {
-            child = spawnOpenCode(executable, args, cwd);
-        } catch (error) {
-            resolve(`error: ${(error as Error).message}`);
-            return;
-        }
-        let out = "";
-        const timer = setTimeout(() => {
-            killTree(child);
-            resolve(out.trim() || "timed out");
-        }, timeoutMs);
-        child.stdin?.end();
-        child.stdout.setEncoding("utf8");
-        child.stderr.setEncoding("utf8");
-        child.stdout.on("data", (c: string) => (out += c));
-        child.stderr.on("data", (c: string) => (out += c));
-        child.on("error", (err) => {
-            clearTimeout(timer);
-            resolve(`error: ${err.message}`);
-        });
-        child.on("close", () => {
-            clearTimeout(timer);
-            resolve(out.trim() || "(no output)");
-        });
-    });
-}
 
 export async function diagnose(): Promise<void> {
     const settings = config();
@@ -60,7 +29,8 @@ export async function diagnose(): Promise<void> {
     }
     if (resolved) {
         const version = await runCapture(executable, ["--version"], cwd);
-        lines.push(row("version", `\`${truncate(version, 80)}\``));
+        const major = majorVersionNote(executable, version);
+        lines.push(row("version", `\`${truncate(version, 80)}\`${major ? ` — ${mark("fail")} ${major}` : ""}`));
     }
 
     let serverState = "not running (started on demand)";
@@ -180,7 +150,7 @@ export async function quickActions(): Promise<void> {
         },
         {
             label: "$(stethoscope) Diagnose",
-            detail: "Check executable, server, models, log dir",
+            detail: "Check executable, server, models, environment",
             run: () => vscode.commands.executeCommand("opencodeCopilotBridge.diagnose")
         },
         {

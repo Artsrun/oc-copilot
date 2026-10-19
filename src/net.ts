@@ -6,7 +6,7 @@ import * as http from "node:http";
 import * as net from "node:net";
 
 import { config, delay, logChannel, resolveFolder, stamp, truncate } from "./core";
-import { killTree, spawnOpenCode } from "./proc";
+import { executableStamp, killTree, runCapture, spawnOpenCode } from "./proc";
 
 // `opencode serve` is a MULTI-DIRECTORY server: every /session endpoint roots
 // the session wherever `?directory=` points, and falls back to its OWN cwd when
@@ -104,7 +104,8 @@ export function httpGetJson<T>(url: string, timeoutMs = 5000): Promise<T> {
                 try {
                     resolve(JSON.parse(data) as T);
                 } catch (error) {
-                    reject(error);
+                    // A web page where JSON belongs: OpenCode 2's health (ensureServer).
+                    reject(Object.assign(error as Error, { code: "ENOTJSON", status: res.statusCode }));
                 }
             });
         });
@@ -224,9 +225,7 @@ const SLOW_START_MS = 1500;
 // What each server said it is (`/global/health` → `version`, 1.18.34). The
 // bridge leans on behaviour measured on these versions only (REFS); outside
 // them it still runs, and says so once per window and version.
-// 1.18.35 was read, not run: its one runtime change drops non-PNG/JPEG/WebP
-// tool-result images for xAI models (session/message-v2.ts) — REFS.
-export const TESTED_OPENCODE = { min: "1.18.27", max: "1.18.35" } as const;
+export const TESTED_OPENCODE = { min: "1.18.27", max: "1.19.0" } as const;
 const serverVersions = new Map<string, string>();
 const versionsNoted = new Set<string>();
 
@@ -253,6 +252,124 @@ export function versionNotice(base: string): string | undefined {
     return `OpenCode ${version} is outside the versions this bridge was tested with (${TESTED_OPENCODE.min}–${TESTED_OPENCODE.max}). It runs; if something misbehaves, the debug log and REFS.md name what each version was measured on.`;
 }
 
+// claim:opencode-1-only — OpenCode 2 (`@opencode/cli`, also `opencode`) is
+// another program: its server answers `/global/health` with its web app, and
+// `run` rejects --attach, --dir, --variant and --pure (2.0.27, REFS). Once seen,
+// this window runs nothing through that executable — no server start, no CLI
+// run without the bridge's rules — until `--version` (/ping, Diagnose) names a
+// 1.x there again.
+const notOpenCode1 = new Map<string, Error>();
+// Per executable: the file it was checked as (`executableStamp`) and the check.
+// A 2.x installer replaces a 1.x in place — same name, new file — so a check of
+// the old file must not authorize the new one: file stats per run, no process.
+const cliIdentity = new Map<string, { file: string; check: Promise<void> }>();
+const IDENTITY_TIMEOUT_MS = 6000;
+
+/** `--version` could not say (timed out, failed, no 1.x printed): nothing ran. */
+export const isIdentityUnknown = (error: unknown): boolean => (error as { code?: unknown } | undefined)?.code === "EOPENCODEIDENTITY";
+
+const identityUnknown = (executable: string, why: string): Error =>
+    Object.assign(
+        new Error(
+            `Nothing was run: \`${executable}\` is not confirmed as OpenCode 1 — its \`--version\` ${why}. ` +
+            "`/ping` shows what it prints; the next message checks again."
+        ),
+        { code: "EOPENCODEIDENTITY" }
+    );
+
+const fileOf = (executable: string, forget = false): string => {
+    try {
+        return executableStamp(executable, forget);
+    } catch {
+        return ""; // not resolvable: the check's own spawn says why (ENOENT)
+    }
+};
+
+/** One shared check per executable file; failures are retryable, never permission to run. */
+export function ensureCliIdentity(executable: string, cwd: string): Promise<void> {
+    const refusal = openCode1Refusal(executable);
+    if (refusal) {
+        return Promise.reject(refusal);
+    }
+    const hit = cliIdentity.get(executable);
+    let file = fileOf(executable);
+    if (hit && hit.file === file) {
+        return hit.check;
+    }
+    if (hit) {
+        file = fileOf(executable, true);
+        logChannel.appendLine(`[${stamp()}] ${executable} changed on disk since its identity check — checking it again`);
+    }
+    const started = Date.now();
+    const check: Promise<void> = runCapture(executable, ["--version"], cwd, IDENTITY_TIMEOUT_MS, true).then((output) => {
+        majorVersionNote(executable, output);
+        const unsupported = openCode1Refusal(executable);
+        if (unsupported) {
+            throw unsupported;
+        }
+        if (!/(?:^|\s)v?1\.\d+\.\d+(?:\s|$|[-+])/.test(output.trim())) {
+            throw identityUnknown(executable, `printed no 1.x version (\`${truncate(output.trim().replace(/\s+/g, " ").replace(/`/g, "'"), 40)}\`)`);
+        }
+        logChannel.appendLine(`[${stamp()}] CLI identity verified in ${Date.now() - started}ms`);
+    }).catch((error: unknown) => {
+        if (cliIdentity.get(executable)?.check === check) {
+            cliIdentity.delete(executable);
+        }
+        const code = (error as NodeJS.ErrnoException | undefined)?.code;
+        // A missing executable keeps its own words (Couldn't launch, Diagnose).
+        if (isNotOpenCode1(error) || isIdentityUnknown(error) || code === "ENOENT") {
+            throw error;
+        }
+        const message = error instanceof Error ? error.message : String(error);
+        throw identityUnknown(
+            executable,
+            /timed out/.test(message) ? `did not answer within ${IDENTITY_TIMEOUT_MS / 1000} s` : `failed (${truncate(message.replace(/\s+/g, " ").replace(/`/g, "'"), 80)})`
+        );
+    });
+    cliIdentity.set(executable, { file, check });
+    return check;
+}
+
+/** Remember that `executable` is not OpenCode 1; the Error every later use throws. */
+export function markNotOpenCode1(executable: string, evidence: string): Error {
+    const error = Object.assign(
+        new Error(
+            `\`opencode\` here is not OpenCode 1: ${evidence}. The bridge drives OpenCode 1 only so far (its server API and permission rules), so nothing was run. ` +
+            "To keep OpenCode 2 and use @opencode, give the bridge its own 1.x: `npm i --prefix ~/.opencode1 opencode-ai@1`, set " +
+            "`opencodeCopilotBridge.executable` to `~/.opencode1/node_modules/.bin/opencode` (`opencode.cmd` on Windows), then run `/ping`. " +
+            "The README's *OpenCode 2* section says what the two share."
+        ),
+        { code: "ENOTOPENCODE1" }
+    );
+    if (!notOpenCode1.has(executable)) {
+        logChannel.appendLine(`[${stamp()}] ${executable}: ${error.message}`);
+    }
+    notOpenCode1.set(executable, error);
+    return error;
+}
+
+/** Why `executable` must not be run, if it is not OpenCode 1. */
+export const openCode1Refusal = (executable: string): Error | undefined => notOpenCode1.get(executable);
+
+export const isNotOpenCode1 = (error: unknown): boolean => (error as { code?: unknown } | undefined)?.code === "ENOTOPENCODE1";
+
+/** `opencode --version` read for its major: 2+ is refused from now on (the
+ * row's note), 1 lifts an earlier refusal. 1.x prints `1.19.0`, 2.x `opencode v2.0.27`. */
+export function majorVersionNote(executable: string, output: string): string | undefined {
+    const found = output.match(/(?:^|\s)v?(\d+)\.\d+\.\d+/);
+    const major = found ? Number(found[1]) : undefined;
+    if (major === 1) {
+        if (notOpenCode1.has(executable)) {
+            cliIdentity.delete(executable);
+        }
+        notOpenCode1.delete(executable);
+    } else if (major !== undefined && major >= 2) {
+        markNotOpenCode1(executable, `\`--version\` prints \`${truncate(output.trim(), 40)}\``);
+        return `OpenCode ${major}: the bridge drives 1.x only so far — README, *OpenCode 2*`;
+    }
+    return undefined;
+}
+
 async function freePort(host: string): Promise<number> {
     return new Promise((resolve, reject) => {
         const probe = http.createServer();
@@ -276,6 +393,11 @@ export function knownServerBase(): string | undefined {
     return managedPort && serveProcess && serveProcess.exitCode === null ? `http://${host}:${managedPort}` : undefined;
 }
 
+let serverGeneration = 0;
+
+/** Monotonic generation incremented whenever a server is started, adopted or stopped. */
+export const currentServerGeneration = (): number => serverGeneration;
+
 export function stopServer(): void {
     if (serveProcess && serveProcess.exitCode === null) {
         killTree(serveProcess);
@@ -284,6 +406,10 @@ export function stopServer(): void {
     managedPort = undefined;
     fallbackPort = undefined;
     servePort = undefined;
+    serverGeneration += 1;
+    // A start still polling belongs to the process just stopped: the next
+    // caller starts afresh instead of sharing it (it fails, see `mine`).
+    startInFlight = undefined;
 }
 
 // One start at a time: a caller that arrives while one is in flight (the
@@ -345,7 +471,8 @@ async function ensureServerOnce(cwd?: string, onSlowStart?: (text: string) => vo
     // What a listener says at /global/health. A real OpenCode server names its
     // version ({ healthy, version }, docs and 1.18.34); a program that only says
     // {"healthy":true} is not one, and must not be handed prompts and paths.
-    const probe = async (timeoutMs?: number): Promise<{ healthy: boolean; version?: string }> => {
+    // `page`: a 2xx web page instead (OpenCode 2's web app answers every path).
+    const probe = async (timeoutMs?: number): Promise<{ healthy: boolean; version?: string; page?: boolean }> => {
         try {
             const health = await httpGetJson<{ healthy?: boolean; version?: unknown }>(`${base}/global/health`, timeoutMs);
             const version = typeof health.version === "string" && health.version.trim() ? health.version.trim() : undefined;
@@ -353,8 +480,9 @@ async function ensureServerOnce(cwd?: string, onSlowStart?: (text: string) => vo
                 serverVersions.set(base, version);
             }
             return { healthy: health.healthy === true, version };
-        } catch {
-            return { healthy: false };
+        } catch (error) {
+            const { code, status } = error as { code?: unknown; status?: unknown };
+            return { healthy: false, page: code === "ENOTJSON" && typeof status === "number" && status >= 200 && status < 300 };
         }
     };
     const healthy = async (timeoutMs?: number): Promise<boolean> => (await probe(timeoutMs)).healthy;
@@ -372,6 +500,7 @@ async function ensureServerOnce(cwd?: string, onSlowStart?: (text: string) => vo
             serveSpawnError = undefined;
             if (!startedHere && !adoptedServers.has(base)) {
                 adoptedServers.add(base);
+                serverGeneration += 1;
                 logChannel.appendLine(
                     `[${stamp()}] adopted an OpenCode server already listening on ${base}. ` +
                     `Requests are scoped to ${cwd ?? "this workspace"} via ?directory=.`
@@ -402,10 +531,16 @@ async function ensureServerOnce(cwd?: string, onSlowStart?: (text: string) => vo
     }
 
     if (!serveAlive()) {
+        // A healthy OpenCode 1 server is still adopted above; this one is never started.
+        const refused = openCode1Refusal(executable);
+        if (refused) {
+            throw refused;
+        }
         const serveCwd = cwd ?? resolveFolder()?.folder.uri.fsPath;
         serveSpawnError = undefined;
         serveTail = "";
         servePort = port;
+        serverGeneration += 1;
         serveProcess = spawnOpenCode(
             executable,
             ["serve", "--port", String(port), "--hostname", host],
@@ -415,12 +550,43 @@ async function ensureServerOnce(cwd?: string, onSlowStart?: (text: string) => vo
         // box-drawing, and a character split across two chunks logs as U+FFFD.
         serveProcess.stdout?.setEncoding("utf8");
         serveProcess.stderr?.setEncoding("utf8");
+        // OpenCode 2 prints its server password (2.0.27): never into the log or chat.
         const keep = (d: string): void => {
-            logChannel.appendLine(`[serve] ${d.trim()}`);
-            serveTail = (serveTail + d).slice(-600);
+            const said = d.replace(/\b(password)(\s*[:=]\s*|\s+)\S+/gi, "$1$2[redacted]");
+            logChannel.appendLine(`[serve] ${said.trim()}`);
+            serveTail = (serveTail + said).slice(-600);
         };
-        serveProcess.stdout?.on("data", keep);
-        serveProcess.stderr?.on("data", keep);
+        // Sanitize complete bounded lines: either the keyword or secret can
+        // straddle writes. Each stream owns its partial line independently.
+        for (const stream of [serveProcess.stdout, serveProcess.stderr]) {
+            let line = "";
+            let oversized = false;
+            stream?.on("data", (chunk: string) => {
+                for (const part of chunk.split(/(?<=\n)/)) {
+                    if (!oversized) {
+                        if (line.length + part.length > 8192) {
+                            line = "";
+                            oversized = true;
+                            keep("server diagnostic line exceeded 8 KiB; discarded\n");
+                        } else {
+                            line += part;
+                        }
+                    }
+                    if (part.endsWith("\n")) {
+                        if (!oversized) {
+                            keep(line);
+                        }
+                        line = "";
+                        oversized = false;
+                    }
+                }
+            });
+            stream?.on("end", () => {
+                if (line && !oversized) {
+                    keep(line);
+                }
+            });
+        }
         // spawn failures that are not ENOENT (EACCES, EAGAIN, EMFILE) surface
         // ASYNCHRONOUSLY here, not as a throw from spawnOpenCode. With no listener
         // that is an uncaught exception in the extension host; with one, the poll
@@ -442,7 +608,13 @@ async function ensureServerOnce(cwd?: string, onSlowStart?: (text: string) => vo
     // Bail out early if the server process died instead of polling to the deadline —
     // checked after every poll AND at the deadline: a poll that waited out its
     // timeout must not turn a dead server into "did not become healthy".
+    // stopServer() mid-poll (reload, deactivate) ends this start too: the next
+    // caller starts its own instead of sharing one that waits out the deadline.
+    const mine = serveProcess;
     const exited = (): Error | undefined => {
+        if (serveProcess !== mine) {
+            return new Error("OpenCode server was stopped while it was starting.");
+        }
         if (!serveProcess || serveProcess.exitCode === null) {
             return undefined;
         }
@@ -459,10 +631,17 @@ async function ensureServerOnce(cwd?: string, onSlowStart?: (text: string) => vo
         if (dead) {
             throw dead;
         }
-        if (await healthy(POLL_HEALTH_MS)) {
+        const health = await probe(POLL_HEALTH_MS);
+        if (health.healthy) {
             // Measured per start, so a slow first boot shows up in the log.
             logChannel.appendLine(`[${stamp()}] serve on ${base} answered after ${((Date.now() - waitStarted) / 1000).toFixed(1)}s`);
             return base;
+        }
+        // Our own server answered with a web page: OpenCode 2, refused at once,
+        // not after the whole start deadline (twice a plan turn, measured).
+        if (health.page && serveProcess === mine && serveAlive()) {
+            stopServer();
+            throw markNotOpenCode1(executable, "its server answers `/global/health` with a web page, as OpenCode 2 does");
         }
         if (!told && onSlowStart && Date.now() - waitStarted >= SLOW_START_MS) {
             told = true;
@@ -482,7 +661,7 @@ export async function warmServer(cwd: string, onSlowStart?: (text: string) => vo
     try {
         return await ensureServer(cwd, onSlowStart);
     } catch (error) {
-        logChannel.appendLine(`[${stamp()}] server unavailable, dev runs cold: ${error}`);
+        logChannel.appendLine(`[${stamp()}] ${isNotOpenCode1(error) ? "server not started: not OpenCode 1 (logged above)" : `server unavailable, dev runs cold: ${error}`}`);
         return undefined;
     }
 }
@@ -490,17 +669,24 @@ export async function warmServer(cwd: string, onSlowStart?: (text: string) => vo
 // claim:prewarm-server — the first @opencode message no longer pays the
 // server's boot (config, plugins, MCP: most of a minute measured on a first
 // start). Started after startup, in a trusted workspace only: OpenCode loads the
-// folder's own config and plugins. Never on `transport: cli`.
+// folder's own config and plugins. `transport: cli` starts no server.
 export const PREWARM_DELAY_MS = 3000;
 
 export function prewarmServer(): Promise<string | undefined> | undefined {
     const settings = config();
     const trusted = (vscode.workspace as { isTrusted?: boolean }).isTrusted === true;
-    if (!settings.get<boolean>("prewarmServer", true) || settings.get<string>("transport", "auto") === "cli" || !trusted) {
+    if (!settings.get<boolean>("prewarmServer", true) || !trusted) {
         return undefined;
     }
     const cwd = resolveFolder()?.folder.uri.fsPath;
     if (!cwd) {
+        return undefined;
+    }
+    if (settings.get<string>("transport", "auto") === "cli") {
+        // No server here, so nothing would show an OpenCode 2 (claim:opencode-1-only):
+        // its `run` takes a plain turn's flags. One `--version`, off the turn path.
+        const executable = settings.get<string>("executable", "opencode");
+        void ensureCliIdentity(executable, cwd).catch((error) => logChannel.appendLine(`[${stamp()}] CLI prewarm identity check failed: ${error}`));
         return undefined;
     }
     logChannel.appendLine(`[${stamp()}] prewarming the OpenCode server for ${cwd}`);

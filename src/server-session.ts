@@ -4,7 +4,9 @@
 // two runners; imports no runner.
 import { config, delay, logChannel, stamp, truncate } from "./core";
 import { ensureServer, httpGetJson, httpPostJson, httpRequestJson, withDirectory } from "./net";
-import { RunMetrics } from "./metrics";
+import { ReadOnlyEnforcement, RunMetrics } from "./metrics";
+import { PermissionRule, isPermissionRule, listAgents } from "./agents";
+import { coldEnforcement, enforcedConfigContent, judgeReadOnly, readOnlySubagents } from "./enforce";
 
 // A session id is untrusted (stdout, server, replayed metadata). In a URL path
 // `..` walks to another endpoint; in argv a leading `-` is a flag. Every site
@@ -38,48 +40,215 @@ export const HEADLESS_PERMISSION = [
 ];
 
 // claim:read-only-subagents — a subagent runs with ITS OWN permissions, not a restricted copy of the
-// parent's (OpenCode docs, agents; `general` has every tool and edits). So a
-// read-only turn whose agent may call `task` could edit through `general`
-// without a single ask. On a read-only turn the session's `task` rule allows
-// only the read-only subagents (`readOnlySubagents`); last match wins, and a
+// parent's (OpenCode docs, agents; `general` has every tool and edits, and the
+// built-in `explore` has `bash * allow`: it wrote a file on a read-only turn,
+// 1.19.0 measured). So a read-only turn's session allows `task` only for the
+// read-only subagents (`readOnlySubagents`), which every process the bridge
+// starts makes read-only by permission (./enforce); last match wins, and a
 // denied subagent is left out of the task tool's description entirely.
-export function turnPermission(readOnly: boolean): Array<{ permission: string; action: string; pattern: string }> {
+// Under enforceReadOnly a subagent is allowed only where it is read-only by
+// permission: a server keeps the overrides it was started with, so one you
+// started (or one started before `readOnlySubagents` changed) may lack them.
+// Such a session gets no `bash`/`edit` denies instead: a task child inherits its
+// parent's session deny rules (allows dropped, 1.19.0 measured), so they would
+// outlive the turn and stop every later /dev subagent of that session.
+export function turnPermission(readOnly: boolean, allowed: readonly string[] = readOnlySubagents()): Array<{ permission: string; action: string; pattern: string }> {
     if (!readOnly) {
         return HEADLESS_PERMISSION;
     }
-    const allowed = config().get<string[]>("readOnlySubagents", ["explore"]) ?? [];
     return [
         ...HEADLESS_PERMISSION,
         { permission: "task", action: "deny", pattern: "*" },
-        ...allowed.filter((a) => typeof a === "string" && a.trim()).map((a) => ({ permission: "task", action: "allow", pattern: a.trim() }))
+        ...allowed.map((a) => ({ permission: "task", action: "allow", pattern: a }))
     ];
+}
+
+const withheldLogged = new Set<string>();
+
+const isBuiltinReadOnly = (agent: string): boolean => agent === "plan" || readOnlySubagents().includes(agent);
+
+/** Effective rules, not spawn intent (judgeReadOnly): the marker, nothing allowed
+ * beyond the overrides' reach, writers withheld. A subagent may not delegate:
+ * no session rule follows its own `task` rules. */
+async function overriddenOn(base: string, cwd: string): Promise<readonly string[]> {
+    return ((await listAgents(cwd, base, "plan")) ?? [])
+        .filter((a) => judgeReadOnly(a.permission, a.name, {
+            builtin: true,
+            subagents: a.name === "plan" ? readOnlySubagents() : [],
+            sessionTask: a.name === "plan"
+        }).kind === "enforced")
+        .map((a) => a.name);
+}
+
+/** What a read-only turn on `base` may delegate to, and whether its `plan` is
+ * read-only by permission there. enforceReadOnly off: every readOnlySubagent (0.0.214). */
+export async function readOnlyReach(base: string, cwd: string): Promise<{ allowed: string[]; planEnforced: boolean }> {
+    const wanted = readOnlySubagents();
+    if (!config().get<boolean>("enforceReadOnly", true)) {
+        return { allowed: wanted, planEnforced: false };
+    }
+    const overridden = await overriddenOn(base, cwd);
+    return { allowed: wanted.filter((a) => overridden.includes(a)), planEnforced: overridden.includes("plan") };
+}
+
+/**
+ * What this turn's agent is allowed, from its EFFECTIVE rules where it runs:
+ * `GET /agent` on a server (`base`), `opencode agent list` for a cold run (the
+ * loader `opencode run` uses, same folder and OPENCODE_CONFIG_CONTENT). The
+ * injected config alone proves nothing: config files merge into it (REFS).
+ * A cold run has no session rules, so it cannot withhold a subagent: a
+ * reopened readOnlySubagent refuses the turn there.
+ */
+export async function readOnlyEvidence(base: string | undefined, cwd: string, agent: string): Promise<ReadOnlyEnforcement> {
+    if (!config().get<boolean>("enforceReadOnly", true)) {
+        return { kind: "disabled" };
+    }
+    const builtin = isBuiltinReadOnly(agent);
+    if (!base && builtin) {
+        const injected = coldEnforcement(enforcedConfigContent(), agent);
+        if (injected.kind !== "enforced") {
+            return injected;
+        }
+    }
+    const agents = await listAgents(cwd, base, agent);
+    const subagents = readOnlySubagents();
+    const judge = (name: string, isBuiltin: boolean): ReadOnlyEnforcement =>
+        judgeReadOnly(agents?.find((a) => a.name === name)?.permission, name, {
+            base,
+            builtin: isBuiltin,
+            subagents: name === "plan" || !isBuiltin ? subagents : [],
+            sessionTask: Boolean(base)
+        });
+    const own = judge(agent, builtin);
+    if (base || agent !== "plan" || own.kind !== "enforced") {
+        return own;
+    }
+    return subagents.map((s) => judge(s, true)).find((e) => e.kind === "reopened") ?? own;
+}
+
+/** Evidence belongs to this endpoint and the selected agent, including fallbacks. */
+export const serverEnforcement = (base: string, cwd: string, agent: string): Promise<ReadOnlyEnforcement> =>
+    readOnlyEvidence(base, cwd, agent);
+
+/** A reopened agent stops the turn before anything is sent (a send barrier,
+ * like permission preparation): no CLI fallback, Retry offered. */
+export function assertReadOnly(evidence: ReadOnlyEnforcement | undefined): void {
+    if (evidence?.kind !== "reopened") {
+        return;
+    }
+    const shown = evidence.leaks.slice(0, 5).map((l) => `\`${l}\``).join(", ") + (evidence.leaks.length > 5 ? ` and ${evidence.leaks.length - 5} more` : "");
+    logChannel.appendLine(`[${stamp()}] ${evidence.agent}: read-only rules reopened by config on ${evidence.base ?? "the CLI"} — ${evidence.leaks.join("; ")} — not sent`);
+    throw Object.assign(
+        new Error(
+            `Nothing was sent: OpenCode's configuration gives \`${evidence.agent}\` back what the bridge's read-only rules deny — ${shown}. ` +
+            `Such keys under \`agent.${evidence.agent}.permission\` (\`opencode.json\`, or \`.opencode/agents/${evidence.agent}.md\`, in the project or your global config) ` +
+            "outlast the bridge's rules. Remove them, or ask with `/dev`; `enforceReadOnly: false` turns read-only by permission off."
+        ),
+        { code: "ETURNPERMISSION" }
+    );
+}
+
+/** The rules a read-only (or dev) session on `base` gets now. */
+export async function sessionRules(base: string, cwd: string, readOnly: boolean): Promise<Array<{ permission: string; action: string; pattern: string }>> {
+    if (!readOnly) {
+        return HEADLESS_PERMISSION;
+    }
+    const reach = await readOnlyReach(base, cwd);
+    if (config().get<boolean>("enforceReadOnly", true)) {
+        const left = readOnlySubagents().filter((a) => !reach.allowed.includes(a));
+        const key = `${base}\0${left.join(",")}\0${reach.planEnforced}`;
+        if (left.length && !withheldLogged.has(key)) {
+            withheldLogged.add(key);
+            logChannel.appendLine(`[${stamp()}] ${left.join(", ")}: not read-only by permission on ${base}${reach.planEnforced ? " (it started before readOnlySubagents changed: restart it)" : ""} — left out of read-only turns`);
+        }
+    }
+    return turnPermission(true, reach.allowed);
 }
 
 // What each session was last given, so a run of plan turns PATCHes once. A
 // session not seen in this window is PATCHed on its first turn: an earlier
 // window may have left the read-only rules on it.
-const appliedRules = new Map<string, string>();
+const appliedRules = new Map<string, { rules: string; restoredAgent?: string }>();
 
-/** Put this turn's rules on the session; logged and carried on when it fails. */
-export async function applyTurnPermission(base: string, cwd: string, sessionId: string, readOnly: boolean): Promise<void> {
-    const rules = turnPermission(readOnly);
-    const key = `${base}\0${sessionId}`;
-    const want = JSON.stringify(rules);
-    if (appliedRules.get(key) === want) {
-        return;
+// OpenCode APPENDS a PATCH's rules, and the LAST rule that matches decides,
+// session rules after the agent's (1.19.0, measured; REFS). So a read-only
+// turn's `task` rules outlive it unless a dev turn puts the dev agent's own
+// back after them: its rules that name `task` (a `*` permission included —
+// every agent's list starts `* * allow`), with `task allow *` first for any
+// pattern they leave open. Then the agent decides again, as on a new session.
+const TASK_ALLOW_ALL: PermissionRule = { permission: "task", action: "allow", pattern: "*" };
+const glob = (pattern: string): RegExp =>
+    new RegExp("^" + pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".") + "$");
+
+async function devTaskRules(base: string, cwd: string, agent: string): Promise<PermissionRule[]> {
+    const listed = (await listAgents(cwd, base, agent))?.find((a) => a.name === agent)?.permission;
+    if (!listed) {
+        throw new Error(`Cannot restore task permissions for agent ${agent}: authoritative permission rules are unavailable.`);
     }
+    const own = listed.filter((r) => glob(r.permission).test("task")).map((r) => ({ permission: "task", action: r.action, pattern: r.pattern }));
+    return own.some((r) => r.pattern === "*") ? own : [TASK_ALLOW_ALL, ...own];
+}
+
+// Only a read-only turn puts `task` rules on a session; one this window has
+// not seen is read first (2 s). Unread, the agent's own rules go back anyway.
+async function carriesTaskRules(base: string, cwd: string, sessionId: string): Promise<boolean> {
     try {
-        await httpRequestJson("PATCH", withDirectory(`${base}${sessionRoot(sessionId)}`, cwd), { permission: rules }, 3000);
-        appliedRules.set(key, want);
-        logChannel.appendLine(`[${stamp()}] ${sessionId}: ${readOnly ? "read-only subagents only" : "headless rules"}`);
+        const session = await httpGetJson<{ permission?: unknown }>(withDirectory(`${base}${sessionRoot(sessionId)}`, cwd), 2000);
+        return Array.isArray(session?.permission) && session.permission.some((r) => isPermissionRule(r) && r.permission === "task");
     } catch (error) {
-        logChannel.appendLine(`[${stamp()}] could not set the turn's rules on ${sessionId}: ${error}`);
+        if (isMissingSessionError(error)) {
+            throw error;
+        }
+        return true;
     }
 }
 
-/** Record rules a session was created with (no PATCH needed on its first turn). */
-export function noteTurnPermission(base: string, sessionId: string, readOnly: boolean): void {
-    appliedRules.set(`${base}\0${sessionId}`, JSON.stringify(turnPermission(readOnly)));
+export const isTurnPermissionError = (error: unknown): boolean =>
+    (error as { code?: unknown } | undefined)?.code === "ETURNPERMISSION";
+
+/** Permission preparation is a send barrier, including transport fallback. */
+export async function applyTurnPermission(base: string, cwd: string, sessionId: string, readOnly: boolean, agent = "build"): Promise<void> {
+    const rules = await sessionRules(base, cwd, readOnly);
+    const key = `${base}\0${cwd}\0${sessionId}`;
+    const want = JSON.stringify(rules);
+    const had = appliedRules.get(key);
+    if (had?.rules === want && (readOnly || !had.restoredAgent || had.restoredAgent === agent)) {
+        return;
+    }
+    try {
+        const restore = !readOnly && (
+            had?.restoredAgent !== undefined ||
+            (had !== undefined && had.rules !== want) ||
+            await carriesTaskRules(base, cwd, sessionId)
+        );
+        const sent = restore ? [...rules, ...(await devTaskRules(base, cwd, agent))] : rules;
+        await httpRequestJson("PATCH", withDirectory(`${base}${sessionRoot(sessionId)}`, cwd), { permission: sent }, 3000);
+        appliedRules.set(key, { rules: want, restoredAgent: restore ? agent : undefined });
+        const none = readOnly && !rules.some((r) => r.permission === "task" && r.action === "allow");
+        logChannel.appendLine(
+            `[${stamp()}] ${sessionId}: ${readOnly ? (none ? "no subagents" : "read-only subagents only") : restore ? `headless rules; subagents as \`${agent}\` allows them` : "headless rules"}`
+        );
+    } catch (error) {
+        logChannel.appendLine(`[${stamp()}] could not set the turn's rules on ${sessionId}: ${error}`);
+        // A deleted session needs the existing fresh-session recovery; no
+        // prompt is sent to it, and the replacement gets rules at creation.
+        if (isMissingSessionError(error)) {
+            throw error;
+        }
+        const why = (error instanceof Error ? error.message : String(error)).replace(/\s+/g, " ").replace(/`/g, "'");
+        throw Object.assign(
+            new Error(
+                `Nothing was sent: this turn's permission rules could not be set on its OpenCode session (${truncate(why, 160)}). ` +
+                "Retry; if it fails again, `/new` starts a session that gets them at creation."
+            ),
+            { code: "ETURNPERMISSION" }
+        );
+    }
+}
+
+/** Record the rules a session was created with (no PATCH needed on its first turn). */
+export function noteTurnPermission(base: string, sessionId: string, rules: ReadonlyArray<{ permission: string }>, cwd = ""): void {
+    appliedRules.set(`${base}\0${cwd}\0${sessionId}`, { rules: JSON.stringify(rules) });
 }
 
 // ---------------------------------------------------------------------------
@@ -192,18 +361,19 @@ export async function abortServerRun(base: string, sessionId: string, cwd: strin
 export async function createServerSession(base: string, cwd: string, title: string, readOnly = false): Promise<string> {
     // Bounded: a server that accepts the socket and never answers must not
     // hold the turn (every caller falls back to letting the run create one).
+    const permission = await sessionRules(base, cwd, readOnly);
     const created = await httpRequestJson<{ id: string }>("POST", withDirectory(`${base}/session`, cwd), {
         title: truncate(title, 60),
-        permission: turnPermission(readOnly)
+        permission
     }, 5000);
-    noteTurnPermission(base, created.id, readOnly);
+    noteTurnPermission(base, created.id, permission, cwd);
     return created.id;
 }
 
 // The model a session last ran on, read from the session: the newest assistant
 // message names it, a user message carries the model it was sent with
 // (1.18.32: info.providerID/modelID; info.model on a user message).
-export async function sessionModel(base: string, cwd: string, sessionId: string): Promise<string | undefined> {
+async function sessionModel(base: string, cwd: string, sessionId: string): Promise<string | undefined> {
     try {
         const messages = await httpGetJson<Array<{ info?: Record<string, unknown> }>>(
             withDirectory(`${base}${sessionPath(sessionId, "message")}?limit=6`, cwd),
@@ -309,9 +479,4 @@ async function summarize(sessionId: string, cwd: string, model: string | undefin
         logChannel.appendLine(`[${stamp()}] compact failed: ${message}`);
         return false;
     }
-}
-
-/** For the suite: forget the compaction backoff. */
-export function resetCompactBackoff(): void {
-    compactServerFailedAt = 0;
 }

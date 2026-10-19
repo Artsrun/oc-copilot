@@ -5,6 +5,623 @@ actually measured, so nobody re-derives it.
 
 ---
 
+## 0.0.220 gitScan: filter drivers and submodules (2026-10-19)
+
+Review of the 0.0.219 import. Linux, git 2.43.0. A probe repo with
+`*.txt filter=pwn`, `filter.pwn.clean = "touch PWNED; cat"` and a stat-dirty
+`a.txt`: one `tools/call` to 0.0.219's `out/git-scan-server.js` created
+`PWNED`. `-c filter.pwn.clean= -c filter.pwn.process= -c filter.pwn.required=false`
+before `status` did not. A submodule whose own config names a filter: with
+the top-level drivers blanked, `--ignore-submodules=none` still created the
+marker (status recurses into the submodule); `dirty` and `all` did not.
+`dirty` keeps commit changes, so it is the one used. Driver names come from
+`git config -z --get-regexp '^filter\.'`, which runs nothing; a name with
+`=` cannot be expressed through `-c` and the scan refuses.
+
+Red first: the suite against the 0.0.219 build printed `2 CHECK(S) FAILED`,
+exactly the two new GS checks; both fixture controls (the filter runs without
+the protection) passed.
+
+---
+
+## v218 context budget review (2026-10-16)
+
+A Node probe against v217's compiled context builder measured a 147764-byte
+prompt from four 20000-character non-ASCII buffers: all were marked kept but
+the fourth buffer was absent. One diagnostic produced 200096 bytes; a closed
+range attachment performed one synchronous disk read. Excerpt budgets now count
+UTF-8 bytes including truncation markers, diagnostic rows are capped at 1024
+bytes, omitted unsaved text is reported, and closed ranges remain path-based.
+
+## v219: merged config reopened read-only agents beyond the denied writers (2026-10-16)
+
+Linux, Node 22.22.0, OpenCode **1.18.35** and **1.19.0** (`opencode-ai`, npm),
+isolated HOME/XDG per run, `scripts/probe-model.js` as the model. The
+`OPENCODE_CONFIG_CONTENT` was 0.0.218's own (generated from `out/enforce.js`).
+
+**The defect, on 0.0.218's config** (project `opencode.json`, `run --auto
+--agent plan`, a 15-line stdio MCP server whose `touch` writes a sentinel):
+
+| `agent.plan.permission` in opencode.json | write tool | git helper | MCP `w_touch` | `task@general` write |
+| --- | --- | --- | --- | --- |
+| none (control) | no | no | no | no |
+| `*: allow, edit: allow, bash: {*: deny, "git *": allow}` | no | no | no | no |
+| `*: allow, "w_*": allow` | no | no | **YES** | no |
+| `*: allow, task: {*: deny, general: allow}` | no | no | no | **YES** |
+
+Identical on both versions. Server path: `opencode serve` with the same config,
+`POST /session/:id/message {agent: plan}` → `Done. The tool said: touched`,
+sentinel YES; 0.0.218's `overriddenOn` logic over that `GET /agent` answered
+enforced. Cause, from `opencode debug agent plan`: OpenCode deep-merges config
+objects and keeps the earlier file's key order, so `w_*` and
+`task general allow` follow the overrides' `* * deny`. 0.0.217's scalar denies
+cover only the keys the bridge names.
+
+**What a clean merge leaves after the last `* * deny`** (both versions, plan and
+explore, `opencode debug agent`): `git-scan_gitScan`, `read *`, `read
+*.env.example`, grep, glob, list, lsp, skill, todowrite, todoread, webfetch,
+websearch, `task explore` (plan only), and an appended `external_directory
+<data>/opencode/tool-output/* allow`. That is the allowlist `readOnlyLeaks`
+uses (plus `doom_loop`, the repeated-call prompt).
+
+**`opencode agent list` prints each agent's merged rules** (the same array as
+`opencode debug agent` / `GET /agent`, 1.18.35 and 1.19.0), so the cold path
+reuses the listing the bridge already ran for planAgent. `opencode debug agent
+plan` cost 1.9 s with one MCP server configured.
+
+**After (0.0.219):** `node scripts/probe-readonly.js` → `ALL 48 ROWS AS
+EXPECTED` on 1.19.0 and on 1.18.35. New rows: cold plan MCP reopened, cold
+plan task→general reopened, managed serve MCP reopened → `refused before
+sending` (ETURNPERMISSION, zero model requests, sentinel absent); controls with
+`enforceReadOnly: false` → CREATED (MCP and general). All 0.0.216–0.0.218 rows
+unchanged (read, gitScan, outside-folder refusal, adopted-server known row).
+
+**Suite:** `ALL 1188 CHECKS PASSED` (Linux). Red-first: the new suite against
+the 0.0.218 build printed `23 CHECK(S) FAILED` (RX, EX, UP, and the RE
+marker-only / late-allow variants that now refuse). Gate `ALL GATES GREEN`.
+`OC …its server password reaches neither chat nor the log` failed once in five
+runs (a 1.5 s `waitFor` under load) and passed on rerun: timing, not 0.0.219.
+
+**Leak gate:** a 70 KB echoed excerpt block leaked 71,837 characters through
+0.0.218's 64 KB hold; `CONTEXT_HOLD_BYTES` (48 KB + 31 KB + 32 KB) holds the
+full excerpt + problems block (`EX`, 79 KB).
+
+**Side by side (not product code):** pnpm 10 installs 1.19.0 and 2.0.29 into
+separate folders, but blocks both packages' postinstall (which places the
+binary): `--version` printed "postinstall script was not run" until
+`pnpm.onlyBuiltDependencies` named `opencode-ai` / `@opencode/cli`. 2.x also
+installs an `opencode2` bin. Neither ships a WASM build (per-platform native
+packages).
+
+NOT OBSERVED: Windows, a VS Code host (manual checks A–E), OpenCode 2.x.
+
+## v216 implementation validation (2026-10-15)
+
+Implemented shell tool removal (marker first, final catch-all deny), literal
+subagent filtering, effective GET /agent verification, per-run enforcement
+metrics for cold/attached/server transports, and evidence-based notices. Removed
+the old command classifier, spawn-intent shortcut, global withheld-notice state,
+two test forwarding wrappers, and all 39 nested docs artifacts. The deleted
+docs editor setting was only the existing default plan agent.
+
+Red-first suite run printed two failures for shell withholding and literal
+subagent configuration. After implementation, `npm run ship` printed
+`ALL 1153 CHECKS PASSED` and `ALL GATES GREEN — safe to package`.
+`npx tsc --noEmit --noUnusedParameters` and `git diff --check` exited 0.
+
+Expanded `node scripts/probe-readonly.js` against installed OpenCode 1.18.35 on
+Windows printed `ALL 39 ROWS AS EXPECTED`. Shell was absent on cold, managed
+and shared plan calls; the external-helper sentinel stayed absent. `/dev`
+executed the same helper and created the sentinel. Read, explore read, and
+gitScan controls ran. Project-local and isolated global plan agent overrides
+could not restore bash. Attached CLI and server runner metrics both reported
+`{"kind":"enforced","agent":"plan"}`. Adopted unenforced plan shell remained
+able to write, as documented; delegation was withheld and later dev delegation
+worked.
+
+The real probe exposed OpenCode's appended external_directory allow to its
+tool-output folder. Checking that permission as a writing-tool deny falsely
+rejected otherwise shell-free explore. The discovery check now validates
+writing/running tools and preserves that read reach; a suite regression covers
+the observed permission shape. Probe fixture corrections: Git requires forward
+slashes for GIT_EXTERNAL_DIFF on Windows; refusal classification must precede
+matching a successful read's content. No production permission was weakened for
+these fixture fixes.
+
+The artifact gate previously counted git's unstaged-deletion entries as files
+still in the tree. It now filters absent paths before checking nested artifacts,
+matching its existing leak scan and no-git parity check. Existing nested files
+remain blockers.
+
+NOT OBSERVED here: another supported real 1.x binary, POSIX execution, and the
+interactive VS Code installation/manual checks. `wsl --list --quiet` returned
+no distributions; `wsl --status` reported the WSL optional component unavailable.
+Private leak tokens were not configured; the gate ran generic hostname checks.
+
+Final packaging: `npx vsce package --out dist/` printed
+`Packaged: dist\opencode-copilot-bridge-0.0.216.vsix (48 files, 151.87 KB)`.
+`npm run ship -- --record` again printed `ALL 1153 CHECKS PASSED` and
+`ALL GATES GREEN — safe to package`, verified packaged JS against out/, and
+appended the immutable 0.0.216 entry. `Get-FileHash -Algorithm SHA256` matched
+the ledger: `7373cc68993e861a32296712d9778c5e5d15c36851831494c5cbb03c2ed81d16`.
+No commit, extension installation, or publishing was performed.
+
+## v216 plan recheck: real helper write, tool removal, cleanup audit (2026-10-15)
+
+Repeated `npm run ship` on Windows: `ALL 1147 CHECKS PASSED`, then
+`1 BLOCKER(S) — DO NOT SHIP` for the same 39 tracked docs artifacts. Repeated
+the existing real-binary matrix: `node scripts/probe-readonly.js` printed
+`ALL 24 ROWS AS EXPECTED — 1.18.35 at opencode`. These existing rows do not
+exercise Git external helpers.
+
+A separate temporary probe used `scripts/probe-model.js`, the compiled
+bridge's `runOpenCode`, isolated HOME from the probe, and a new temporary Git
+repository. With `agent: plan`, `readOnly: true`, `autoApprove: true`, and
+`enforceReadOnly: true`, the scripted model called
+`git diff --no-index --ext-diff a b`. `GIT_EXTERNAL_DIFF` named a temporary
+helper that wrote a sentinel. Output:
+
+```text
+mode=current, markerCreated=true, exitCode=0, steps=[bash]
+mode=scalar-deny, markerCreated=false, exitCode=0, steps=[]
+scalar-deny model tools: glob, grep, read, skill, task, todowrite, webfetch
+scalar-deny answer: No bash tool offered
+```
+
+The second run replaced generated `permission.bash` with scalar `deny` in the
+temporary probe's module only. It did not change repository runtime code.
+This upgrades the earlier policy-plus-Git observation to an actual bridge / CLI
+reproduction. Tool removal worked on 1.18.35 for this path; managed/adopted
+servers and other versions still require the expanded matrix.
+
+Perplexity research led to official Git diff documentation and OpenCode V1
+source. Git documents external diff and textconv execution. The retrieved
+OpenCode `v1.1.35` source uses `findLast` for rule evaluation and disables a
+tool only if its last matching tool rule is `pattern: "*", action: "deny"`.
+Thus the old plan's `bash: {"*": "deny", "ocb-enforced": "deny"}` is not a
+tool-removal guarantee. Put the marker first and catch-all last, then verify
+actual offered tools. This source tag is **1.1.35, not the local 1.18.35**;
+fetching the presumed `v1.18.35` source URL returned 404. The shell parser also
+normalizes commands, so a whole-command regex fixture is not parser parity.
+Upstream issue 39931 reports zero-command/parser bypasses; that report has not
+been reproduced here and is a regression input, not a confirmed local defect.
+
+Sources checked through Perplexity and direct fetch:
+- https://git-scm.com/docs/diff-options/2.45.0
+- https://raw.githubusercontent.com/anomalyco/opencode/v1.1.35/packages/opencode/src/permission/next.ts
+- https://raw.githubusercontent.com/anomalyco/opencode/v1.1.35/packages/opencode/src/tool/bash.ts
+- https://raw.githubusercontent.com/anomalyco/opencode/v1.1.35/packages/opencode/src/util/wildcard.ts
+- https://github.com/anomalyco/opencode/issues/39931
+
+The retrieved wildcard source additionally makes the suffix ` *` optional;
+the temporary earlier matcher omitted this. The helper command contains
+arguments, so that discrepancy does not change the observed reproduction.
+Perplexity also claimed `git rev-parse --output` writes a file, but the official
+rev-parse page retrieved here documents `--output-object-format`, not that
+option: exclude the unsupported claim from the plan.
+
+Cleanup audit: a temporary TypeScript checker script followed aliased symbols
+across `src/`. No function/variable export had only its declaration reference
+except the intentional external entry points `activate`, `deactivate`, and
+`__test`. Excluding imports/re-exports and the test-hook initializer found five
+suite-only helpers: `setStartupDeadline`, `badgeMarks`, `subagentsWithheld`,
+`setReplyConfirmWait`, and `resetChipBackoff`. Suite references exist for all.
+The three timing/reset hooks are useful; the two forwarding wrappers can be
+replaced by tests of their underlying production functions. This is a source
+reference audit, not proof of every possible dynamic code path.
+`npx tsc --noEmit --noUnusedParameters` exited 0 with no output.
+
+Fresh plan: `docs/superpowers/plans/2026-10-15-v216-rechecked-cleanup.md`.
+
+## 0.0.215 Windows review: gate blocker and permission gaps (2026-10-15)
+
+Ran `npm run ship` on Windows in the current working tree: typecheck and build
+passed; suite printed `ALL 1147 CHECKS PASSED`; package stage printed
+`1 BLOCKER(S) — DO NOT SHIP`. The blocker is 39 tracked artifacts:
+`docs/.vscode/settings.json` and 38 `docs/out/*.js.map` files. Confirmed with
+`git ls-files docs`. The v215 release note says these were removed, but they
+are still tracked here. The package file allowlist itself passed. No private
+leak tokens were configured for this run (the gate printed that limitation).
+
+A temporary Node probe loaded the compiled `out/enforce.js` with a minimal VS
+Code configuration stub and evaluated its generated shell patterns using the
+same last-match wildcard semantics as the suite. It then ran real Git in a
+temporary repository, with an external diff helper that writes a sentinel:
+
+```text
+{"command":"git diff --no-index --ext-diff a b","permission":"allow","externalDiffWroteFile":true}
+```
+
+This measures the generated policy plus Git's side effect, not an end-to-end
+OpenCode turn. `opencode --version` on this machine printed `1.18.35`; the full
+real-binary read-only matrix was not rerun. The same policy evaluation allowed
+`git show --textconv HEAD`, `git log --ext-diff -p`, and `cat .env`. Consequently
+the inspect shell is not a read-only boundary, and its reads bypass the `read`
+tool's `.env` rule.
+
+With `readOnlySubagents: ["*"]`, the temporary probe printed override names
+`["plan","*"]`, but the session rules ended in `task allow *`. Overrides are
+constructed as literal agent keys while task permissions interpret patterns;
+they must not share unchecked wildcard input. This was a generated-policy
+check, not a real subagent execution.
+
+Finally, `enforcedConfigContent("{not json")` returned undefined, immediately
+followed by `enforcedReadOnlyNotice()` returning the success notice beginning
+`Plan turns are read-only by permission now`. The notice checks the setting,
+not proof that the current turn's process received the overrides. The server's
+withheld notice also uses window-global state, rather than the current turn.
+
+Implementation sequence: `docs/superpowers/plans/2026-10-15-v216-hardening.md`.
+
+## 0.0.215: read-only by permission, measured on real binaries (2026-10-14/15)
+
+Linux, Node 22.22.0. OpenCode **1.19.0** (`opencode-ai`) and **2.0.29**
+(`@opencode/cli`, over ACP), each with an isolated HOME. The model is
+`scripts/probe-model.js`, a scripted OpenAI-compatible server: every tool
+attempt is certain; a real model may not try (INCONCLUSIVE, never PASS).
+`scripts/probe-readonly.js` drives the bridge's own `out/` (`runOpenCode`,
+`ensureServer`, `createServerSession`, `applyTurnPermission`, `spawnOpenCode`).
+
+**What leaked before (0.0.214 plus the agent's two fixes, rebuilt as 0.0.214):**
+
+```text
+cold run · plan · shell `echo > file`                          CREATED
+cold run · plan → explore · shell `echo > file`                CREATED
+cold run · plan · read a file outside the folder (--auto)       runs
+managed serve · read-only session · plan → explore · `echo >`  CREATED
+adopted serve · read-only session · plan → explore · `echo >`  CREATED
+cold run · plan · tools offered                                bash, edit, …, write
+```
+
+The built-in `plan` is read-only by instruction (its `edit` deny covers the
+write tool, not the shell); `explore` lists `bash * allow` (1.19.0; `shell *
+allow` on 2.0.29), so `task allow explore` — the bridge's read-only session
+rule since 0.0.203 — let a plan turn write. On 2.0.29 `plan` also hands work to
+`general`, which writes, and Code Mode's `execute` can `fetch` any URL and call
+`tools.opencode.worktree_create`/`session_move`.
+
+**After (0.0.215), `ALL 24 ROWS AS EXPECTED` on 1.19.0:**
+
+| Path | Row | Result |
+| --- | --- | --- |
+| cold `run` | plan · shell `echo > file` / write tool / → explore `echo >` / → general write | absent ×4 |
+| | plan · `git status`; → explore `git log --oneline`; gitScan MCP | runs ×3 |
+| | plan · read an attached file outside the folder | refused |
+| | plan · tools offered | bash, git-scan_gitScan, glob, grep, read, skill, task, todowrite, webfetch |
+| | control: `enforceReadOnly: false` · `echo >`; `/dev` · `echo >`; `/dev` · outside read | CREATED, CREATED, runs |
+| managed `serve` | `GET /agent`: `plan` lists `bash ocb-enforced deny` | listed |
+| | plan → explore `echo >` / `git status` / outside read | absent / runs / refused |
+| adopted `serve` (no overrides) | plan → explore `echo >` (no subagent starts) / → general write / `git status` | absent / absent / runs |
+| | plan's own shell `echo >` | CREATED — by instruction only there (README) |
+| | the same session's next `/dev` · build → general `echo >` | CREATED |
+| | control: `enforceReadOnly: false` · plan → explore `echo >` | CREATED |
+| another window's `serve` (overrides on) | plan → explore `echo >` / `git log` | absent / runs |
+
+2.0.29 over ACP (`opencode acp` spawned through `spawnOpenCode`, asks rejected
+on plan turns, allowed on `/dev`): `ALL 8 ROWS AS EXPECTED` — plan `echo >`,
+→ explore `echo >`, → general write: absent; `git status` runs; outside read
+refused; plan offered `glob, grep, read, shell, skill, subagent, webfetch,
+websearch` (no `execute`, `write`, `edit`, `question`); controls (`/dev`,
+enforcement off) CREATED.
+
+**Facts that decided the design (1.19.0 unless named):**
+
+- `OPENCODE_CONFIG_CONTENT` is deep-merged over the config files (`opencode.json`,
+  `.opencode/agents/*.md`). Existing keys keep their earlier position and new
+  keys append to the end (1.18.35, 1.19.0 measured): an override with only
+  `"*": "deny"` and `bash: { "ocb-enforced": "deny", "*": "deny" }` left
+  `edit: "allow"` and `bash: { "git *": "allow" }` after `"*"` when a project
+  config defined them. Setting scalar `"deny"` on every writing/running tool
+  (`edit`, `write`, `patch`, `apply_patch`, `multiedit`, `bash`, `shell`,
+  `execute`, `question`, `plan_enter`, `plan_exit`) and top-level
+  `ocb-enforced: "deny"` replaces any earlier pattern map on those keys and
+  withholds `bash`, `edit`, and `write` completely (`tools: { bash: false, edit:
+  false, write: false }`, measured on 1.18.35).
+- **A task child inherits only its parent session's deny rules**: the child of
+  a session with `task allow explore` and an inspect allowlist got `question …
+  deny`, `task * deny`, `edit * deny`, `bash * deny` and the `bash` denies —
+  no allow — then `todowrite`/`task` deny. Consequence, measured: after strict
+  read-only rules plus the dev agent's rules re-applied, a `/dev` turn's
+  `general` could not write (`echo > file` absent). So no `bash`/`edit` deny
+  goes on a session; a server without the overrides gets no subagents instead.
+- **A message's `tools` map replaces the session's permission list**: `POST
+  /session/:id/message` with `tools: {question: false, plan_enter: false,
+  plan_exit: false}` turned 39 session rules into those 3, and the next
+  `general` wrote. Not used: an attached `opencode run` sends no such map.
+- MCP tools are permission-named `<server>_<tool>`: `git-scan_gitScan`. On
+  2.0.29 no MCP tool is offered directly; they are reached through `execute`.
+- `opencode run --auto` approves an `external_directory` ask: a 0.0.214 cold
+  plan turn read a file outside the folder; the overrides deny it.
+
+**Suite.** `ALL 1145 CHECKS PASSED` (Linux; the agent's base had 1117 on
+Linux, 1119 on Windows: +28). Red first: the final suite against the agent's
+build (shims for the three new `__test` keys) → `22 CHECK(S) FAILED`, all new
+`RE`/`JN` checks, among them `RE a read-only turn on a server the bridge did not
+start starts no subagent, explore included (explore: allow)`. The final probe
+against that build: 9 rows red (the six leaks above, the missing marker,
+another window's explore `echo >` CREATED, and a managed-serve outside read
+that waited 180 s on an `external_directory` ask nobody answers) before the run
+was cut at the time limit.
+
+**The suite's model of the server** (`v5`): wildcard last-match evaluation
+(`v5Eval`), `explore`'s 1.19.0 rules, and a delegation `[[delegate:<agent>]]
+[[cmd:<shell>]]` whose child gets the parent's deny rules only.
+
+**Gate.** `OCB_LEAKY` set: `ALL GATES GREEN` (Linux). Self-check: a planted
+`docs/out/zz-plant.js.map` → `FAIL 4/4 no build output outside out/ and dist/`;
+a `docs/released.txt` line for 0.0.215 with another code hash → `FAIL 4/4
+delivered 0.0.215 still builds from its own code`. `npx vsce package --out
+dist/` → 48 files, 152.12 KB, sha256
+`ae0dde3d0953b6fc4dd072fc46d12e3cb7b9ebb60eb4c4ae7a421b9934b9f388`, recorded
+with `npm run ship -- --record`. 0.0.214's line holds the delivered VSIX
+(`21b8768b…0903`), whose manifest and 39 `out/*.js` match the 0.0.214 tree
+byte for byte. Windows not run here.
+
+---
+
+## v214 Windows review follow-up (2026-10-14)
+
+On this Windows checkout, the received changes passed `npm run ship` with
+`ALL 1115 CHECKS PASSED` and `ALL GATES GREEN — safe to package`.
+Two additional boundary regressions then made `npm run verify` print
+`2 CHECK(S) FAILED`:
+
+- `OC refused parallel turn offers its original lanes as Retry on parallel,
+  plus Ping, never Continue`: no recovery chips were returned, because the
+  parallel outcome bypassed failure handling and carried no replay text.
+- `OC a retargeted Windows shim is resolved and checked again before any run`:
+  replacing only the wrapper left its cached old target running. The old
+  target and script were unchanged, so the stamp never invalidated resolution.
+
+The executable stamp now includes the original launcher file. Refused parallel
+turns carry unsent/replay metadata and use the existing failure chip cases,
+with Retry explicitly routed back to parallel. Cancellation after the identity
+wait returns before agent discovery. Tests use fake processes and HTTP;
+no live model or interactive VS Code host was exercised in this follow-up.
+
+After the fixes, `npm run ship` printed `ALL 1119 CHECKS PASSED`; its package
+gate found an existing 0.0.214 VSIX differing in chat-parallel.js, chips.js and
+proc.js. That pre-review package was preserved in the approved OS temp folder
+as `opencode-copilot-bridge-0.0.214-before-review-20261014.vsix` before rebuilding
+the explicitly requested v214 artifact.
+
+Final `npm run ship` printed `ALL 1119 CHECKS PASSED` and `ALL GATES GREEN —
+safe to package`. `npx vsce package --out dist/` produced
+`dist/opencode-copilot-bridge-0.0.214.vsix` (47 files, 145.83 KB).
+A PowerShell ZipFile comparison verified all 39 archived out files and the
+manifest byte-for-byte against disk. SHA-256:
+`591aab3136e1eaa2c7617a067b0cca6777679f0cb9a25748260db371093a45d4`.
+
+---
+
+## 0.0.214: 0.0.213 reviewed on Linux (2026-10-13)
+
+0.0.213 as received (a tar of the Windows checkout), extracted on Linux,
+Node 22.22.0, `npm ci`, `OCB_LEAKY=<org name>`:
+
+```text
+npm run ship                      -> FAIL   OC ping lifts refusal after replacing the executable with 1.x
+                                     1 CHECK(S) FAILED   (1108 others ok; gate stops at 3/4)
+the same, that one fake rewritten
+through writeFake                 -> ALL 1109 CHECKS PASSED
+                                     FAIL  4/4 no internal names in any files
+                                     docs/v213-opencode2-plan.md:20, :29
+```
+
+The check rewrote `fake-oc2-cli.js` with `fs.writeFileSync` and no shebang. On
+POSIX `writeFake` returns the script itself, so the spawn ran it through
+`/bin/sh` (`Syntax error: word unexpected (expecting ")")`, reproduced with a
+shebang-less file and `execFileSync`); `/ping` saw no `1.19.0` and the refusal
+stayed. On Windows every fake is a `.cmd` that calls `node`, which is why
+0.0.213's own run passed. Its gate run printed that no private leak tokens were
+configured; with one, the org name in the plan document fails gate 4.
+
+Review findings beyond the gate, all reproduced in the suite before the fix
+(the six new checks, run against 0.0.213's build, printed `5 CHECK(S) FAILED`;
+the sixth — an unchanged executable is not checked again — holds on both):
+
+- The identity cache was keyed by the `executable` string for the window: a
+  1.x rewritten in place as a 2.x whose plain run answers ran a `transport:
+  cli` turn — chat `"ran on two"`, one `run`, no `--version`. `executableStamp`
+  costs 2.4 µs a call (20 000 calls, cached resolution) and changes when the
+  file is rewritten in place (a Node probe over `out/proc.js`).
+- A turn refused before sending (permission rules not set, identity not
+  confirmed) offered Continue, and said "OpenCode failed to start".
+- A first `/parallel` on a 2.x CLI cut the refusal to 120 characters under each
+  lane (``…drives OpenCode 1 only so far (its …``), without the 1.x recipe.
+
+Final, same machine, `OCB_LEAKY` set: `ALL 1115 CHECKS PASSED`, `ALL GATES
+GREEN — safe to package` (93 cited code names, 17 claims);
+`dist/opencode-copilot-bridge-0.0.214.vsix`, 47 files, 145.68 KB. Not run:
+Windows, a real OpenCode, a model — `docs/manual-checks.md` › 0.0.214.
+
+---
+
+## v213 safety implementation (2026-10-13)
+
+Before implementation, `npm run compile && npm run verify` printed
+`8 CHECK(S) FAILED`: strict-to-build restoration, unavailable restoration,
+failed plan/dev PATCH barriers and retries, split password output, and CLI
+identity with prewarming disabled. These are fake-process/HTTP boundary checks,
+not live-model measurements. The release scope excludes ACP implementation.
+
+Final `npm run ship` printed `ALL 1105 CHECKS PASSED` and
+`ALL GATES GREEN — safe to package` for 0.0.213. It listed 45 prospective
+extension files; no VSIX was created. Additional checks covered missing and
+malformed permissions, failed discovery, concurrent identity checking, Stop,
+unknown/nonzero version output, `/ping` recovery, separate diagnostic streams,
+CRLF, unterminated lines and oversized-line discard. The diagnostic fixture
+initially also emitted server secrets on its unrelated CLI fallback; restricting
+that fixture to `serve` isolates the server-output boundary it measures.
+
+The pre-commit review reproduced two regressions: invalid permission actions
+were accepted, and a permission-preparation 404 suppressed deleted-session
+recovery. `npm run verify` printed `2 CHECK(S) FAILED` before the fixes.
+Permission actions now accept only allow/deny/ask; missing-session errors retain
+the existing fresh-session recovery. Four additional checks cover the agent HTTP
+boundary and deleted plan/dev sessions. `npm run ship` then printed
+`ALL 1109 CHECKS PASSED` and `ALL GATES GREEN — safe to package`; no VSIX was created.
+
+---
+
+## v212 working-tree review and v213 entry gates (2026-10-13)
+
+On this Windows checkout, reviewed the changes against `af13f46` (v211).
+`npm run ship` printed `ALL 1087 CHECKS PASSED` and
+`ALL GATES GREEN — safe to package`; `git diff --check` exited 0. The package
+listing contained 45 extension files; the committable-tree comparison contained
+116 files. No private leak tokens were configured, as the gate explicitly noted.
+This run did not reproduce the release document's delivered-tar, sandbox or
+real-model measurements.
+
+Two Node commands reproduced gaps beyond the suite:
+
+```text
+plan -> build -> strict: extra PATCHes=0, effective general=allow, strict expected deny
+failed agent discovery: task rules sent=[{"permission":"task","action":"allow","pattern":"*"}]
+chunked redaction=["server pass","word sampleSecret\n"]
+chunked redaction=["server password [redacted]","Secret\n"]
+```
+
+The first command loaded compiled `server-session.js` with mocked HTTP and agent
+discovery, collected appended rules and evaluated the final matching task rule.
+It is a boundary reproduction, not a real OpenCode measurement. The second used
+the exact server-output redaction expression from `net.ts` with split chunks.
+Restoration does not include agent identity in its cache, failed discovery adds
+blanket task permission, and per-chunk redaction leaks split password fragments.
+
+Source review also found CLI version detection behind optional prewarming and
+not awaited by an immediate turn. Both new release/plan documents contain a
+non-example login host despite their own instruction to keep it outside the
+repository; a hostname-count command printed one per document without echoing
+the host. The generic-only leak gate did not detect it.
+
+The implementation sequence and ACP evidence matrix are in
+`docs/superpowers/plans/2026-10-13-v213-safety-and-acp-spike.md`. No product code
+was changed during this review. ACP protocol documentation was consulted for
+capability negotiation, load replay, resume and permission responses; no ACP
+binary or authenticated model was run during this review.
+
+---
+
+## OpenCode 1.19.0 and OpenCode 2 (2.0.27), run without a model (0.0.212)
+
+**Dated 2026-10-12/13.** Binaries `opencode-linux-x64@1.19.0` and
+`@opencode/cli-linux-x64@2.0.27` in a sandbox, a throwaway `HOME` each, curl and
+a stdio client; no model was called. Source: `anomalyco/opencode` tags v1.18.35
+and v1.19.0, diffed.
+
+**1.18.35 → 1.19.0** touches nothing the bridge calls (the PTY origin check,
+`upgrade --major` and the V2 installer, the TUI, provider message conversion).
+On a 1.19.0 server: health is `{"healthy":true,"version":"1.19.0"}` after about
+1.6 s; `GET /agent` lists each agent with its own `permission` rules, every
+list starting `{"permission":"*","pattern":"*","action":"allow"}` (the built-in
+`plan` adds `task general deny`); `POST /session` with rules, status, abort and
+`/children` work; a fork copies no permission; archive hides a session from
+`roots=true`; `DELETE` answers `true`. SSE adds an unattributed `sync` event
+after each event (never counted as activity). A reply to an unknown permission
+or question id is now a 404 (`PermissionNotFoundError`), not #15386's 200. An
+unknown model answers `POST …/message` with HTTP 500 plus a `session.error`
+"Model not found: … Did you mean …?". `opencode --version` prints `1.19.0` and
+takes about 0.7 s (three runs: the Bun binary starting).
+
+**Session rules merge, they are not replaced.** POST a session with 5 rules,
+PATCH 1, GET returns 6: `handlers/session.ts` calls
+`Permission.merge(current.permission, payload.permission)`, and
+`permission/index.ts` has `merge = rulesets.flat()` and `evaluate … findLast`.
+Session rules come after the agent's (`session/llm.ts`, `prompt.ts`), so they
+win. 0.0.211's `/dev` PATCHed the headless rules alone after a plan turn, and the
+plan turn's `task deny *` stayed last: `general` stayed denied. 0.0.212 appends
+the dev agent's own `task` rules from `GET /agent` (a `*` permission rewritten
+as `task`), with `task allow *` first when they leave a pattern open.
+
+**OpenCode 2 is another program called `opencode`.**
+- `serve` prints `server listening on http://…` and `server password <secret>`,
+  and answers `/global/health` — every path — with its web app: 200, HTML.
+- `run` with `--attach`, `--dir`, `--variant` or `--pure` prints its help on
+  stdout and `ERRORS` / `Unrecognized flag: --attach in command opencode run`
+  (one line per flag) on stderr, exit 1. It takes `--agent`, `--format json`,
+  `--thinking`, `--auto`, `--session`, `--fork`, `--title`, `--file`,
+  `--server <url>` (instead of `--attach`) and `--model provider/model#variant`.
+  A plan turn's cold fallback (`run --agent plan --auto --format json
+  --thinking`) therefore ran on 2.x, without the bridge's rules.
+- `--version` prints `opencode v2.0.27` in about 0.1 s.
+- Logging in to an organization's server is `opencode auth login <integration>
+  --method <id> --answer key=value` on 2.x; 1.x has `auth login [url]`
+  (a well-known provider URL) with `-p` and `-m`, and no `--answer`.
+- Both keep their data in the same folder (`~/.local/share/opencode/opencode.db`
+  on Linux): a session 1.19.0 made was listed by 2.0.27 after 2.x opened the
+  folder (the file grew, it added its own tables), and 1.19.0 still opened it
+  and listed its session afterwards. OpenCode's migration guide: the two share
+  config locations, a config converted for 2.x is not for 1.x, and the 2.x
+  installer replaces a 1.x binary.
+
+**Both speak ACP (Agent Client Protocol) the same way.** `opencode acp`, then
+`initialize` (`protocolVersion: 1`) and `session/new` (`cwd`, `mcpServers: []`)
+over stdio: 1.19.0 answered in 1.9 s + 1.2 s, 2.0.27 in 2.9 s + 2.6 s. Both list
+`loadSession`, session `close` `fork` `list` `resume`, embedded context and
+images, an `opencode-login` auth method ("Run `opencode auth login` in the
+terminal"), and `configOptions` for `model` (247 / 235 choices) and `mode`
+(`build`, `plan`); 2.x adds `effort` (`thought_level`), session `delete` and
+`additionalDirectories`, and `_meta: {"opencode/child-session-updates": true}`.
+One transport for both majors is possible (the OpenCode 2 track).
+
+## Suite time: an orphaned server start and a timer nobody cleared (0.0.212)
+
+**Dated 2026-10-12.** A timed copy of the suite: SB4 ("a /parallel turn that
+waits on a first boot says so") took 44 792 ms and its log had no `serve` spawn
+of its own fake — it joined SB3's start, which `deactivate()` had orphaned: the
+poll loop read the module's `serveProcess` and polled a dead port to the 45 s
+deadline. `stopServer()` now drops the start in flight, and that start sees its
+process is gone. SB4 then spawns its own server and takes about 3 s. Separately
+the summary wait raced `delay(60 s)` and never cleared it: the process idled
+about 23 s at exit. Wall time 2m45s → 2m05s; CPU time stays about 9 s.
+
+---
+
+## 0.0.211 follow-up context filter review
+
+`npm run verify` against the previous build printed `7 CHECK(S) FAILED`:
+blank-line inline resets (LF/CRLF), invalid fence closers, separating whitespace
+(space/newline), and filtering after oversized tag/preamble blocks. The fixes
+scope fail-open release to the current block, track blank-line and closing-fence
+state across chunks, and retain whitespace when preceding output needs a separator.
+`npm run ship` on 0.0.211 printed `ALL 1056 CHECKS PASSED` and
+`ALL GATES GREEN — safe to package`; the 1 MB check measured 19.3 ms.
+
+## 0.0.210 leak filter and gitScan review
+
+**Dated 2026-10-09.** Branch `v188` already held 0.0.209 at `04417d7`;
+`git switch -c v210 v188` preserved that baseline. `npm run ship` on the baseline
+printed `ALL 1007 CHECKS PASSED` and `ALL GATES GREEN — safe to package`.
+
+Added GT reproductions before editing the implementation: `npm run verify`
+printed `9 CHECK(S) FAILED`, including selection/cursor preambles, inline/fenced
+mentions, mid-line separators, nested context and the 1 MB case (8050.9 ms).
+The incremental bounded implementation's later suite measured 33.9 ms for
+the same 1 MB / 50-character-chunk shape. The 64 KiB cap deliberately releases
+oversized content; this is a resource limit, not a guarantee to hide such blocks.
+
+Installed `@types/vscode` documents the positional MCP constructor and permits
+`process.execPath`. Its `version` documentation promises a refresh prompt when
+tools change, not an unconditional automatic server restart. Keep API guards for
+the extension's older supported hosts. A host-free context-markers leaf avoids
+making the pure format module depend on the context module's host/filesystem code.
+
+GS tests real newline-delimited JSON-RPC and Git porcelain-v2 NUL records against
+temporary repos; rename records consume an extra source-path token. Copilot
+definitions and OpenCode's own MCP configuration are independent. The copied
+server imports only Node built-ins; OpenCode's snippet needs Node on PATH.
+
+Final `npm run ship` printed `ALL 1048 CHECKS PASSED` and
+`ALL GATES GREEN — safe to package` (four gates). The 1 MB filter check printed
+`25.4ms`. GS proved the fsmonitor fixture executes without the protection, then
+does not execute with the server's override. `git diff --check` exited 0.
+VS Code GUI installation and live Copilot/OpenCode MCP discovery remain manual
+checks in `docs/manual-checks.md` (then `docs/test-vsix-0.0.210.txt`); no VSIX was created during this task.
+
+---
+
 ## Agent Host Protocol — no third-party harness adapter
 
 **Dated 2026-09-09. Closed. Do not re-investigate.**
@@ -42,7 +659,7 @@ against `src/vs/platform/agentHost/**` before believing any claim of
 pluggability.
 
 **Consequence.** The session, handoff, retention and briefing machinery in
-`extension.ts` is permanent code, not transitional code. It has to be correct,
+`session.ts` and `chat-turn.ts` is permanent code, not transitional code. It has to be correct,
 not merely adequate.
 
 ---
@@ -92,7 +709,7 @@ also means the suite now has to exit on its own: if it ever leaves a handle
 open the run hangs instead of exiting 0, which is a better failure than a
 silent force-kill.
 
-**Not measured, chosen:** `STDERR_CAP = 256 KB` in `runs.ts` is a bound, not a
+**Not measured, chosen:** `STDERR_CAP = 256 KB` in `run-cli.ts` is a bound, not a
 finding. No trace was observed anywhere near it; it exists so an unbounded `+=`
 cannot grow without limit, and 256 KB is simply far above anything real.
 
@@ -124,6 +741,9 @@ multi-root, Git Bash on Windows where `PWD=/c/Users/…`). Attached and server
 runs pass `--dir` / `?directory=` and were never affected. WT1 checked the
 fake's `process.cwd()` and passed throughout; checks `PW` and `WT1 …PWD` read
 the `PWD` the fake received.
+
+Re-run on 1.19.0 (2026-10-13, 0.0.212's `out/proc.js`): A **stale**, B target,
+C target — 1.19.0 still follows `PWD`, and the bridge still lands in the folder.
 
 ## OpenCode keys projects by root commit; one data dir serialises CLI runs
 
@@ -445,7 +1065,11 @@ figure before moving the deadline again. The suite's `SB` uses a fake `serve`
 that accepts and stays silent for 2.2 s. A turn that warms the server (an
 attached dev run, `/parallel`) says so after 1.5 s too.
 
-## Subagents run with their own permissions (docs, not yet measured)
+## Subagents run with their own permissions (docs; measured in 0.0.215)
+
+Measured on 1.19.0 in 0.0.215 (top of this file): `explore` runs any shell
+command, and a child inherits only its parent session's deny rules.
+
 
 OpenCode's agents docs (V2): "The child currently uses its own configured
 permissions, not a restricted copy of the parent's permissions"; the v1 docs
@@ -476,8 +1100,9 @@ response }`. What the bridge measured on 1.18.32 is `permission.asked` and
 `permission.replied` (`requestID`, `reply`) is recalled, not measured. The bridge
 answers both ask events, once per request id, and reads either id field in the
 confirmation. `POST /permission/:id/reply` answers 200/true for an id that is
-not pending (#15386; closed unfixed, the fix PR #24322 was closed unmerged), so
-a 200 proves nothing: a reply without a `permission.replied` after 3 s is sent
+not pending (#15386; closed unfixed, the fix PR #24322 was closed unmerged;
+1.19.0 answers 404 for an unknown id, measured in 0.0.212), so a 200 proves
+nothing: a reply without a `permission.replied` after 3 s is sent
 once more, then given up on, with a log line either way. A pre-1.1 `reject`
 carries no message, so on such a server it ends the turn instead of being fed
 back. Not measured: any of this on a real server; the suite uses fakes (`HQ`).
@@ -517,7 +1142,7 @@ sst/opencode tag v1.18.32 (and main at 1.18.35), microsoft/vscode main@91b51fe.
   Customizations … in X ms" per request (`promptsDebugContribution.ts`).
   Uncached per request: agent-instruction file lookups in the roots and the
   home folder; in Agent mode the customizations index (~33 KB, sent to the
-  extension host, discarded by `isIgnorableReference`); with
+  extension host, discarded by `buildChatContext` as added by the host); with
   `chat.useNestedAgentsMdFiles`, a `**/AGENTS.md` workspace file search. MCP
   autostart is awaited too (`chat.mcp.autostart`).
   `chat.experimental.collectInstructionsInExtension` (main, experimental) skips
@@ -533,3 +1158,19 @@ attachments other than PNG, JPEG and WebP are dropped for `@ai-sdk/xai` models
 of the 157 files are the web docs, the stats and console apps. Tested range
 raised to 1.18.35; not run against a live 1.18.35 server here.
 
+## Streamed context cutoff and repeated blocks (0.0.209)
+
+**Dated 2026-10-09.** A Node probe loaded `out/format.js` with a `vscode`
+module stub and pushed the two reported chunk sequences through
+`createLeakGate`, then flushed. Before the fix it printed:
+
+```text
+unclosed block: "Answer <workspace-context>SECRET"
+second block: "<workspace-context>B</workspace-context>Done"
+2 regression cases failed
+```
+
+`GT` covers the missing close, repeated blocks, every two-chunk split of each
+context opener, and a partial opener that remains ordinary text. `DS` sends a
+second context block and an unclosed final block through a real chat turn's
+fake server stream and checks what reached chat.

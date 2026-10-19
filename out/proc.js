@@ -38,13 +38,17 @@ exports.tokenizeCmdLine = tokenizeCmdLine;
 exports.expandShimVar = expandShimVar;
 exports.readShimTarget = readShimTarget;
 exports.resolveExecutable = resolveExecutable;
+exports.executableStamp = executableStamp;
 exports.spawnOpenCode = spawnOpenCode;
+exports.runCapture = runCapture;
 exports.killTree = killTree;
 const node_child_process_1 = require("node:child_process");
 const fs = __importStar(require("node:fs"));
+const os = __importStar(require("node:os"));
 const path = __importStar(require("node:path"));
 const node_process_1 = require("node:process");
 const core_1 = require("./core");
+const enforce_1 = require("./enforce");
 const exeCache = new Map();
 function quoteCmdArg(arg) {
     return `"${arg.replace(/"/g, '""')}"`;
@@ -165,13 +169,15 @@ function resolveExecutable(exe) {
     if (cached) {
         return cached;
     }
-    let target = lookupOnPath(exe) ?? (exe.includes("/") || exe.includes("\\") ? exe : undefined);
+    const named = /^~(?=$|[\\/])/.test(exe) ? path.join(os.homedir(), exe.slice(1)) : exe;
+    let target = lookupOnPath(named) ?? (named.includes("/") || named.includes("\\") ? named : undefined);
     let prefixArgs = [];
     if (!target) {
         const err = new Error(`spawn ${exe} ENOENT`);
         err.code = "ENOENT";
         throw err;
     }
+    const launcher = target;
     let lower = target.toLowerCase();
     if (node_process_1.platform === "win32" && (lower.endsWith(".cmd") || lower.endsWith(".bat"))) {
         const sibling = preferNonCmdSibling(target);
@@ -192,16 +198,35 @@ function resolveExecutable(exe) {
         command: viaCmd ? process.env.ComSpec || "cmd.exe" : target,
         target,
         viaCmd,
-        prefixArgs
+        prefixArgs,
+        launcher
     };
     exeCache.set(exe, resolved);
     return resolved;
+}
+function executableStamp(exe, forget = false) {
+    if (forget) {
+        exeCache.delete(exe);
+    }
+    const resolved = resolveExecutable(exe);
+    return [...new Set([resolved.launcher, resolved.target, ...resolved.prefixArgs])]
+        .map((file) => {
+        try {
+            const s = fs.statSync(file);
+            return s.isFile() ? `${file}:${s.size}:${s.mtimeMs}:${s.ino}` : "";
+        }
+        catch {
+            return "";
+        }
+    })
+        .join("|");
 }
 function spawnOpenCode(executable, args, cwd) {
     const resolved = resolveExecutable(executable);
     const full = resolved.prefixArgs.length ? [...resolved.prefixArgs, ...args] : args;
     core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] $ ${resolved.target} ${full.join(" ")}`);
-    const env = cwd ? { ...process.env, PWD: cwd } : process.env;
+    const enforced = (0, enforce_1.enforcedConfigContent)();
+    const env = { ...process.env, ...(cwd ? { PWD: cwd } : {}), ...(enforced ? { OPENCODE_CONFIG_CONTENT: enforced } : {}) };
     if (resolved.viaCmd) {
         const line = `"${[resolved.target, ...full].map(quoteCmdArg).join(" ")}"`;
         return (0, node_child_process_1.spawn)(resolved.command, ["/d", "/s", "/c", line], {
@@ -212,6 +237,59 @@ function spawnOpenCode(executable, args, cwd) {
         });
     }
     return (0, node_child_process_1.spawn)(resolved.command, full, { cwd, env, shell: false });
+}
+function runCapture(executable, args, cwd, timeoutMs = 8000, requireSuccess = false) {
+    return new Promise((resolve, reject) => {
+        let child;
+        try {
+            child = spawnOpenCode(executable, args, cwd);
+        }
+        catch (error) {
+            if (requireSuccess) {
+                reject(error);
+                return;
+            }
+            resolve(`error: ${error.message}`);
+            return;
+        }
+        let out = "";
+        let overflow = false;
+        const timer = setTimeout(() => {
+            killTree(child);
+            if (requireSuccess) {
+                reject(new Error(`OpenCode identity check timed out after ${timeoutMs} ms`));
+                return;
+            }
+            resolve(out.trim() || "timed out");
+        }, timeoutMs);
+        child.stdin?.end();
+        child.stdout.setEncoding("utf8");
+        child.stderr.setEncoding("utf8");
+        const keep = (chunk) => {
+            if (out.length + chunk.length > 65536) {
+                overflow = true;
+            }
+            out = (out + chunk).slice(0, 65536);
+        };
+        child.stdout.on("data", keep);
+        child.stderr.on("data", keep);
+        child.on("error", (err) => {
+            clearTimeout(timer);
+            if (requireSuccess) {
+                reject(err);
+                return;
+            }
+            resolve(`error: ${err.message}`);
+        });
+        child.on("close", (code) => {
+            clearTimeout(timer);
+            if (requireSuccess && (code !== 0 || overflow)) {
+                reject(new Error(`OpenCode identity check exited with code ${code}`));
+                return;
+            }
+            resolve(out.trim() || "(no output)");
+        });
+    });
 }
 function killTree(child) {
     if (child.pid === undefined || child.exitCode !== null || child.signalCode) {

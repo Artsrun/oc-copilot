@@ -125,7 +125,7 @@ function helpMarkdown() {
         "| `/env` | What OpenCode loaded: config, plugins, hooks, MCP, skills |",
         "| `/help` | This table |",
         "",
-        "Inline prefixes still work: `dev:`, `model:provider/id` — or a short name, `model:tundra`.",
+        "Inline prefixes, before the task: `plan:`, `dev:`, `par:` (parallel), `model:provider/id` or a short name `m:tundra`, and `effort:high` or `e:high` (the model's reasoning effort, this turn only).",
         "Lanes split on `|`, `;;` or a `---` line. Per lane: `/parallel m:tundra review auth | m:oasis read the logs`, and `a:<agent>` runs a lane as one of your primary agents (`a:look m:oasis read the logs`). One task on several models: `/parallel models:tundra,oasis,aspen review auth`.",
         "Attach files with `#file:` — they are passed to OpenCode as context.",
         "",

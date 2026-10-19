@@ -62,10 +62,6 @@ export function applyPartDelta(
         options.onText?.(d.delta, d.part);
         return;
     }
-    if (!before && metrics.reasoning && !metrics.reasoning.endsWith("\n")) {
-        metrics.reasoning += "\n";
-    }
-    metrics.reasoning += d.delta;
     options.onReasoning?.(d.delta);
 }
 
@@ -115,8 +111,7 @@ export const blankMetrics = (sessionId: string | undefined): RunMetrics => ({
     tokens: emptyTokens(),
     cost: 0,
     hadOutput: false,
-    sessionId,
-    reasoning: ""
+    sessionId
 });
 
 // The model that answered, as `provider/model`: the assistant message names it
@@ -237,7 +232,6 @@ export function applyServerPart(
             return;
         }
         markFirstByte(metrics, started);
-        metrics.reasoning += (metrics.reasoning && !metrics.reasoning.endsWith("\n") ? "\n" : "") + delta;
         options.onReasoning?.(delta);
         return;
     }

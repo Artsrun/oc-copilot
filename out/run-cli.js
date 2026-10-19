@@ -10,13 +10,50 @@ const asks_1 = require("./asks");
 const run_steps_1 = require("./run-steps");
 const server_session_1 = require("./server-session");
 const STDERR_CAP = 256 * 1024;
-async function runOpenCode(options) {
-    if (options.attachUrl && options.sessionId && !options.token?.isCancellationRequested) {
-        await (0, server_session_1.applyTurnPermission)(options.attachUrl, options.cwd, options.sessionId, Boolean(options.readOnly));
+function exitProblem(executable, stderr, code) {
+    const flag = stderr.match(/Unrecognized flag: (--[\w-]+) in command opencode\b/);
+    if (flag) {
+        return (0, net_1.markNotOpenCode1)(executable, `it rejects \`${flag[1]}\``).message;
     }
-    return runCli(options);
+    const line = stderr
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .find((l) => l && !/^errors?:?$/i.test(l) && /error|unrecognized|not recognized|unknown|not found|denied|failed|cannot|invalid/i.test(l));
+    return line ? (0, core_1.truncate)(line, 200) : `opencode exited with code ${code}`;
 }
-function runCli(options) {
+async function runOpenCode(options) {
+    if (options.token?.isCancellationRequested) {
+        return (0, run_steps_1.blankMetrics)(options.sessionId);
+    }
+    const ready = await untilStopped((0, net_1.ensureCliIdentity)(options.executable, options.cwd).then(() => true), options);
+    if (!ready || options.token?.isCancellationRequested) {
+        return (0, run_steps_1.blankMetrics)(options.sessionId);
+    }
+    if (options.attachUrl && options.sessionId && !options.token?.isCancellationRequested) {
+        await (0, server_session_1.applyTurnPermission)(options.attachUrl, options.cwd, options.sessionId, Boolean(options.readOnly), options.agent);
+    }
+    const evidence = options.readOnly
+        ? await untilStopped((0, server_session_1.readOnlyEvidence)(options.attachUrl, options.cwd, options.agent ?? "plan"), options)
+        : undefined;
+    if (options.token?.isCancellationRequested) {
+        return (0, run_steps_1.blankMetrics)(options.sessionId);
+    }
+    (0, server_session_1.assertReadOnly)(evidence);
+    return runCli(options, evidence);
+}
+async function untilStopped(work, options) {
+    let cancel;
+    const stopped = new Promise((resolve) => {
+        cancel = options.token?.onCancellationRequested(() => resolve(undefined));
+    });
+    try {
+        return await Promise.race([work, stopped]);
+    }
+    finally {
+        cancel?.dispose();
+    }
+}
+function runCli(options, evidence) {
     return new Promise((resolve, reject) => {
         const args = ["run"];
         if (options.attachUrl) {
@@ -61,6 +98,7 @@ function runCli(options) {
         }
         child.stdin?.end();
         const metrics = (0, run_steps_1.blankMetrics)(options.sessionId);
+        metrics.readOnlyEnforcement = evidence;
         let buffer = "";
         let settled = false;
         const started = Date.now();
@@ -195,7 +233,6 @@ function runCli(options) {
                     const text = part?.text ?? "";
                     const rest = text.slice(wholePart("r", part, text));
                     if (rest) {
-                        metrics.reasoning += (metrics.reasoning && rest === text ? "\n" : "") + rest;
                         options.onReasoning?.(rest);
                     }
                     if (text) {
@@ -309,6 +346,9 @@ function runCli(options) {
             }
             metrics.totalMs = Date.now() - started;
             metrics.timedOut = timedOut;
+            if (!timedOut && metrics.exitCode && !metrics.error && !metrics.hadOutput) {
+                metrics.error = exitProblem(options.executable, metrics.stderr ?? "", metrics.exitCode);
+            }
             if (timedOut && !metrics.stuckTool && runningTools.size > 0) {
                 metrics.stuckTool = [...runningTools.values()][0].tool;
             }

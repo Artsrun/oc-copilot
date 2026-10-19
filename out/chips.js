@@ -91,7 +91,7 @@ function resetChipBackoff() {
     void core_1.extensionContext?.globalState?.update(BACKOFF_KEY, undefined);
 }
 const stripKind = (text) => text.replace(/^\/(?:dev|plan)\b\s*/i, "");
-const UNREACHABLE = /ENOENT|ECONNREFUSED|ECONNRESET|EAI_AGAIN|ETIMEDOUT|not found on PATH|could not be started|unreachable|socket hang up|fetch failed/i;
+const UNREACHABLE = /ENOENT|ECONNREFUSED|ECONNRESET|EAI_AGAIN|ETIMEDOUT|not found on PATH|could not be started|unreachable|socket hang up|fetch failed|not OpenCode 1|not confirmed as OpenCode 1/i;
 const MODEL_TROUBLE = /rate[ _-]?limit|too many requests|\b429\b|\bquota\b|insufficient[ _](?:quota|credits?|funds|balance)|credit balance|billing|overloaded|\bmodel\b[^.\n]{0,40}\bnot (?:found|supported|available)|unknown model|no such model|ModelNotFound|unauthori[sz]ed|\b401\b|invalid[ _-]?(?:api[ _-]?)?key|api[ _-]?key|ProviderAuth|authentication failed/i;
 function outcomeOf(metadata) {
     switch (metadata.kind) {
@@ -106,6 +106,9 @@ function outcomeOf(metadata) {
         case "clarify":
             return "clarify";
         case "parallel":
+            if (metadata.notSent === true && typeof metadata.error === "string" && metadata.error) {
+                break;
+            }
             return metadata.lanesMissing ? "lanesMissing" : "parallel";
         case "composed":
             return "composed";
@@ -115,6 +118,8 @@ function outcomeOf(metadata) {
     switch (true) {
         case Boolean(error) && UNREACHABLE.test(error):
             return "failedNet";
+        case Boolean(error) && metadata.notSent === true:
+            return "failedEarly";
         case Boolean(error) && MODEL_TROUBLE.test(error):
             return "failedModel";
         case Boolean(metadata.timedOut) && typeof metadata.stuckTool === "string" && Boolean(metadata.stuckTool):
@@ -149,9 +154,15 @@ function followupsFor(metadata) {
         case "failedLong":
         case "failedNet":
         case "failedModel":
+        case "failedEarly":
         case "cancelledEarly": {
             const again = own ? stripKind(own) : "";
-            return chips(followups_1.CASES[outcome], again ? { RETRY: again } : {});
+            return chips(followups_1.CASES[outcome], again ? { RETRY: again } : {}).map((chip) => {
+                if (metadata.kind === "parallel" && chip.command === kind && chip.prompt === again) {
+                    chip.command = "parallel";
+                }
+                return chip;
+            });
         }
         case "failedStuck": {
             const tool = typeof metadata.stuckTool === "string" && metadata.stuckTool ? metadata.stuckTool : "tool";

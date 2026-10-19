@@ -3,6 +3,174 @@
 Full release history, newest first; releases before the last one are condensed
 to their summary and headlines. The README ships the last five.
 
+### 0.0.220
+
+- **gitScan no longer runs commands from a repository's Git config.** `git status`
+  passes a stat-dirty file through its `filter.<name>.clean`/`process` driver
+  and runs a status of its own in each submodule; either executed a command the
+  repository's config named (git 2.43, measured: a fixture's filter created a
+  file through 0.0.219's server). Every configured filter driver is now blanked
+  for the scan and submodules are compared by commit only
+  (`--ignore-submodules=dirty`). A filtered file whose stat changed can show
+  as modified. Checks `GS`.
+
+### 0.0.219
+
+- **Effective-rule allowlist for read-only turns; reopened rules refuse the turn.** OpenCode merges config files into `OPENCODE_CONFIG_CONTENT` key by key and keeps the earlier file's keys in place. 0.0.217 forced scalar `"deny"` on eleven writing tools, but any other key in `agent.plan.permission` kept its allow after `"*": "deny"`: measured on 1.18.35 and 1.19.0, `"w_*": "allow"` let an MCP tool write and `task: { "*": "deny", "general": "allow" }` let `general` write on a cold plan turn, and the server path showed the same MCP write while `deniesWriters` reported "enforced". Now `readOnlyLeaks` allows nothing after the last `* * deny` but the overrides' reach (read, grep, glob, list, lsp, skill, todo, web, `readOnlyTools`, `task` to `readOnlySubagents`, `external_directory`), and `judgeReadOnly` adds the marker and withheld-writer checks. Cold runs read `opencode agent list` (it prints each agent's merged rules; cached by injected config and config-file stamps, `configStamp`); servers read `GET /agent`. A bridge-configured agent with a leak refuses the turn before anything is sent (`assertReadOnly`, `ETURNPERMISSION`: Retry, no CLI fallback); a reopened subagent is withheld on a server and refuses a cold run; a custom `planAgent` is reported, never refused. Stop interrupts the cold lookup. Checks `RX`; the `RE` marker-only and late-allow variants now refuse instead of warning.
+- **Excerpts keep to plan's read rules:** an unsaved `.env`/`.env.*` is not inlined on read-only turns (`.env.example` is; `/dev` sends all); an outside file whose excerpt was sent is not called unreadable. Checks `EX`.
+- **Leak gate holds a whole echoed context block:** `HOLD_CAP` is `CONTEXT_HOLD_BYTES` (excerpt + problem caps + 32 KB) instead of 64 KB, which a full block exceeded (0.0.218: a 70 KB echo leaked 71,837 characters). The selection stays unbounded (fail-open).
+- A custom `planAgent` that passes no longer receives, or uses up, the bridge's one-time read-only note; one whose rules allow more is told which, once per endpoint.
+- `scripts/update.js` (dev only): installs the newest delivered VSIX into `code`/`code-insiders` when newer, verified against `docs/released.txt`. Checks `UP`.
+
+### 0.0.218
+
+- Enforce UTF-8 byte limits on editor excerpts, including truncation markers; bound diagnostic text.
+- Report omitted unsaved editor text when the excerpt budget is exhausted, and identify potentially stale disk contents.
+- Keep closed-file range attachments path-based, avoiding synchronous whole-file reads on the extension host.
+
+### 0.0.217
+
+- **Close config merge-order bypass on enforced read-only agents:** OpenCode deep-merges config objects and preserves earlier key positions (`opencode.json` or `.opencode/agents/plan.md` with `"*": "allow"`, `edit: "allow"`, `bash: { "*": "deny", "git *": "allow" }` kept `edit` and `bash git *` after `"*"` when `OPENCODE_CONFIG_CONTENT` only set `"*": "deny"` and `bash: { "ocb-enforced": "deny", "*": "deny" }`). Enforced permissions now set scalar `"deny"` on every writing/running tool (`bash`, `edit`, `write`, `patch`, `apply_patch`, `multiedit`, `shell`, `execute`, `question`, `plan_enter`, `plan_exit`) and top-level `ocb-enforced: "deny"`, replacing any earlier pattern map on those keys (measured on 1.18.35). Same tool-set check applied to `coldEnforcement` on cold CLI runs.
+- **Attached dirty buffers, line ranges, untitled editors & `#problems`:** unsaved editor buffers (`TextDocument.isDirty`), line-range file attachments, open untitled documents, and `#problems` (`ChatReferenceDiagnostic`) are folded into bounded context sections (`Attached text excerpts:` and `Attached problems:`) and scrubbed by the leak gate.
+- **Custom `planAgent` (`look`), `/parallel` notices & subagent hardening:** custom read-only agents whose rules deny writing tools no longer receive a false unverified server warning; subagent verification also requires `task * deny`, `readOnlySubagents` logs and excludes wildcards and primary/dev agents (`build`, `general`, `devAgent`), read-only `/parallel` turns surface enforcement notices, and concurrent `listAgents` requests share one in-flight call.
+- **Server agent cache & release ledger:** `listAgents` cache keys include `currentServerGeneration()` so server restarts/adoptions invalidate stale 60s entries; `scripts/ship-gate.js` verifies every delivered VSIX in `dist/` against `docs/released.txt`.
+
+### 0.0.216
+
+- Disable shell on enforced agents: Git inspection commands could execute writing helpers.
+- Validate literal subagent names and effective server rules; attach enforcement notices to the actual run.
+- Remove nested docs build artifacts, redundant test wrappers and stale comments.
+
+### 0.0.215
+
+Read-only turns are read-only by permission. Also a review of the local agent's
+two fixes, which were rebuilt under 0.0.214's number: they ship here.
+
+- **Plan turns could write.** The built-in `plan` is read-only by instruction
+  only — it ran `echo hi > file` on 1.19.0 and 2.0.29 — and the built-in
+  `explore`, the one subagent read-only turns allowed, has `bash * allow`: a
+  plan turn's `explore` wrote a file through the bridge's own read-only session
+  rules (1.19.0, the bridge's HTTP path). New setting `enforceReadOnly`
+  (default on): every OpenCode process the bridge starts gets an
+  `OPENCODE_CONFIG_CONTENT` that overrides `plan` and each `readOnlySubagents`
+  agent with the README's `look` model — everything denied first, then reading
+  (`.env` aside), searching, the web, inspect-only shell (`git status`/`log`/
+  `diff`, `ls`, `cat`, `rg`, `find` without `-exec`/`-delete`, no redirects),
+  `readOnlyTools`, and `task` to `readOnlySubagents` only. A user's own
+  `OPENCODE_CONFIG_CONTENT` is merged. `src/enforce.ts`; `spawnOpenCode` stays
+  the one place. `/dev` is unchanged: `build` keeps its rules, and `explore`
+  is read-only in `/dev` too. Checks `RE`; `scripts/probe-readonly.js` against
+  the real binaries (21 rows on 1.19.0, 7 on 2.0.29 over ACP).
+- **A server the bridge did not start** keeps its agents' own rules. Another
+  window's server on the shared port has the overrides (each overridden agent
+  lists `bash ocb-enforced deny` in `GET /agent`, read at most once a minute);
+  one you started has not: read-only turns there start no subagents, and the
+  first says so. No shell deny on such a session instead: a subagent inherits
+  every deny rule of its parent session and none of the allows (1.19.0,
+  measured), so it would also stop that chat's `/dev` subagents — measured:
+  `general` could not write after a plan turn. A subagent is allowed only where
+  it is overridden: one added to `readOnlySubagents` after the server started
+  is left out (logged) until it restarts.
+- **What you attach that OpenCode won't get is said** before the answer: an
+  image, Problems, an unsaved editor, VS Code's current-file chip (once per
+  window), and on a read-only turn a file outside the folder — measured: plan
+  cannot open it on 1.19.0 and 2.0.29, `/dev` can. Before, all of these were
+  dropped or unreadable without a word. Output › OpenCode logs every reference
+  VS Code sent, kept or dropped and why (`references (N): kept …; dropped …`).
+  Untitled editors are no longer sent as a bogus path. Checks `JN`.
+- New setting `readOnlyTools` (default `["git-scan_gitScan"]`): the MCP tools a
+  read-only turn keeps (1.x names them `<server>_<tool>`; measured). A name that
+  would re-allow a tool that writes, runs commands or delegates (`*`, `e*`,
+  `bash`) is left out and logged.
+- The first plan turn after the upgrade says what changed, once.
+- **Windows shim retargeting invalidates the CLI identity too** (the local
+  agent): the stamp covers the `.cmd` wrapper as well as its target and script,
+  so retargeting just the wrapper resolves afresh and checks `--version`. `OC`.
+- **Refused `/parallel` turns offer Retry and Ping** (the local agent): Retry
+  keeps the lane text and the `/parallel` command, a cached refusal included. `OC`.
+- **One version, one build, enforced.** 0.0.214 was rebuilt from other code
+  under its own number after its delivered VSIX was moved out of `dist/`
+  (delivered sha256 `21b8768b…0903`, rebuilt `591aab31…45d4`). The gate now
+  reads `docs/released.txt` — each delivered version's VSIX and code hash,
+  written by `npm run ship -- --record` — and fails when a delivered version's
+  code changed. It also fails on build output outside the root `out/` and
+  `dist/`: a whole extracted tree sat under `docs/` (`out/*.map`, `.vscode/`),
+  past the root-anchored ignore rules. Removed.
+- Dev probes, not shipped: `probe-readonly.js`, `probe-acp.js` (OpenCode 2 over
+  ACP, groundwork for 0.0.216), `probe-model.js` (a scripted model: no
+  provider, no cost).
+
+### 0.0.214
+
+A review of 0.0.213, which was pushed without a VSIX: the first package with
+its safety work. No setting, command or default changed.
+
+- 0.0.213's gate was red on Linux and macOS: a fake rewritten without its shebang.
+- An internal name was still in a plan doc; generic words now.
+- The CLI identity is of the file, not the name (`executableStamp`).
+- Refused before sending, and says so (`notSent`: Retry, New session, Ping).
+- `/parallel` confirms identity once before its lanes.
+
+### 0.0.213
+
+- Fail permission preparation closed: unsuccessful PATCHes and unavailable or
+  malformed agent permissions block messages and CLI fallback. Cache only
+  successful updates and include the restored dev agent and directory.
+- Preserve restrictions when switching dev agents after a read-only turn.
+- Redact complete bounded server diagnostic lines independently on stdout and
+  stderr; discard oversized lines rather than exposing partial secrets.
+- Await a shared first-use CLI identity check at the runner boundary, including
+  attached runs, lanes and worktrees. Stop interrupts the wait; unknown identity
+  fails closed and failed checks can be retried. Prewarming is optional.
+- Keep commands, settings, defaults, VS Code minimum and existing 1.x transports.
+  ACP remains a future developer probe, with no production routing changes.
+
+### 0.0.212
+
+A truth pass against OpenCode 1.19.0 and 2.0.27. No setting or command was
+added, removed or renamed; no default changed.
+
+- **Fixed: `/dev` after a plan turn kept the read-only subagent limit**:
+  session rules append and the last match wins (measured on 1.19.0), so `/dev`
+  re-applies the dev agent's own `task` rules. Checks `RO`, `PM`.
+- **OpenCode 2 is named, and nothing runs**: a web page for a health answer,
+  `Unrecognized flag`, or a 2.x `--version`; its server password is redacted;
+  `executable` expands `~/`. Checks `OC`, `FX`, `C`.
+- **A CLI run that exits non-zero with no error event and no text** shows its
+  first stderr error line. Checks `SE`.
+- **`autoCompactEveryTurns: 0`** means the bridge never compacts; a Compact
+  chip instead. Checks `CP`.
+- Tested range 1.18.27–1.19.0; `/help` names every inline prefix; suite honesty
+  and speed (`SB`); dead code removed; the gate fails fast and checks cited names.
+
+### 0.0.211
+
+- Fixed context filtering after oversized blocks, unmatched inline backticks
+  across blank lines, invalid fence closers, and lost separating whitespace.
+- Boundary regressions cover streamed and whole-answer filtering.
+
+### 0.0.210
+
+- **Fixed context filtering:** selection/cursor-only preambles, literal tags in
+  inline/fenced code, line-start separator detection and balanced nested tags.
+  Incremental scanning bounds hidden text at 64 KiB; oversized blocks release
+  as text. Prose-inline unclosed tags retain the 0.0.209 drop-at-flush behavior.
+- **gitScan MCP:** zero-runtime-dependency stdio server, trusted local first-folder
+  Copilot provider and default-true `gitScan` setting. One porcelain-v2 Git status
+  reports HEAD, branch, upstream divergence and up to 40 changed files, with
+  fsmonitor/optional locks disabled and a five-second timeout.
+- **OpenCode: gitScan config for opencode.json** copies/prints a snippet using
+  a stable global-storage server path. `/env` explains separate configuration
+  and CLI-only pure mode. The command does not write user configuration.
+- Regression groups `GT`, `DS`, `GS`; standalone server packaging check.
+
+### 0.0.209
+
+- **Fixed: streamed context could reach chat after a cutoff or a repeated
+  block.** Incomplete context blocks are dropped at flush, and completed blocks
+  are removed before looking for the next opener. Checks `GT`, `DS` cover both
+  the stream gate and the chat output.
+
 ### 0.0.208
 
 - **Tested range is 1.18.27–1.18.35.** Reported on 0.0.207: a 1.18.35 server
@@ -67,6 +235,7 @@ removed.
 - **`naturalFollowups` split** into `offerChipsIn`, `choiceChipsIn` and
   `cueChipsIn`; scan limits are named constants; `plainText` and
   `sentencesOf` moved to `core.ts`. Table-driven offer phrasings in `NF`.
+
 ### 0.0.205
 
 Server identity on a fixed port, permission replies that are confirmed,

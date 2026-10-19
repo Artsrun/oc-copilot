@@ -30,13 +30,14 @@ no bundler, no test runner: plain TypeScript → `out/`, plain Node for the suit
 | `src/run-server.ts` | The server transport: POST + shared SSE, idle watchdog, abort on Stop (the subagents too). |
 | `src/run-steps.ts` | Events → `StepRecord`, `stepDetail`, keyed text/reasoning deltas, the answering model, subagent spend. Pure. |
 | `src/asks.ts` | **Headless asks** for a session and its subagents (`watchFamily`), and what the subagents cost. |
-| `src/server-session.ts` | Session ids (`safeSessionId`, `sessionPath`), **permission rules** (`HEADLESS_PERMISSION`, `turnPermission`), busy/abort (+ children), create, model, compaction. |
-| `src/net.ts` | Bounded HTTP, the managed `opencode serve`, shared SSE demux by session id. |
+| `src/server-session.ts` | Session ids (`safeSessionId`, `sessionPath`), **permission rules** (`HEADLESS_PERMISSION`, `turnPermission`, `sessionRules`, `readOnlyReach`, `readOnlyEvidence`/`serverEnforcement` + `assertReadOnly`: effective rules judged per endpoint or cold folder, reopened refuses; a `/dev` turn re-applies the dev agent's own `task` rules after read-only ones), busy/abort (+ children), create, model, compaction. |
+| `src/enforce.ts` | **Read-only by permission**: the `OPENCODE_CONFIG_CONTENT` every spawn gets (`enforcedConfigContent`: `plan` and `readOnlySubagents` overridden, `readOnlyTools`, the `ENFORCED_MARKER` rule), the one-time notice. Leaf: imports only core. |
+| `src/net.ts` | Bounded HTTP, the managed `opencode serve`, shared SSE demux by session id, the not-OpenCode-1 refusal (`markNotOpenCode1`, `openCode1Refusal`) and the CLI identity check (`ensureCliIdentity`: one `--version` per executable file). |
 | `src/session.ts` | Session state per chat thread (`threadSession`), handoff chain and the way back after one, completion toasts, status bar. |
-| `src/proc.ts` | Spawning: shim resolution, `cmd.exe` quoting, `killTree`, `PWD = cwd`. §2 rule 3. |
+| `src/proc.ts` | Spawning: shim resolution (`~/` paths too), `cmd.exe` quoting, `killTree`, `PWD = cwd`, `runCapture` (a short command's output), `executableStamp` (the files a name runs, as they are on disk). §2 rule 3. |
 | `src/models.ts` | Model catalog (server `GET /config/providers`, else `opencode models --verbose`), names, variant names, cache tiers, the picker, `writeModelPin`, short names, `modelResolver` (one forced refetch per turn), `effortFor` / `higherEffort`, `contextNote`. |
-| `src/agents.ts` | Which agent a read-only turn runs as: `planAgent`, only once OpenCode lists it. |
-| `src/context.ts` | Attachments/selection folding, references, answer file pills (`createFileLinker`), `parseChatPrompt`, `splitModelPrefix`, `splitModelsFanout`. |
+| `src/agents.ts` | Which agent a read-only turn runs as: `planAgent`, only once OpenCode lists it. A server's list carries each agent's own `permission` rules. |
+| `src/context.ts` | Attachments/selection folding, every reference noted kept or dropped (`referenceLogLine`, `contextNotice`: what OpenCode won't get, said in chat), references, answer file pills (`createFileLinker`), `parseChatPrompt`, `splitModelPrefix`, `splitModelsFanout`. |
 | `src/env.ts` | What OpenCode loaded: config, plugins, MCP, commands, skills, agents, instruction files. |
 | `src/followups.ts` + `.json` | **Every word a chip or handoff sends**, the marks, pills (`createBadger`), `followupsProblems`. Leaf: imports only its JSON. |
 | `src/natural.ts` | Answer-derived chips: the agent's own offer or either/or, a named step 1, the file it edited, failing tests, Dig deeper — or nothing. `laneItems` is the lanes rule for the chip and for `autoParallel: auto`. |
@@ -45,22 +46,27 @@ no bundler, no test runner: plain TypeScript → `out/`, plain Node for the suit
 | `src/commands.ts`, `commands-registry.ts` | Palette commands, worktree buttons, config listener. |
 | `src/worktree.ts`, `chat-worktree.ts` | `/worktree`: git via `execFile`, one isolated dev run. |
 | `src/format.ts`, `metrics.ts`, `prompt.ts` | Metrics → markdown; run types; timeouts and vague-prompt detection. |
+| `src/context-markers.ts` | Host-free context vocabulary shared by the producer and leak gate. |
+| `src/git-scan-server.ts` | Standalone newline-delimited JSON-RPC MCP server; one bounded, shell-free Git status call. |
+| `src/git-scan-mcp.ts` | Trusted local first-folder MCP provider, stable global-storage server copy, config clipboard command. |
 
 Layering has no cycles:
 
 ```
-extension.ts  →  chat · chat-boot · commands-registry · session · worktree · leaf modules (for __test)
+extension.ts  →  chat · chat-boot · commands-registry · git-scan-mcp · session · worktree · leaf modules (for __test)
      chat     →  agents · chat-boot · chat-commands · chat-parallel · chat-turn · chat-worktree · context · models · natural · prompt · session · core
-chat-parallel →  agents · chat-boot · compose · context · models · net · core
-  chat-turn   →  agents · chat-boot · context · format · metrics · models · net · runs · session · core
- chat-commands →  chat-boot · chat-sessions · commands · context · env · models · net · prompt · proc · runs · session · core
- chat-sessions →  sessions (→ net · runs) · session · core
+chat-parallel →  agents · chat-boot · compose · context · models · net · runs · core
+  chat-turn   →  agents · chat-boot · context · enforce · format · metrics · models · net · runs · session · core
+ chat-commands →  chat-boot · chat-sessions · context · env · models · net · prompt · proc · runs · session · core
+ chat-sessions →  net · sessions (→ net · runs) · session · core
+ chat-worktree →  chat-boot · format · net · prompt · runs · worktree · core
     compose   →  chat-boot · models · core   (used by chat-parallel and commands-registry)
   chat-boot   →  heartbeat · lanes · chips (re-exported) · core · metrics
     lanes     →  runs · format · metrics · models · core      chips → lanes · natural
       runs    →  run-cli · run-server · run-steps · asks (re-exported) · server-session · session
  run-cli, run-server →  asks · run-steps · server-session · net · proc (cli) · metrics
-      asks    →  server-session · net · run-steps · metrics      server-session → net · metrics
+      asks    →  server-session · net · run-steps · metrics      server-session → agents · enforce · net · metrics
+     agents   →  net · proc      net → enforce · proc      proc → enforce · core      enforce → core
      all      →  core.ts · followups.ts (JSON only) · natural.ts (→ followups)
 ```
 
@@ -92,7 +98,7 @@ resolution and `cmd.exe` quoting live only in `src/proc.ts`; the one exception
 is `killTree()`'s `taskkill`, which takes no user text. `BF` counts `spawn(`
 call sites (`spawnLines.length === 3`) — do not raise the number. Git is not
 OpenCode: `/worktree` runs `git` via `execFile` with an argument array, only in
-`src/worktree.ts` (`WT4`).
+`src/worktree.ts` and the standalone `src/git-scan-server.ts` (`WT4`, `GS`).
 
 **Rule 4 — A new setting is three edits.** The property in `package.json`, the
 key in the suite's base `settings` object, and the same default in both (`BE`).
@@ -109,9 +115,11 @@ script is named in `.vscodeignore`, and every new `out/*.js` in `ALLOWED`.
 
 **Rule 8 — `noUnusedLocals` is on.** An unused local is a red typecheck.
 
-**Rule 9 — One version, one build.** Change code → bump the version. The gate
-compares a `dist/` VSIX of this version with `out/` (a local 0.0.187 rebuild
-differed in four modules under the same number).
+**Rule 9 — One version, one build.** Change code → bump the version: in
+`package.json`, both `package-lock.json` fields, and `serverInfo.version` in
+`src/git-scan-server.ts` (`GS`). The gate compares a `dist/` VSIX of this
+version with `out/` (a local 0.0.187 rebuild differed in four modules under the
+same number).
 
 ---
 
@@ -127,12 +135,21 @@ npm run verify    # the suite alone
 | 1 | typecheck | `tsc --noEmit` exits 0 |
 | 2 | build | `tsc` exits 0 and `out/` is newer than `src/` |
 | 3 | verify | the suite exits 0 **and** prints `ALL <N> CHECKS PASSED` |
-| 4 | package | only `ALLOWED` files ship; no internal name in any committed file — without git, the tree under `.gitignore` (private tokens from `OCB_LEAKY` or `~/.ocb-leaky`, never the repo); no tracked file is git-ignored, and that no-git walk lists exactly what git does; `package-lock.json` at the manifest version; every README claim anchored; version heading, every palette command, chat command and setting documented; absolute links; no dist VSIX of this version with other code; no artifacts at the root |
+| 4 | package | only `ALLOWED` files ship; no internal name in any committed file — without git, the tree under `.gitignore` (private tokens from `OCB_LEAKY` or `~/.ocb-leaky`, never the repo); no tracked file is git-ignored, and that no-git walk lists exactly what git does; `package-lock.json` at the manifest version; every README claim anchored; version heading, every palette command, chat command and setting documented; every backticked code name (camelCase, SCREAMING_CASE) in AGENTS.md and the flow pages under `docs/` still exists in `src/`, `scripts/` or `tsconfig.json`, four external ones aside; absolute links; no build output (`*.map`, `*.vsix`, nested `out/`, `dist/`, `node_modules/`, `.vscode/`) outside the root `out/` and `dist/`; no dist VSIX of this version with other code, and a version `docs/released.txt` lists still builds from the code it was delivered from; no artifacts at the root |
+
+A red check stops the gate there: a red typecheck does not build, a red build
+does not run the suite.
 
 - The suite takes well over 30 s; do not judge it by a 30 s timeout.
 - It **aborts on the first exception**: fix crashes first, then red checks.
 - Package into `dist/` (`npx vsce package --out dist/`). A missing `repository`
   warning is expected — removed on purpose (REFS).
+- Install locally: `node scripts/update.js` installs the newest delivered VSIX
+  (sha256 checked against `docs/released.txt`) into `code`/`code-insiders`.
+- Deliver: `npm run ship -- --record` appends `<version> <vsix sha256> <code
+  hash>` to `docs/released.txt` (commit it). From then on any change to `src/`
+  or `package.json` fails the gate until the version is bumped — moving the VSIX
+  out of `dist/` no longer hides a rebuild (0.0.214 was rebuilt that way).
 
 ---
 
@@ -148,6 +165,10 @@ A probe measures one thing on this machine and prints it. Paste its output.
 | `scripts/probe-opencode-pwd.js` | Which folder `opencode run` works in: stale `PWD` vs `spawnOpenCode()`. |
 | `scripts/probe-server-adoption.js` | What a listener that only answers `{"healthy":true}` (no `version`) on the server port receives from the bridge: the health probe alone. |
 | `scripts/probe-plan-subagents.js` | Against a real server and model: whether a plan turn can edit through `general`, with and without the read-only `task` rules, and whether `/session/:id/children` lists the child. |
+| `scripts/probe-subtask-lanes.js` | Against a real server: whether a `subtask` part runs a project-local subagent (#21659), before lanes move to server-side delegation. |
+| `scripts/probe-readonly.js` | Against a real binary, through `out/` (`runOpenCode`, `ensureServer`, `createServerSession`): can a read-only turn write — cold run, managed serve, an adopted one, another window's; 2.x over ACP. One line per row; control rows must be `CREATED`. `npm run compile` first. |
+| `scripts/probe-acp.js` | `opencode acp` over JSON-RPC: handshake, prompt, cancel, load; the transcript as JSONL. Also the ACP client `probe-readonly.js` uses. |
+| `scripts/probe-model.js` | The scripted OpenAI-compatible model both use (`[[probe:<action>]]`): every tool attempt certain, no provider, no cost. |
 
 *Write to the OS temp dir, never the repo* — the suite sweeps `ocb-*` at
 startup, not exit (Windows holds a just-exited child's cwd).
@@ -170,6 +191,10 @@ pick the next free one.
   a function returned. `hostStream()` models the real host — use it for rendering.
 - **Source-text tripwires are legitimate** (`BF`, `MA`); they read text, not the AST.
 - **Reproduce the defect first.**
+- **Rewrite a fake with `writeFake`**, never a bare write: on POSIX the fake is
+  the file `spawn` runs, and without its shebang `/bin/sh` reads it. Windows
+  wraps every fake in a `.cmd` that calls `node`, so such a check is green there
+  and red on Linux and macOS (0.0.213).
 - `ext.deactivate()` runs near the end; later groups must not start a server.
   Settings keys go in the base `settings` object, never only inside a group.
 - Every `__test` key is read as `ext.__test.<key>` (`MA`).
@@ -228,15 +253,54 @@ history belongs in `CHANGELOG.md`, not in the source.
   server's confirmation holds for that server only (`PA`).
 - **`--auto` on the CLI: `/dev` and the built-in `plan` only**; on the server the
   bridge answers asks itself, keyed by `readOnly` (`PA`, `HQ`).
-- **The built-in `plan` is read-only by instruction, not permission** — the
-  README's `look` agent is read-only by permission (`LK`).
+- **The built-in `plan` is read-only by instruction, not permission** — it runs
+  `echo > f` (1.19.0 and 2.0.29). Every process the bridge starts overrides it
+  through `OPENCODE_CONFIG_CONTENT` (`enforcedConfigContent`, `RE`); the README's
+  `look` agent is read-only by permission on any server (`LK`).
+- **`OPENCODE_CONFIG_CONTENT` is merged over the config files and the last
+  matching rule wins**, while existing keys keep their earlier position in the
+  permission object (1.18.35, 1.19.0 measured). So `enforcedConfigContent` sets
+  scalar `"deny"` on every writing/running tool (`edit`, `write`, `patch`,
+  `apply_patch`, `multiedit`, `bash`, `shell`, `execute`, `question`,
+  `plan_enter`, `plan_exit`) as well as `"*": "deny"` first and top-level
+  `ocb-enforced: "deny"`. A user's own value is merged, not replaced; one that
+  is not a JSON object gets no overrides. Any OTHER key in a config file's
+  `agent.<name>.permission` (an MCP tool `"w_*": "allow"`, `task: { general:
+  allow }`) still sits after `"*": "deny"` and keeps its allow (0.0.218,
+  measured: both wrote). The injected config proves nothing: read-only is
+  judged on the effective rules (`readOnlyEvidence`: `GET /agent`, or `opencode
+  agent list`, which prints each agent's merged rules) with an allowlist
+  (`readOnlyLeaks`, `judgeReadOnly`); a reopened bridge agent refuses the turn
+  (`assertReadOnly`). The cold lookup is cached by `configStamp` — never only a
+  TTL: a checkout that adds an opencode.json must be listed afresh.
+- **The built-in `explore` has `bash * allow`** (`shell` on 2.x): under a plan
+  turn it wrote a file through the bridge's own read-only rules (1.19.0). That
+  is why the overrides cover each `readOnlySubagents` agent, in `/dev` too.
+- **A task child inherits its parent session's DENY rules only** — every allow
+  dropped (`task allow explore`, an inspect allowlist), `todowrite`/`task` deny
+  appended (1.19.0, `probe-readonly.js`). A session deny outlives its turn in
+  every later subagent of that session: after a plan turn, a `/dev` turn's
+  `general` could not edit. So the bridge never puts `bash`/`edit` denies on a
+  session; a server without the overrides gets no subagents on read-only turns
+  instead (`readOnlyReach`, `RE`).
+- **A message's `tools` map REPLACES the session's permission list** (1.19.0:
+  39 rules → 3). Measured, not used: an attached CLI run sends no such map.
+- **Whether a server has the overrides is read from `GET /agent`**: the marker
+  (`ENFORCED_MARKER`) precedes a final catch-all bash deny, and writing tools
+  also end in catch-all denies. A marker alone from an older server proves
+  nothing. Evidence is scoped to its endpoint, directory and selected agent (`RE`).
+- **MCP tools are named `<server>_<tool>` on 1.x** (`git-scan_gitScan`); the
+  overrides deny them unless `readOnlyTools` lists them. On 2.x MCP tools live
+  inside Code Mode's `execute`, which can POST anywhere and create worktrees:
+  denied on read-only turns, so 2.x read-only turns have no MCP tools.
 - **Nobody can answer OpenCode's prompts from a chat turn**: sessions the bridge
   creates deny question/plan_enter/plan_exit, and every ask of the session and its
   subagents is answered (`HQ`).
-- **A permission reply's 200 proves nothing**: OpenCode answers 200/true to a
-  reply for an ask that is not pending (#15386). The ask is `permission.asked`
-  (or pre-1.1 `permission.updated`, answered at the session's own route); only
-  `permission.replied` confirms it, else one resend (`HQ`).
+- **A permission reply's 200 proves nothing**: OpenCode before 1.19 answers
+  200/true to a reply for an ask that is not pending (#15386); 1.19.0 answers
+  404 for an unknown id, and the resend stays for the older ones. The ask is
+  `permission.asked` (or pre-1.1 `permission.updated`, answered at the session's
+  own route); only `permission.replied` confirms it, else one resend (`HQ`).
 - **A running server lists a folder's agents once**: a new `look.md` needs a
   server restart. Never call `POST /instance/dispose` from the bridge.
 - **OpenCode keeps a session on the model it was last sent**: after an unpinned
@@ -252,7 +316,6 @@ history belongs in `CHANGELOG.md`, not in the source.
 - **Killing a `run --attach` client does not stop the run**, and a prompt to a
   busy session queues silently: every stop aborts on the server, every send
   checks busy (`LT4`/`LT5`). Hand off only on a model stall, after the abort.
-
 - **OpenCode's fork copies messages and metadata, not permission rules**
   (1.18.33 `Session.fork`): a forked session would offer the `question` tool
   again, so `forkSession` PATCHes `HEADLESS_PERMISSION` back (`SL`).
@@ -271,7 +334,29 @@ history belongs in `CHANGELOG.md`, not in the source.
 - **A subagent runs with its own permissions, not the turn's** (OpenCode
   docs, agents): `general` edits under a plan turn. Read-only turns put
   `task` rules on the session (`turnPermission`, `RO`); session rules are
-  PATCHed per kind change, never per turn.
+  PATCHed per kind change, never per turn. A cold run has no session rules: the
+  overrides limit `plan`'s own `task`.
+- **`PATCH /session/:id {permission}` APPENDS, and the last match wins**,
+  session rules after the agent's (1.19.0, measured; `Permission.merge` is
+  `flat()`, `evaluate` is `findLast`). A rule cannot be removed, only outranked:
+  a `/dev` turn after a read-only one appends the dev agent's own `task` rules
+  (`GET /agent` → `permission`), and the fake models the merge (`RO`, `PM`).
+- **OpenCode 2 is another program called `opencode`** (`@opencode/cli`, 2.0.27):
+  its `serve` answers every path with its web app (HTML 200) and prints a
+  password; its `run` rejects `--attach --dir --variant --pure`; new API, new
+  permission format. Detect, refuse, redact — never fall back to a cold run
+  (`OC`). Both majors keep sessions in the same data folder.
+- **`opencode --version` costs ~0.7 s on 1.19 (the Bun binary starting)**:
+  CLI first use awaits one shared check; later sends reuse it while the file
+  behind the name is unchanged (`executableStamp`, file stats): a 2.x installer
+  replaces a 1.x in place, under the same name (`OC`). Prewarming can prime it,
+  but disabling prewarm cannot bypass identity. `/ping` and Diagnose can lift a
+  refusal after the executable is replaced with 1.x.
+- **A turn refused before sending is not a failed run.** Not OpenCode 1, an
+  identity `--version` could not confirm, permission rules that could not be
+  set: nothing reached OpenCode, and Continue would send "continue" to a
+  session that never got the task. `failTurn` marks them `notSent`: Retry (the
+  user's words) with New session or Ping (`PM`, `OC`).
 - **A fixed `serverPort` can be held by a listener that never answers**: the
   window's own server cannot bind and exits 1 after its boot. `ensureServer`
   starts one on a free port instead and never sends that listener a request
@@ -297,4 +382,5 @@ Every capability the README states is tagged `<!-- claim:id -->` and anchored by
 Current: `worktrees`, `worktree-command`, `inline-participant`, `model-names`,
 `parallel-models`, `command-aliases`, `sessions`, `parallel-composer`,
 `file-links`, `effort`, `auto-parallel`, `lane-agents`, `read-only-subagents`,
-`prewarm-server`.
+`prewarm-server`, `git-scan`, `chip-backoff`, `opencode-1-only`,
+`enforced-read-only`.

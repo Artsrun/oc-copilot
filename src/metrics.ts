@@ -31,7 +31,15 @@ export interface SubagentStep {
     step: StepRecord;
 }
 
+export type ReadOnlyEnforcement =
+    | { kind: "enforced"; agent: string }
+    | { kind: "disabled" }
+    | { kind: "unverified"; agent: string; base?: string; leaks?: string[] }
+    /** The bridge configured this agent and config files gave something back: the turn is refused. */
+    | { kind: "reopened"; agent: string; base?: string; leaks: string[] };
+
 export interface RunMetrics {
+    readOnlyEnforcement?: ReadOnlyEnforcement;
     firstByteMs: number | undefined;
     totalMs: number;
     timedOut: boolean;
@@ -40,7 +48,6 @@ export interface RunMetrics {
     cost: number;
     hadOutput: boolean;
     sessionId: string | undefined;
-    reasoning: string;
     toolOutputBytes?: number;
     /** Surfaced from `session.error` events and non-zero exits. */
     error?: string;

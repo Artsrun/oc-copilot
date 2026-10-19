@@ -2,7 +2,7 @@
   "name": "opencode-copilot-bridge",
   "displayName": "OpenCode Copilot Bridge",
   "description": "Delegate research, planning, and development to OpenCode from GitHub Copilot Chat.",
-  "version": "0.0.208",
+  "version": "0.0.220",
   "publisher": "local",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -26,7 +26,9 @@
       "restrictedConfigurations": [
         "opencodeCopilotBridge.executable",
         "opencodeCopilotBridge.serverHostname",
-        "opencodeCopilotBridge.serverPort"
+        "opencodeCopilotBridge.serverPort",
+        "opencodeCopilotBridge.enforceReadOnly",
+        "opencodeCopilotBridge.readOnlyTools"
       ]
     },
     "virtualWorkspaces": {
@@ -41,12 +43,15 @@
   ],
   "main": "./out/extension.js",
   "contributes": {
+    "mcpServerDefinitionProviders": [
+      { "id": "opencodeCopilotBridge.gitScan", "label": "OpenCode gitScan" }
+    ],
     "chatParticipants": [
       {
         "id": "opencodeCopilotBridge.chat",
         "name": "opencode",
         "fullName": "OpenCode Copilot Bridge",
-        "description": "One ongoing OpenCode session. Just describe the task (plan, the default agent)– or /dev /parallel /session /new /model /help, or dev:, model:id inline.",
+        "description": "One ongoing OpenCode session. Describe the task (plan, the default agent), or use /dev /parallel /session /new /model /help, or dev:, model:id inline.",
         "isSticky": true,
         "commands": [
           {
@@ -140,6 +145,10 @@
       }
     ],
     "commands": [
+      {
+        "command": "opencodeCopilotBridge.gitScanConfig",
+        "title": "OpenCode: gitScan config for opencode.json"
+      },
       {
         "command": "opencodeCopilotBridge.setModel",
         "title": "OpenCode: Set Default Model"
@@ -252,7 +261,7 @@
           "opencodeCopilotBridge.executable": {
             "type": "string",
             "default": "opencode",
-            "description": "OpenCode executable name or absolute path."
+            "description": "OpenCode 1.x executable name or path; ~/ is your home folder. OpenCode 2 is not driven yet: keep a 1.x for the bridge (README, OpenCode 2)."
           },
           "opencodeCopilotBridge.pure": {
             "type": "boolean",
@@ -277,7 +286,22 @@
             "default": [
               "explore"
             ],
-            "markdownDescription": "Subagents a read-only turn (plan, `/parallel` lanes) may start through OpenCode's `task` tool; every other subagent is denied for that turn. A subagent runs with its own permissions, not the turn's: `general` edits. Applied as the session's `task` rules on the server and attached runs; a cold `opencode run` has no server to apply them on. Empty: no subagents on read-only turns."
+            "markdownDescription": "Subagents a read-only turn (plan, `/parallel` lanes) may start through OpenCode's `task` tool; every other subagent is denied for that turn. A subagent runs with its own permissions, not the turn's: `general` edits, and the built-in `explore` runs any shell command. With `enforceReadOnly` these agents are read-only by permission in every OpenCode process the bridge starts, and a read-only turn starts only those its server runs read-only: none on a server you started yourself. Empty: no subagents on read-only turns."
+          },
+          "opencodeCopilotBridge.enforceReadOnly": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "In every OpenCode process the bridge starts, `plan` and literal `readOnlySubagents` get read/search, web and `readOnlyTools`; edits and shell are denied. Git inspection uses gitScan. Before each read-only turn the bridge checks the agent's effective rules (a server's `GET /agent`, or `opencode agent list` for a cold run): if a config file gives back anything beyond that reach — an MCP tool, a custom tool, `task` to another agent — nothing is sent and the turn names the rule. An older or independently started server keeps its own rules and may be unverified. `/dev` is unchanged. Off: read-only by instruction. A custom `planAgent` keeps its own rules."
+          },
+          "opencodeCopilotBridge.readOnlyTools": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": [
+              "git-scan_gitScan"
+            ],
+            "markdownDescription": "With `enforceReadOnly`, the tools a read-only turn may use besides reading, searching and the web: MCP tools by OpenCode permission name, `<server>_<tool>` (wildcards allowed, e.g. `jira_get*`). List only tools that do not change anything. A name that would allow a tool that writes, runs commands or starts subagents is left out (logged). Default: the bridge's gitScan. OpenCode 1.x; on 2.x MCP tools run inside Code Mode, which read-only turns deny."
           },
           "opencodeCopilotBridge.attachDevToServer": {
             "type": "boolean",
@@ -287,7 +311,7 @@
           "opencodeCopilotBridge.prewarmServer": {
             "type": "boolean",
             "default": true,
-            "description": "Start (or adopt) the managed OpenCode server a few seconds after VS Code starts, so the first @opencode message does not wait for its boot (config, plugins, MCP servers). Trusted workspaces only, and never with transport 'cli'."
+            "description": "Start (or adopt) the managed OpenCode server a few seconds after VS Code starts, so the first @opencode message does not wait for its boot (config, plugins, MCP servers). Trusted workspaces only. Transport 'cli' starts no server: it runs one --version in the background instead, to recognise OpenCode 2."
           },
           "opencodeCopilotBridge.toolQuietMs": {
             "type": "number",
@@ -301,7 +325,7 @@
               "queue"
             ],
             "default": "abort",
-            "description": "What to do when a message is sent to a session that is still busy with an earlier run nobody is watching. 'abort' stops that run first (and says so). 'queue' sends anyway: the message waits behind the old run, which is what made chat turns crawl in v176."
+            "description": "What to do when a message is sent to a session that is still busy with an earlier run nobody is watching. 'abort' stops that run first (and says so). 'queue' sends anyway: the message waits behind the old run, and the turn crawls."
           },
           "opencodeCopilotBridge.transport": {
             "type": "string",
@@ -381,6 +405,11 @@
             "default": true,
             "description": "Pass files attached to the chat request (#file:, drag-drop, \"Add context\") to OpenCode as a context block, and show them as clickable references under the reply."
           },
+          "opencodeCopilotBridge.gitScan": {
+            "type": "boolean",
+            "default": true,
+            "description": "Expose the read-only gitScan MCP server to Copilot in a trusted local workspace (first folder only). OpenCode needs separate configuration via the gitScan config command."
+          },
           "opencodeCopilotBridge.includeEditorSelection": {
             "type": "boolean",
             "default": false,
@@ -389,7 +418,7 @@
           "opencodeCopilotBridge.progressHeartbeatMs": {
             "type": "number",
             "default": 1000,
-            "description": "How often (ms) to re-render the chat progress line with the elapsed time and current phase, so a slow model does not look frozen. Set to 0 to update only when an event arrives."
+            "description": "How often (ms) a silent run is checked for its next elapsed-time line (at 3 s, 10 s, 30 s, 1, 2, 3, 5 and 10 min, then every 5 min), so a slow model does not look frozen. Set to 0 for new lines only when an event arrives."
           },
           "opencodeCopilotBridge.groupProgress": {
             "type": "boolean",
@@ -427,7 +456,7 @@
           "opencodeCopilotBridge.autoCompact": {
             "type": "boolean",
             "default": true,
-            "description": "Automatically compact (summarize) the ongoing session after every autoCompactEveryTurns messages so long conversations stay in context."
+            "description": "Compact (summarize) the session every autoCompactEveryTurns turns once its context is 20k tokens or more, or as soon as it passes 60k tokens or 70% of the model's window. Off (or autoCompactEveryTurns 0): a Compact chip offers it at that size instead."
           },
           "opencodeCopilotBridge.autoCompactEveryTurns": {
             "type": "number",
@@ -452,7 +481,7 @@
             ],
             "enumDescriptions": [
               "Each Copilot chat keeps its own OpenCode session. Opening a new chat starts a new conversation, and two chats open side by side never interleave.",
-              "Every chat in a folder shares one OpenCode session, so a new chat continues wherever the last one stopped. This was the behaviour before v0.16.0."
+              "Every chat in a folder shares one OpenCode session, so a new chat continues wherever the last one stopped."
             ],
             "default": "thread",
             "description": "Which conversation a chat message continues. \"thread\" scopes the OpenCode session to the Copilot chat it was started in; \"workspace\" shares one session across every chat in the folder."

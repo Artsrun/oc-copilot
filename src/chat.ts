@@ -13,7 +13,7 @@ import {
 } from "./core";
 import { mark, mergeRunId, prompt as promptText } from "./followups";
 import { insistedOn, isVaguePrompt, markClarifiedPrompt, planTimeout } from "./prompt";
-import { buildChatContext, emitReferences, parseChatPrompt } from "./context";
+import { buildChatContext, contextNotice, emitReferences, parseChatPrompt, referenceLogLine } from "./context";
 import { planAgentSetting } from "./agents";
 import {
     getActiveSession,
@@ -46,6 +46,9 @@ import { runTurn } from "./chat-turn";
 export interface TurnOrigin {
     inline?: boolean;
 }
+
+// Folders whose new-chat notice was said: once per window, not on every new chat.
+const newChatNoted = new Set<string>();
 
 export async function handleChat(
     request: vscode.ChatRequest,
@@ -219,7 +222,7 @@ export async function handleChat(
             "**If you meant a task**, say what to look at and what you want back, for example:\n" +
             "- `find every place we still branch on the legacy platform flag`\n" +
             "- `/dev add a regression test for the redirect loop`\n" +
-            "- `explain how sessions are persisted in src/extension.ts`"
+            "- `explain how the login flow stores its session`"
         );
         markClarifiedPrompt(prompt);
         // "Run it anyway" is a chip (followupsFor), never also a button.
@@ -263,7 +266,7 @@ export async function handleChat(
     }
 
     // Attachments (and, opt-in, the selection) go into the prompt and back as references.
-    const ctx = buildChatContext(request, cwd, { inline: turn.inline });
+    const ctx = buildChatContext(request, cwd, { inline: turn.inline, readOnly: !isBuild });
     // A merge turn carries the lanes it names; they are context, like an attachment.
     const taskForModel = `${task}${mergeLanes ? laneMergeContext(mergeLanes) : ""}${ctx.preamble}`;
     emitReferences(response, ctx.uris);
@@ -271,6 +274,15 @@ export async function handleChat(
         logChannel.appendLine(
             `[${stamp()}] context: ${ctx.uris.map((u) => relTo(cwd, u)).join(", ")}`
         );
+    }
+    // Every reference the host sent, kept or dropped; the chat hears what the user attached that OpenCode won't get.
+    const referenceLine = referenceLogLine(ctx.notes);
+    if (referenceLine) {
+        logChannel.appendLine(`[${stamp()}] ${referenceLine}`);
+    }
+    const contextNote = contextNotice(ctx.notes, !isBuild);
+    if (contextNote) {
+        response.markdown(`> ${mark("warn")} ${contextNote}\n\n`);
     }
 
     if (isMultiRoot()) {
@@ -287,7 +299,8 @@ export async function handleChat(
     // A new chat gets a new session; say so when the folder holds another one.
     if (!continuing && threadScopeActive(context)) {
         const folderSession = getActiveSession(cwd).id;
-        if (folderSession) {
+        if (folderSession && !newChatNoted.has(cwd)) {
+            newChatNoted.add(cwd);
             response.markdown(
                 `> ${mark("thread")} New chat — starting a fresh OpenCode session. The previous session ` +
                 `\`${folderSession}\` is untouched and still open in its own chat.\n\n`

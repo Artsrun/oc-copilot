@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.turnPermission = exports.sessionRoot = exports.sessionPath = exports.sessionModel = exports.sessionBusy = exports.safeSessionId = exports.isMissingSessionRun = exports.isMissingSessionError = exports.isAttachFailure = exports.createServerSession = exports.compactionInFlight = exports.compactSession = exports.abortServerRun = exports.HEADLESS_PERMISSION = exports.setReplyConfirmWait = exports.stepDetail = exports.providerRetryOf = exports.partDeltaOf = exports.noteTask = exports.emitKeyedDelta = exports.applyServerPart = exports.runOpenCodeServer = exports.runOpenCode = void 0;
+exports.turnPermission = exports.readOnlyReach = exports.readOnlyEvidence = exports.assertReadOnly = exports.sessionRoot = exports.sessionPath = exports.sessionBusy = exports.safeSessionId = exports.isMissingSessionRun = exports.isMissingSessionError = exports.isAttachFailure = exports.createServerSession = exports.compactionInFlight = exports.compactSession = exports.abortServerRun = exports.HEADLESS_PERMISSION = exports.setReplyConfirmWait = exports.stepDetail = exports.providerRetryOf = exports.partDeltaOf = exports.noteTask = exports.emitKeyedDelta = exports.runOpenCodeServer = exports.runOpenCode = void 0;
 exports.restartAfterMissingSession = restartAfterMissingSession;
 const core_1 = require("./core");
 const followups_1 = require("./followups");
@@ -12,7 +12,6 @@ Object.defineProperty(exports, "runOpenCode", { enumerable: true, get: function 
 var run_server_2 = require("./run-server");
 Object.defineProperty(exports, "runOpenCodeServer", { enumerable: true, get: function () { return run_server_2.runOpenCodeServer; } });
 var run_steps_1 = require("./run-steps");
-Object.defineProperty(exports, "applyServerPart", { enumerable: true, get: function () { return run_steps_1.applyServerPart; } });
 Object.defineProperty(exports, "emitKeyedDelta", { enumerable: true, get: function () { return run_steps_1.emitKeyedDelta; } });
 Object.defineProperty(exports, "noteTask", { enumerable: true, get: function () { return run_steps_1.noteTask; } });
 Object.defineProperty(exports, "partDeltaOf", { enumerable: true, get: function () { return run_steps_1.partDeltaOf; } });
@@ -31,9 +30,11 @@ Object.defineProperty(exports, "isMissingSessionError", { enumerable: true, get:
 Object.defineProperty(exports, "isMissingSessionRun", { enumerable: true, get: function () { return server_session_1.isMissingSessionRun; } });
 Object.defineProperty(exports, "safeSessionId", { enumerable: true, get: function () { return server_session_1.safeSessionId; } });
 Object.defineProperty(exports, "sessionBusy", { enumerable: true, get: function () { return server_session_1.sessionBusy; } });
-Object.defineProperty(exports, "sessionModel", { enumerable: true, get: function () { return server_session_1.sessionModel; } });
 Object.defineProperty(exports, "sessionPath", { enumerable: true, get: function () { return server_session_1.sessionPath; } });
 Object.defineProperty(exports, "sessionRoot", { enumerable: true, get: function () { return server_session_1.sessionRoot; } });
+Object.defineProperty(exports, "assertReadOnly", { enumerable: true, get: function () { return server_session_1.assertReadOnly; } });
+Object.defineProperty(exports, "readOnlyEvidence", { enumerable: true, get: function () { return server_session_1.readOnlyEvidence; } });
+Object.defineProperty(exports, "readOnlyReach", { enumerable: true, get: function () { return server_session_1.readOnlyReach; } });
 Object.defineProperty(exports, "turnPermission", { enumerable: true, get: function () { return server_session_1.turnPermission; } });
 async function restartAfterMissingSession(runOpts, serverTransport, beat, response, cwd) {
     const dead = runOpts.sessionId;

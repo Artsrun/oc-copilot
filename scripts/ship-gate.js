@@ -31,6 +31,9 @@ const ALLOWED = [
     "extension/out/core.js",
     "extension/out/env.js",
     "extension/out/format.js",
+    "extension/out/context-markers.js",
+    "extension/out/git-scan-server.js",
+    "extension/out/git-scan-mcp.js",
     "extension/out/metrics.js",
     "extension/out/proc.js",
     "extension/out/prompt.js",
@@ -39,34 +42,28 @@ const ALLOWED = [
     "extension/out/session.js",
     "extension/out/models.js",
     "extension/out/runs.js",
-    // v203: runs.ts split by transport.
     "extension/out/run-cli.js",
     "extension/out/run-server.js",
     "extension/out/run-steps.js",
     "extension/out/asks.js",
     "extension/out/server-session.js",
-    // v204: chat-boot.ts split.
     "extension/out/heartbeat.js",
     "extension/out/lanes.js",
     "extension/out/chips.js",
     "extension/out/commands.js",
     "extension/out/chat-boot.js",
     "extension/out/chat.js",
-    // v205: handleChat split — the /parallel turn, and run / recover / post.
     "extension/out/chat-parallel.js",
     "extension/out/chat-turn.js",
+    "extension/out/enforce.js",
     "extension/out/chat-commands.js",
     "extension/out/commands-registry.js",
     "extension/out/worktree.js",
     "extension/out/chat-worktree.js",
-    // v181: every chip, prompt and kaomoji mark — loaded by out/followups.js.
     "extension/out/followups.js",
     "extension/out/followups.json",
-    // v183: answer-derived follow-up chips.
     "extension/out/natural.js",
-    // v185: which agent a read-only turn runs as (planAgent).
     "extension/out/agents.js",
-    // v190: /sessions and the /parallel composer.
     "extension/out/sessions.js",
     "extension/out/chat-sessions.js",
     "extension/out/compose.js",
@@ -110,6 +107,9 @@ const run = (label, cmd, args, opts = {}) => {
 // 1 · typecheck
 // ---------------------------------------------------------------------------
 run("1/4 typecheck", "npx", ["tsc", "-p", ".", "--noEmit"]);
+// v212: fail-fast, as the header says. A red typecheck used to build anyway and
+// then run the whole 2-3 minute suite against code that does not compile.
+stopIfRed("build, verify and package were not run");
 
 // ---------------------------------------------------------------------------
 // 2 · build
@@ -130,6 +130,7 @@ if (built.ok) {
         failed += 1;
     }
 }
+stopIfRed("verify and package were not run");
 
 // ---------------------------------------------------------------------------
 // 3 · verify
@@ -145,6 +146,7 @@ if (verified.ok && !/ALL \d+ CHECKS PASSED/.test(verified.out)) {
     results.push(["3/4 verify printed the pass banner", false]);
     failed += 1;
 }
+stopIfRed("package was not checked");
 
 // ---------------------------------------------------------------------------
 // 4 · package file list
@@ -191,6 +193,10 @@ if (ls.status !== 0) {
 }
 
 function checkList(listed) {
+    const standalone = fs.readFileSync(path.join(root, "out", "git-scan-server.js"), "utf8");
+    const standaloneOk = !/require\(["']vscode["']\)/.test(standalone);
+    results.push(["4/4 gitScan server is standalone (no vscode import)", standaloneOk]);
+    if (!standaloneOk) failed += 1;
     const unexpected = listed.filter(
         (f) => !ALLOWED.includes(f) && !ALLOWED.includes(f.replace(/^extension\//, ""))
     );
@@ -289,6 +295,23 @@ function checkList(listed) {
     const noLeaks = leaks.length === 0;
     results.push([`4/4 no internal names in ${tracked.status === 0 ? "committed" : "any"} files`, noLeaks]);
 
+    // v215: a whole extracted tree sat under docs/ (out/*.map, .vscode/, dist/).
+    // The root-anchored ignore rules missed it: git would have committed 39
+    // files. Build output belongs in the root out/ and dist/ only.
+    // git ls-files includes unstaged deletions; inspect only files that remain
+    // in the candidate tree, as the leak scan and no-git parity check do above.
+    const nested = scanned.filter((rel) => fs.existsSync(path.join(root, rel))).filter(
+        (rel) =>
+            (/(^|\/)(out|dist|node_modules|\.vscode)\//.test(rel) && !/^(out|\.vscode)\/[^/]+$/.test(rel)) ||
+            (rel.endsWith(".map") && !/^out\/[^/]+$/.test(rel)) ||
+            rel.endsWith(".vsix")
+    );
+    results.push([`4/4 no build output outside out/ and dist/${nested.length ? ` (${nested.length}: ${nested.slice(0, 3).join(", ")})` : ""}`, nested.length === 0]);
+    if (nested.length) {
+        failed += 1;
+        console.log(`\nBuild output outside out/ and dist/ would be committed:\n  ${nested.slice(0, 20).join("\n  ")}`);
+    }
+
     // v178: a README claim must name code that backs it. Tag the claim with
     // <!-- claim:id --> and put `claim:id` in a comment next to the code. A
     // claim with no anchor is a promise nothing implements (v177 README told
@@ -305,6 +328,43 @@ function checkList(listed) {
     if (orphanClaims.length) {
         failed += 1;
         console.log(`\nREADME claims with no code anchor: ${orphanClaims.join(", ")}`);
+    }
+
+    // v212: a code name the docs cite must still exist. AGENTS §1 and docs/flow
+    // named functions that had been renamed or moved, and nothing looked.
+    // camelCase and SCREAMING_CASE names in backticks, looked up in the repo's
+    // own code (src, scripts, tsconfig.json); these four are not ours.
+    const FOREIGN_NAMES = new Set(["languageModelTools", "currentColor", "isOverflow", "findLast"]);
+    const ownCode = [
+        ...fs.readdirSync(path.join(root, "src")).filter((f) => /\.(ts|json)$/.test(f)).map((f) => path.join(root, "src", f)),
+        ...fs.readdirSync(path.join(root, "scripts")).filter((f) => f.endsWith(".js")).map((f) => path.join(root, "scripts", f)),
+        path.join(root, "tsconfig.json")
+    ]
+        .map((f) => fs.readFileSync(f, "utf8"))
+        .join("\n");
+    const docFiles = [
+        "AGENTS.md",
+        ...(fs.existsSync(path.join(root, "docs", "flow"))
+            ? fs.readdirSync(path.join(root, "docs", "flow")).filter((f) => f.endsWith(".md")).map((f) => `docs/flow/${f}`)
+            : [])
+    ];
+    const citedNames = new Map();
+    for (const rel of docFiles) {
+        const text = fs.readFileSync(path.join(root, rel), "utf8");
+        for (const m of text.matchAll(/`([A-Za-z_][A-Za-z0-9_]*)(?:\(\))?`/g)) {
+            const name = m[1];
+            if (/^[a-z]+(?:[A-Z][a-z0-9]*)+$/.test(name) || /^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/.test(name)) {
+                citedNames.set(name, citedNames.get(name) ?? rel);
+            }
+        }
+    }
+    const goneNames = [...citedNames].filter(([name]) => !FOREIGN_NAMES.has(name) && !new RegExp(`\\b${name}\\b`).test(ownCode));
+    results.push([
+        `4/4 every code name AGENTS.md and docs/flow cite exists in the code (${citedNames.size} names${goneNames.length ? `; gone: ${goneNames.map(([n, f]) => `${n} (${f})`).join(", ")}` : ""})`,
+        goneNames.length === 0
+    ]);
+    if (goneNames.length) {
+        failed += 1;
     }
     if (!noLeaks) {
         failed += 1;
@@ -424,6 +484,32 @@ function checkList(listed) {
         console.log(`\ndist/ already holds ${pkg.version} built from other code. Bump the version.`);
     }
 
+    // v215: one version, one build, even when the VSIX is moved away. 0.0.214
+    // was repackaged from other code after its delivered VSIX was moved out of
+    // dist/, which the check above cannot see. docs/released.txt holds each
+    // delivered version's VSIX hash and code hash; today's src/ and manifest
+    // must match it, and any delivered VSIX still in dist/ must match its sha256.
+    const ledger = releasedEntries();
+    const delivered = ledger.find((r) => r.version === pkg.version);
+    if (delivered) {
+        const same = delivered.code === codeHash();
+        results.push([`4/4 delivered ${pkg.version} still builds from its own code`, same]);
+        if (!same) {
+            failed += 1;
+            console.log(`\n${pkg.version} was delivered (VSIX ${delivered.vsix.slice(0, 12)}…) from other code. Bump the version.`);
+        }
+    }
+    const crypto = require("node:crypto");
+    const badDist = ledger.filter((r) => {
+        const p = path.join(root, "dist", `${pkg.name}-${r.version}.vsix`);
+        return fs.existsSync(p) && crypto.createHash("sha256").update(fs.readFileSync(p)).digest("hex") !== r.vsix;
+    });
+    results.push([`4/4 every delivered VSIX in dist/ matches docs/released.txt${badDist.length ? ` (mismatch: ${badDist.map((r) => r.version).join(", ")})` : ""}`, badDist.length === 0]);
+    if (badDist.length) {
+        failed += 1;
+        console.log(`\ndist/ VSIX sha256 does not match docs/released.txt for: ${badDist.map((r) => r.version).join(", ")}`);
+    }
+
     // The .vsix itself must never be committed next to the source it packages.
     const strays = fs
         .readdirSync(root)
@@ -434,6 +520,52 @@ function checkList(listed) {
         failed += 1;
         console.log(`\nStray artifacts at repo root: ${strays.join(", ")} — these belong in .gitignore.`);
     }
+}
+
+// docs/released.txt: `<version> <vsix sha256> <code hash>` per delivered VSIX.
+function releasedEntries() {
+    const file = path.join(root, "docs", "released.txt");
+    return (fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "")
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .filter((l) => l && !l.startsWith("#"))
+        .map((l) => {
+            const [version, vsix, code] = l.split(/\s+/);
+            return { version, vsix: vsix ?? "", code: code ?? "" };
+        });
+}
+
+// What a version ships as code: src/ and the manifest, LF-normalized so a
+// Windows and a Linux checkout of the same commit hash the same.
+function codeHash() {
+    const crypto = require("node:crypto");
+    const hash = crypto.createHash("sha256");
+    const files = ["package.json", ...fs.readdirSync(path.join(root, "src")).filter((f) => /\.(ts|json)$/.test(f)).map((f) => `src/${f}`)].sort();
+    for (const rel of files) {
+        hash.update(`${rel}\n`);
+        hash.update(fs.readFileSync(path.join(root, rel), "utf8").replace(/\r\n/g, "\n"));
+        hash.update("\n");
+    }
+    return hash.digest("hex");
+}
+
+// `npm run ship -- --record`, after a green gate and `vsce package`: append this
+// version's delivered VSIX and code hash to docs/released.txt.
+function recordRelease() {
+    const vsix = path.join(root, "dist", `${pkg.name}-${pkg.version}.vsix`);
+    if (!fs.existsSync(vsix)) {
+        console.log(`--record: no ${path.relative(root, vsix)} — package first (npx vsce package --out dist/).`);
+        process.exit(1);
+    }
+    if (releasedEntries().some((r) => r.version === pkg.version)) {
+        console.log(`--record: ${pkg.version} is already recorded in docs/released.txt.`);
+        return;
+    }
+    const sha = require("node:crypto").createHash("sha256").update(fs.readFileSync(vsix)).digest("hex");
+    const file = path.join(root, "docs", "released.txt");
+    const head = fs.existsSync(file) ? "" : "# Delivered VSIXes: <version> <vsix sha256> <code hash of src/ + package.json>. Never reuse a version listed here.\n";
+    fs.appendFileSync(file, `${head}${pkg.version} ${sha} ${codeHash()}\n`);
+    console.log(`--record: ${pkg.version} ${sha.slice(0, 12)}… recorded in docs/released.txt`);
 }
 
 // The out/*.js a packaged VSIX holds that differ from out/ now (none if there
@@ -562,12 +694,26 @@ function committable(dir) {
 
 // ---------------------------------------------------------------------------
 
-console.log(`\n${"═".repeat(60)}\nSHIP GATE — ${pkg.name} ${pkg.version}\n${"═".repeat(60)}`);
-for (const [label, ok] of results) {
-    console.log(`  ${ok ? "\u001b[32mPASS\u001b[0m" : "\u001b[31mFAIL\u001b[0m"}  ${label}`);
+report();
+if (process.argv.includes("--record")) {
+    recordRelease();
 }
-if (failed) {
-    console.log(`\n\u001b[31m${failed} BLOCKER(S) — DO NOT SHIP\u001b[0m\n`);
-    process.exit(1);
+
+// The summary; `skipped` names what a red stage kept from running.
+function report(skipped) {
+    console.log(`\n${"═".repeat(60)}\nSHIP GATE — ${pkg.name} ${pkg.version}\n${"═".repeat(60)}`);
+    for (const [label, ok] of results) {
+        console.log(`  ${ok ? "\u001b[32mPASS\u001b[0m" : "\u001b[31mFAIL\u001b[0m"}  ${label}`);
+    }
+    if (failed) {
+        console.log(`\n\u001b[31m${failed} BLOCKER(S) — DO NOT SHIP\u001b[0m${skipped ? ` (${skipped})` : ""}\n`);
+        process.exit(1);
+    }
+    console.log("\n\u001b[32mALL GATES GREEN — safe to package\u001b[0m\n");
 }
-console.log("\n\u001b[32mALL GATES GREEN — safe to package\u001b[0m\n");
+
+function stopIfRed(skipped) {
+    if (failed) {
+        report(skipped);
+    }
+}

@@ -3,10 +3,12 @@
 // spawnOpenCode is the taskkill in killTree, which takes no user text.
 import { spawn, ChildProcess, ChildProcessWithoutNullStreams } from "node:child_process";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { platform } from "node:process";
 
 import { logChannel, stamp } from "./core";
+import { enforcedConfigContent } from "./enforce";
 
 export interface ResolvedExe {
     command: string;
@@ -14,6 +16,8 @@ export interface ResolvedExe {
     viaCmd: boolean;
     // Arguments the shim itself supplied, e.g. the script path in `node cli.js %*`.
     prefixArgs: string[];
+    // Keep the wrapper too: an upgrade can retarget it without changing the old binary.
+    launcher: string;
 }
 
 const exeCache = new Map<string, ResolvedExe>();
@@ -160,13 +164,16 @@ export function resolveExecutable(exe: string): ResolvedExe {
     if (cached) {
         return cached;
     }
-    let target = lookupOnPath(exe) ?? (exe.includes("/") || exe.includes("\\") ? exe : undefined);
+    // `~/…` is the home folder, as a shell reads it; a spawn would not.
+    const named = /^~(?=$|[\\/])/.test(exe) ? path.join(os.homedir(), exe.slice(1)) : exe;
+    let target = lookupOnPath(named) ?? (named.includes("/") || named.includes("\\") ? named : undefined);
     let prefixArgs: string[] = [];
     if (!target) {
         const err = new Error(`spawn ${exe} ENOENT`) as NodeJS.ErrnoException;
         err.code = "ENOENT";
         throw err;
     }
+    const launcher = target;
     let lower = target.toLowerCase();
     if (platform === "win32" && (lower.endsWith(".cmd") || lower.endsWith(".bat"))) {
         const sibling = preferNonCmdSibling(target);
@@ -186,10 +193,32 @@ export function resolveExecutable(exe: string): ResolvedExe {
         command: viaCmd ? process.env.ComSpec || "cmd.exe" : target,
         target,
         viaCmd,
-        prefixArgs
+        prefixArgs,
+        launcher
     };
     exeCache.set(exe, resolved);
     return resolved;
+}
+
+/** The files `exe` runs as they are on disk now: the resolved target and a
+ * script a shim hands it. An installer that replaces a binary in place keeps
+ * the name and changes this. `forget` resolves the name afresh first (an npm
+ * shim names another file after an upgrade). Throws as resolveExecutable does. */
+export function executableStamp(exe: string, forget = false): string {
+    if (forget) {
+        exeCache.delete(exe);
+    }
+    const resolved = resolveExecutable(exe);
+    return [...new Set([resolved.launcher, resolved.target, ...resolved.prefixArgs])]
+        .map((file) => {
+            try {
+                const s = fs.statSync(file);
+                return s.isFile() ? `${file}:${s.size}:${s.mtimeMs}:${s.ino}` : "";
+            } catch {
+                return "";
+            }
+        })
+        .join("|");
 }
 
 export function spawnOpenCode(
@@ -207,7 +236,10 @@ export function spawnOpenCode(
     // `code ~/proj` from $HOME, a multi-root workspace, Git Bash on Windows
     // (PWD=/c/Users/…). Attached and server runs pass --dir / ?directory=.
     // Measured with scripts/probe-opencode-pwd.js; check PW.
-    const env = cwd ? { ...process.env, PWD: cwd } : process.env;
+    // Read-only turns are read-only by permission in every process started here
+    // (./enforce): one place, so serve, run, agent list and an ACP child agree.
+    const enforced = enforcedConfigContent();
+    const env = { ...process.env, ...(cwd ? { PWD: cwd } : {}), ...(enforced ? { OPENCODE_CONFIG_CONTENT: enforced } : {}) };
     if (resolved.viaCmd) {
         // Node escapes quotes with backslashes, which cmd.exe does not understand,
         // so the command line is built by hand and passed verbatim. The extra outer
@@ -221,6 +253,61 @@ export function spawnOpenCode(
         });
     }
     return spawn(resolved.command, full, { cwd, env, shell: false });
+}
+
+// A short command's whole output (`--version`, `agent list`): stdout and stderr
+// together, bounded; diagnostics resolve errors, identity checks reject them.
+export function runCapture(executable: string, args: string[], cwd: string, timeoutMs = 8000, requireSuccess = false): Promise<string> {
+    return new Promise((resolve, reject) => {
+        let child: ChildProcessWithoutNullStreams;
+        try {
+            child = spawnOpenCode(executable, args, cwd);
+        } catch (error) {
+            if (requireSuccess) {
+                reject(error);
+                return;
+            }
+            resolve(`error: ${(error as Error).message}`);
+            return;
+        }
+        let out = "";
+        let overflow = false;
+        const timer = setTimeout(() => {
+            killTree(child);
+            if (requireSuccess) {
+                reject(new Error(`OpenCode identity check timed out after ${timeoutMs} ms`));
+                return;
+            }
+            resolve(out.trim() || "timed out");
+        }, timeoutMs);
+        child.stdin?.end();
+        child.stdout.setEncoding("utf8");
+        child.stderr.setEncoding("utf8");
+        const keep = (chunk: string): void => {
+            if (out.length + chunk.length > 65536) {
+                overflow = true;
+            }
+            out = (out + chunk).slice(0, 65536);
+        };
+        child.stdout.on("data", keep);
+        child.stderr.on("data", keep);
+        child.on("error", (err) => {
+            clearTimeout(timer);
+            if (requireSuccess) {
+                reject(err);
+                return;
+            }
+            resolve(`error: ${err.message}`);
+        });
+        child.on("close", (code) => {
+            clearTimeout(timer);
+            if (requireSuccess && (code !== 0 || overflow)) {
+                reject(new Error(`OpenCode identity check exited with code ${code}`));
+                return;
+            }
+            resolve(out.trim() || "(no output)");
+        });
+    });
 }
 
 // Kill a child and its descendants. On Windows a `.cmd`/`.bat` shim is spawned

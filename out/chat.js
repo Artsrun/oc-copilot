@@ -14,6 +14,7 @@ const chat_commands_1 = require("./chat-commands");
 const chat_worktree_1 = require("./chat-worktree");
 const chat_parallel_1 = require("./chat-parallel");
 const chat_turn_1 = require("./chat-turn");
+const newChatNoted = new Set();
 async function handleChat(request, context, rawResponse, token, turn = {}) {
     const response = (0, chat_boot_1.chatStream)(rawResponse, token);
     const choice = (0, core_1.resolveFolder)(request);
@@ -131,7 +132,7 @@ async function handleChat(request, context, rawResponse, token, turn = {}) {
             "**If you meant a task**, say what to look at and what you want back, for example:\n" +
             "- `find every place we still branch on the legacy platform flag`\n" +
             "- `/dev add a regression test for the redirect loop`\n" +
-            "- `explain how sessions are persisted in src/extension.ts`");
+            "- `explain how the login flow stores its session`");
         (0, prompt_1.markClarifiedPrompt)(prompt);
         return { metadata: { kind: "clarify", agent: agentLabel, prompt } };
     }
@@ -160,11 +161,19 @@ async function handleChat(request, context, rawResponse, token, turn = {}) {
     if (model && !pinned) {
         core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] back to ${model}: the last turn handed off, and OpenCode keeps a session on its last model`);
     }
-    const ctx = (0, context_1.buildChatContext)(request, cwd, { inline: turn.inline });
+    const ctx = (0, context_1.buildChatContext)(request, cwd, { inline: turn.inline, readOnly: !isBuild });
     const taskForModel = `${task}${mergeLanes ? (0, chat_boot_1.laneMergeContext)(mergeLanes) : ""}${ctx.preamble}`;
     (0, context_1.emitReferences)(response, ctx.uris);
     if (ctx.uris.length) {
         core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] context: ${ctx.uris.map((u) => (0, core_1.relTo)(cwd, u)).join(", ")}`);
+    }
+    const referenceLine = (0, context_1.referenceLogLine)(ctx.notes);
+    if (referenceLine) {
+        core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] ${referenceLine}`);
+    }
+    const contextNote = (0, context_1.contextNotice)(ctx.notes, !isBuild);
+    if (contextNote) {
+        response.markdown(`> ${(0, followups_1.mark)("warn")} ${contextNote}\n\n`);
     }
     if ((0, core_1.isMultiRoot)()) {
         const why = {
@@ -178,7 +187,8 @@ async function handleChat(request, context, rawResponse, token, turn = {}) {
     }
     if (!continuing && (0, session_1.threadScopeActive)(context)) {
         const folderSession = (0, session_1.getActiveSession)(cwd).id;
-        if (folderSession) {
+        if (folderSession && !newChatNoted.has(cwd)) {
+            newChatNoted.add(cwd);
             response.markdown(`> ${(0, followups_1.mark)("thread")} New chat — starting a fresh OpenCode session. The previous session ` +
                 `\`${folderSession}\` is untouched and still open in its own chat.\n\n`);
         }

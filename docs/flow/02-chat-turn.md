@@ -17,7 +17,7 @@ flowchart TD
   AL["(•ᴗ•) aliases: /d to /dev, retired commands rejected"]:::bridge
   SS["(◕‿◕) resolveSessionState: threadSession from history"]:::bridge
   C1{{"(・ω・)? control command?"}}:::bridge
-  CC["/help /new /model /ping /env /session /sessions /stop"]:::off
+  CC["/help /new /model /ping /env /session /sessions /stop /compact"]:::off
   WT["(っ•ω•)っ /worktree: git via execFile"]:::bridge
   EM{{"(・ω・)? empty prompt?"}}:::bridge
   NU["(-ω-)zZ nudge, no run"]:::stop

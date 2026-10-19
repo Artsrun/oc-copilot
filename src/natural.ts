@@ -1,22 +1,8 @@
 // Natural follow-ups: the chips under a finished answer are the next
 // moves the agent itself offered or asked about, in its own words — or none.
 //
-// Why this shape (researched 2026-09-26, see CHANGELOG 0.0.183):
-//  - xAI's published Grok prompts (github.com/xai-org/grok-prompts, every
-//    version through 2025-11-17) never ask the model to suggest follow-ups.
-//    Grok's own rule is "the shortest answer you can, while respecting any
-//    stated length and comprehensiveness preferences".
-//  - The follow-up-chip pattern: few chips, each a concrete next ask from THIS
-//    answer, none when nothing fits. Generic always-on chips are the top
-//    complaint about ChatGPT's (OpenAI community, "Setting to Disable
-//    Follow-up Suggestions").
-// Agents nearly always end by offering the next move ("Want me to …?", "Should
-// I …?", "I can also … if you'd like."). Those words become the chips: no extra
-// model call, no invented intent. No offer and no concrete cue: no chips.
-//
-// Pure string work — no vscode import — so check NF drives it directly.
-// The one text utility it needs beyond its own rules (plainText, sentencesOf)
-// lives in ./core, shared with the rest of the bridge.
+// No extra model call or invented intent: no offer and no concrete cue means
+// no chips. NF drives the string rules directly; shared utilities import core.
 
 import { plainText, sentencesOf } from "./core";
 import { NATURAL_MAX_LABEL, NaturalKey, naturalText } from "./followups";

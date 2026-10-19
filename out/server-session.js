@@ -1,8 +1,12 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.HEADLESS_PERMISSION = exports.sessionRoot = exports.sessionPath = void 0;
+exports.isTurnPermissionError = exports.serverEnforcement = exports.HEADLESS_PERMISSION = exports.sessionRoot = exports.sessionPath = void 0;
 exports.safeSessionId = safeSessionId;
 exports.turnPermission = turnPermission;
+exports.readOnlyReach = readOnlyReach;
+exports.readOnlyEvidence = readOnlyEvidence;
+exports.assertReadOnly = assertReadOnly;
+exports.sessionRules = sessionRules;
 exports.applyTurnPermission = applyTurnPermission;
 exports.noteTurnPermission = noteTurnPermission;
 exports.isMissingSessionError = isMissingSessionError;
@@ -12,12 +16,12 @@ exports.sessionBusy = sessionBusy;
 exports.abortChildren = abortChildren;
 exports.abortServerRun = abortServerRun;
 exports.createServerSession = createServerSession;
-exports.sessionModel = sessionModel;
 exports.compactionInFlight = compactionInFlight;
 exports.compactSession = compactSession;
-exports.resetCompactBackoff = resetCompactBackoff;
 const core_1 = require("./core");
 const net_1 = require("./net");
+const agents_1 = require("./agents");
+const enforce_1 = require("./enforce");
 const SAFE_ID = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$/;
 function safeSessionId(sessionId) {
     if (SAFE_ID.test(sessionId)) {
@@ -37,36 +41,142 @@ exports.HEADLESS_PERMISSION = [
     { permission: "plan_enter", action: "deny", pattern: "*" },
     { permission: "plan_exit", action: "deny", pattern: "*" }
 ];
-function turnPermission(readOnly) {
+function turnPermission(readOnly, allowed = (0, enforce_1.readOnlySubagents)()) {
     if (!readOnly) {
         return exports.HEADLESS_PERMISSION;
     }
-    const allowed = (0, core_1.config)().get("readOnlySubagents", ["explore"]) ?? [];
     return [
         ...exports.HEADLESS_PERMISSION,
         { permission: "task", action: "deny", pattern: "*" },
-        ...allowed.filter((a) => typeof a === "string" && a.trim()).map((a) => ({ permission: "task", action: "allow", pattern: a.trim() }))
+        ...allowed.map((a) => ({ permission: "task", action: "allow", pattern: a }))
     ];
 }
+const withheldLogged = new Set();
+const isBuiltinReadOnly = (agent) => agent === "plan" || (0, enforce_1.readOnlySubagents)().includes(agent);
+async function overriddenOn(base, cwd) {
+    return ((await (0, agents_1.listAgents)(cwd, base, "plan")) ?? [])
+        .filter((a) => (0, enforce_1.judgeReadOnly)(a.permission, a.name, {
+        builtin: true,
+        subagents: a.name === "plan" ? (0, enforce_1.readOnlySubagents)() : [],
+        sessionTask: a.name === "plan"
+    }).kind === "enforced")
+        .map((a) => a.name);
+}
+async function readOnlyReach(base, cwd) {
+    const wanted = (0, enforce_1.readOnlySubagents)();
+    if (!(0, core_1.config)().get("enforceReadOnly", true)) {
+        return { allowed: wanted, planEnforced: false };
+    }
+    const overridden = await overriddenOn(base, cwd);
+    return { allowed: wanted.filter((a) => overridden.includes(a)), planEnforced: overridden.includes("plan") };
+}
+async function readOnlyEvidence(base, cwd, agent) {
+    if (!(0, core_1.config)().get("enforceReadOnly", true)) {
+        return { kind: "disabled" };
+    }
+    const builtin = isBuiltinReadOnly(agent);
+    if (!base && builtin) {
+        const injected = (0, enforce_1.coldEnforcement)((0, enforce_1.enforcedConfigContent)(), agent);
+        if (injected.kind !== "enforced") {
+            return injected;
+        }
+    }
+    const agents = await (0, agents_1.listAgents)(cwd, base, agent);
+    const subagents = (0, enforce_1.readOnlySubagents)();
+    const judge = (name, isBuiltin) => (0, enforce_1.judgeReadOnly)(agents?.find((a) => a.name === name)?.permission, name, {
+        base,
+        builtin: isBuiltin,
+        subagents: name === "plan" || !isBuiltin ? subagents : [],
+        sessionTask: Boolean(base)
+    });
+    const own = judge(agent, builtin);
+    if (base || agent !== "plan" || own.kind !== "enforced") {
+        return own;
+    }
+    return subagents.map((s) => judge(s, true)).find((e) => e.kind === "reopened") ?? own;
+}
+const serverEnforcement = (base, cwd, agent) => readOnlyEvidence(base, cwd, agent);
+exports.serverEnforcement = serverEnforcement;
+function assertReadOnly(evidence) {
+    if (evidence?.kind !== "reopened") {
+        return;
+    }
+    const shown = evidence.leaks.slice(0, 5).map((l) => `\`${l}\``).join(", ") + (evidence.leaks.length > 5 ? ` and ${evidence.leaks.length - 5} more` : "");
+    core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] ${evidence.agent}: read-only rules reopened by config on ${evidence.base ?? "the CLI"} — ${evidence.leaks.join("; ")} — not sent`);
+    throw Object.assign(new Error(`Nothing was sent: OpenCode's configuration gives \`${evidence.agent}\` back what the bridge's read-only rules deny — ${shown}. ` +
+        `Such keys under \`agent.${evidence.agent}.permission\` (\`opencode.json\`, or \`.opencode/agents/${evidence.agent}.md\`, in the project or your global config) ` +
+        "outlast the bridge's rules. Remove them, or ask with `/dev`; `enforceReadOnly: false` turns read-only by permission off."), { code: "ETURNPERMISSION" });
+}
+async function sessionRules(base, cwd, readOnly) {
+    if (!readOnly) {
+        return exports.HEADLESS_PERMISSION;
+    }
+    const reach = await readOnlyReach(base, cwd);
+    if ((0, core_1.config)().get("enforceReadOnly", true)) {
+        const left = (0, enforce_1.readOnlySubagents)().filter((a) => !reach.allowed.includes(a));
+        const key = `${base}\0${left.join(",")}\0${reach.planEnforced}`;
+        if (left.length && !withheldLogged.has(key)) {
+            withheldLogged.add(key);
+            core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] ${left.join(", ")}: not read-only by permission on ${base}${reach.planEnforced ? " (it started before readOnlySubagents changed: restart it)" : ""} — left out of read-only turns`);
+        }
+    }
+    return turnPermission(true, reach.allowed);
+}
 const appliedRules = new Map();
-async function applyTurnPermission(base, cwd, sessionId, readOnly) {
-    const rules = turnPermission(readOnly);
-    const key = `${base}\0${sessionId}`;
+const TASK_ALLOW_ALL = { permission: "task", action: "allow", pattern: "*" };
+const glob = (pattern) => new RegExp("^" + pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".") + "$");
+async function devTaskRules(base, cwd, agent) {
+    const listed = (await (0, agents_1.listAgents)(cwd, base, agent))?.find((a) => a.name === agent)?.permission;
+    if (!listed) {
+        throw new Error(`Cannot restore task permissions for agent ${agent}: authoritative permission rules are unavailable.`);
+    }
+    const own = listed.filter((r) => glob(r.permission).test("task")).map((r) => ({ permission: "task", action: r.action, pattern: r.pattern }));
+    return own.some((r) => r.pattern === "*") ? own : [TASK_ALLOW_ALL, ...own];
+}
+async function carriesTaskRules(base, cwd, sessionId) {
+    try {
+        const session = await (0, net_1.httpGetJson)((0, net_1.withDirectory)(`${base}${(0, exports.sessionRoot)(sessionId)}`, cwd), 2000);
+        return Array.isArray(session?.permission) && session.permission.some((r) => (0, agents_1.isPermissionRule)(r) && r.permission === "task");
+    }
+    catch (error) {
+        if (isMissingSessionError(error)) {
+            throw error;
+        }
+        return true;
+    }
+}
+const isTurnPermissionError = (error) => error?.code === "ETURNPERMISSION";
+exports.isTurnPermissionError = isTurnPermissionError;
+async function applyTurnPermission(base, cwd, sessionId, readOnly, agent = "build") {
+    const rules = await sessionRules(base, cwd, readOnly);
+    const key = `${base}\0${cwd}\0${sessionId}`;
     const want = JSON.stringify(rules);
-    if (appliedRules.get(key) === want) {
+    const had = appliedRules.get(key);
+    if (had?.rules === want && (readOnly || !had.restoredAgent || had.restoredAgent === agent)) {
         return;
     }
     try {
-        await (0, net_1.httpRequestJson)("PATCH", (0, net_1.withDirectory)(`${base}${(0, exports.sessionRoot)(sessionId)}`, cwd), { permission: rules }, 3000);
-        appliedRules.set(key, want);
-        core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] ${sessionId}: ${readOnly ? "read-only subagents only" : "headless rules"}`);
+        const restore = !readOnly && (had?.restoredAgent !== undefined ||
+            (had !== undefined && had.rules !== want) ||
+            await carriesTaskRules(base, cwd, sessionId));
+        const sent = restore ? [...rules, ...(await devTaskRules(base, cwd, agent))] : rules;
+        await (0, net_1.httpRequestJson)("PATCH", (0, net_1.withDirectory)(`${base}${(0, exports.sessionRoot)(sessionId)}`, cwd), { permission: sent }, 3000);
+        appliedRules.set(key, { rules: want, restoredAgent: restore ? agent : undefined });
+        const none = readOnly && !rules.some((r) => r.permission === "task" && r.action === "allow");
+        core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] ${sessionId}: ${readOnly ? (none ? "no subagents" : "read-only subagents only") : restore ? `headless rules; subagents as \`${agent}\` allows them` : "headless rules"}`);
     }
     catch (error) {
         core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] could not set the turn's rules on ${sessionId}: ${error}`);
+        if (isMissingSessionError(error)) {
+            throw error;
+        }
+        const why = (error instanceof Error ? error.message : String(error)).replace(/\s+/g, " ").replace(/`/g, "'");
+        throw Object.assign(new Error(`Nothing was sent: this turn's permission rules could not be set on its OpenCode session (${(0, core_1.truncate)(why, 160)}). ` +
+            "Retry; if it fails again, `/new` starts a session that gets them at creation."), { code: "ETURNPERMISSION" });
     }
 }
-function noteTurnPermission(base, sessionId, readOnly) {
-    appliedRules.set(`${base}\0${sessionId}`, JSON.stringify(turnPermission(readOnly)));
+function noteTurnPermission(base, sessionId, rules, cwd = "") {
+    appliedRules.set(`${base}\0${cwd}\0${sessionId}`, { rules: JSON.stringify(rules) });
 }
 function isMissingSessionError(error) {
     const message = error instanceof Error ? error.message : String(error ?? "");
@@ -143,11 +253,12 @@ async function abortServerRun(base, sessionId, cwd, why) {
     return false;
 }
 async function createServerSession(base, cwd, title, readOnly = false) {
+    const permission = await sessionRules(base, cwd, readOnly);
     const created = await (0, net_1.httpRequestJson)("POST", (0, net_1.withDirectory)(`${base}/session`, cwd), {
         title: (0, core_1.truncate)(title, 60),
-        permission: turnPermission(readOnly)
+        permission
     }, 5000);
-    noteTurnPermission(base, created.id, readOnly);
+    noteTurnPermission(base, created.id, permission, cwd);
     return created.id;
 }
 async function sessionModel(base, cwd, sessionId) {
@@ -226,8 +337,5 @@ async function summarize(sessionId, cwd, model, asked) {
         core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] compact failed: ${message}`);
         return false;
     }
-}
-function resetCompactBackoff() {
-    compactServerFailedAt = 0;
 }
 //# sourceMappingURL=server-session.js.map

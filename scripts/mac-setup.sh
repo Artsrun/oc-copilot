@@ -112,7 +112,7 @@ cmd_set_executable() {
   require_macos
   code_bin="$(find_code)" || die "VS Code not found"
   oc="${1:-}"
-  if [ -z "$oc" ]; then oc="$(find_opencode)" || die "opencode not found — install with: brew install sst/tap/opencode  (or npm i -g opencode-ai)"; fi
+  if [ -z "$oc" ]; then oc="$(find_opencode)" || die "opencode not found — install OpenCode 1 with: npm i -g opencode-ai@1"; fi
   [ -x "$oc" ] || die "not executable: $oc"
   file="$(settings_file "$code_bin")"
   mkdir -p "$(dirname "$file")"
@@ -145,8 +145,13 @@ cmd_doctor() {
     ver="$("$oc" --version 2>/dev/null || true)"
     ok "opencode: $oc${ver:+ ($ver)}"
     [ "$real" != "$oc" ] && ok "  resolves to $real"
+    # OpenCode 2 is also `opencode`; the bridge drives 1.x only so far (README, OpenCode 2).
+    case "$ver" in
+      *v2.*|2.*) bad "  that is OpenCode 2 — keep a 1.x for the bridge: npm i --prefix ~/.opencode1 opencode-ai@1"
+                 bad "  then: ./scripts/mac-setup.sh set-executable ~/.opencode1/node_modules/.bin/opencode"; status=1 ;;
+    esac
   else
-    bad "opencode not found — brew install sst/tap/opencode  (or npm i -g opencode-ai)"; status=1
+    bad "opencode not found — npm i -g opencode-ai@1"; status=1
   fi
 
   # The Dock-launched PATH is launchd's, not your shell's.

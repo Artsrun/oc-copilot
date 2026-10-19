@@ -7,13 +7,17 @@ const metrics_1 = require("./metrics");
 const format_1 = require("./format");
 const context_1 = require("./context");
 const net_1 = require("./net");
+const server_session_1 = require("./server-session");
 const agents_1 = require("./agents");
+const enforce_1 = require("./enforce");
 const session_1 = require("./session");
 const runs_1 = require("./runs");
 const models_1 = require("./models");
 const chat_boot_1 = require("./chat-boot");
 const SUMMARY_WAIT_MS = 60000;
 const COMPACT_MIN_TOKENS = 20000;
+const COMPACT_CONTEXT_TOKENS = 60000;
+const COMPACT_CONTEXT_SHARE = 0.7;
 async function runTurn(t) {
     const live = await openTurn(t);
     try {
@@ -51,10 +55,14 @@ async function openTurn(t) {
     return { beat, linker, preRun, timed, attachUrl, opening };
 }
 async function prepareRun(t, live) {
-    const { response, token, settings, state, cwd, kind, agentLabel, isBuild, devAgent, task, useServer } = t;
+    const { response, token, settings, state, cwd, kind, agentLabel, isBuild, devAgent, task, useServer, executable } = t;
     const { beat, preRun, timed, attachUrl } = live;
     const busyPolicy = settings.get("busySessionPolicy", "abort");
     let sessionId = state.id;
+    const refused = (0, net_1.openCode1Refusal)(executable);
+    if (refused && !useServer) {
+        throw refused;
+    }
     if (attachUrl && !sessionId && !token.isCancellationRequested) {
         try {
             sessionId = await timed("session", () => (0, runs_1.createServerSession)(attachUrl, cwd, task, !isBuild));
@@ -64,6 +72,10 @@ async function prepareRun(t, live) {
         }
     }
     const guardBase = attachUrl ?? (useServer ? await (0, core_1.untilStop)(timed("server", () => (0, net_1.warmServer)(cwd, (text) => response.progress(text))), token) : undefined);
+    const refusedNow = guardBase ? undefined : (0, net_1.openCode1Refusal)(executable);
+    if (refusedNow) {
+        throw refusedNow;
+    }
     const versionNote = guardBase ? (0, net_1.versionNotice)(guardBase) : undefined;
     if (versionNote) {
         response.markdown(`> ${(0, followups_1.mark)("warn")} ${versionNote}\n\n`);
@@ -81,7 +93,10 @@ async function prepareRun(t, live) {
     if (summary && !token.isCancellationRequested) {
         beat.phase("Finishing this session's summary first");
         const began = Date.now();
-        const finished = await timed("summary", () => (0, core_1.untilStop)(Promise.race([summary.then(() => true), (0, core_1.delay)(SUMMARY_WAIT_MS).then(() => false)]), token));
+        let cap;
+        const capped = new Promise((resolve) => (cap = setTimeout(() => resolve(false), SUMMARY_WAIT_MS)));
+        const finished = await timed("summary", () => (0, core_1.untilStop)(Promise.race([summary.then(() => true), capped]), token));
+        clearTimeout(cap);
         summaryStillRunning = finished === false;
         core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] waited ${(0, core_1.secs)(Date.now() - began)} for the session summary${summaryStillRunning ? " — still running" : ""}`);
     }
@@ -226,12 +241,15 @@ async function runAttempts(t, live, ready) {
             metrics = await (serverTransport ? runs_1.runOpenCodeServer : runs_1.runOpenCode)(runOpts);
         }
         catch (error) {
-            if ((0, runs_1.isMissingSessionError)(error) && runOpts.sessionId && !token.isCancellationRequested) {
+            if ((0, server_session_1.isTurnPermissionError)(error)) {
+                throw error;
+            }
+            else if ((0, runs_1.isMissingSessionError)(error) && runOpts.sessionId && !token.isCancellationRequested) {
                 metrics = await (0, runs_1.restartAfterMissingSession)(runOpts, serverTransport, beat, response, cwd);
                 sessionRestarted = true;
                 rerun(true);
             }
-            else if (!serverTransport || token.isCancellationRequested) {
+            else if (!serverTransport || token.isCancellationRequested || (0, net_1.isNotOpenCode1)(error)) {
                 throw error;
             }
             else {
@@ -286,13 +304,12 @@ async function runAttempts(t, live, ready) {
     return { metrics, answer, streamed, sessionId, sessionRestarted, lastAttempt, firstModel };
 }
 async function finishTurn(t, live, outcome) {
-    const { response, token, settings, state, cwd, kind, agentLabel, task, settingPin, agentKey, chain, variantFor, continuing } = t;
+    const { response, token, settings, state, cwd, kind, agentLabel, task, settingPin, agentKey, chain, variantFor, continuing, executable } = t;
     const { beat, linker } = live;
     const { metrics, answer, streamed, sessionId, sessionRestarted, lastAttempt, firstModel } = outcome;
-    const autoCompact = settings.get("autoCompact", true);
-    const COMPACT_CONTEXT_TOKENS = 60000;
-    const COMPACT_CONTEXT_SHARE = 0.7;
+    const refusal = Boolean(metrics?.error) && (0, net_1.openCode1Refusal)(executable)?.message === metrics?.error;
     const compactEvery = settings.get("autoCompactEveryTurns", 8);
+    const bridgeCompacts = settings.get("autoCompact", true) && compactEvery > 0;
     (0, context_1.emitAnswerParts)(response, linker.flush());
     await beat.stop(token.isCancellationRequested);
     if (metrics) {
@@ -310,7 +327,7 @@ async function finishTurn(t, live, outcome) {
             const whole = (0, context_1.createFileLinker)(cwd);
             (0, context_1.emitAnswerParts)(response, [...whole.push(finalAnswer), ...whole.flush()]);
         }
-        else {
+        else if (!refusal) {
             response.markdown("_OpenCode returned no output._");
         }
     }
@@ -318,7 +335,7 @@ async function finishTurn(t, live, outcome) {
         core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] ${(0, followups_1.mark)("stop")} stopped by the user after ${(0, core_1.secs)(metrics.totalMs)}; the session is kept`);
     }
     if (metrics?.error) {
-        response.markdown(`\n\n> ${(0, followups_1.mark)("fail")} OpenCode reported an error: \`${metrics.error}\``);
+        response.markdown(refusal ? `\n\n> ${(0, followups_1.mark)("fail")} ${metrics.error}` : `\n\n> ${(0, followups_1.mark)("fail")} OpenCode reported an error: \`${metrics.error}\``);
     }
     const cutOff = Boolean(metrics && !metrics.error && !metrics.timedOut && !metrics.cancelled && metrics.finishReason === "length");
     if (cutOff) {
@@ -327,6 +344,10 @@ async function finishTurn(t, live, outcome) {
     if (metrics?.timedOut && metrics.stuckTool && !metrics.cancelled) {
         response.markdown(`\n\n> ${(0, followups_1.mark)("quiet")} Stopped while \`${metrics.stuckTool}\` was still running on the server; the run was aborted there too. ` +
             "Raise `toolQuietMs` if that tool is legitimately slow.");
+    }
+    const enforcedNote = !t.isBuild && metrics && !metrics.error && !metrics.cancelled ? (0, enforce_1.enforcedReadOnlyNotice)(metrics.readOnlyEnforcement) : undefined;
+    if (enforcedNote) {
+        response.markdown(`\n\n> ${(0, followups_1.mark)("step")} ${enforcedNote}`);
     }
     if (metrics) {
         (0, context_1.emitReferences)(response, (0, context_1.stepUris)(cwd, metrics.steps));
@@ -369,7 +390,7 @@ async function finishTurn(t, live, outcome) {
     const contextTokens = metrics?.context ?? 0;
     const sizedBy = answeredBy ?? state.lastModel;
     const contextLimit = sizedBy ? (0, core_1.own)((0, models_1.cachedModelInfo)(), sizedBy)?.context : undefined;
-    if (autoCompact &&
+    if (bridgeCompacts &&
         sessionId &&
         turns > 0 &&
         ((turns % compactEvery === 0 && (contextTokens === 0 || contextTokens >= COMPACT_MIN_TOKENS)) ||
@@ -378,7 +399,7 @@ async function finishTurn(t, live, outcome) {
         core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] compacting ${sessionId}: turn ${turns}, context ${contextTokens}` + (contextLimit ? ` of ${contextLimit}` : ""));
         void (0, runs_1.compactSession)(sessionId, cwd, answeredBy);
     }
-    const compactOffer = !autoCompact && sessionId && (contextTokens > COMPACT_CONTEXT_TOKENS || (contextLimit !== undefined && contextTokens >= contextLimit * COMPACT_CONTEXT_SHARE))
+    const compactOffer = !bridgeCompacts && sessionId && (contextTokens > COMPACT_CONTEXT_TOKENS || (contextLimit !== undefined && contextTokens >= contextLimit * COMPACT_CONTEXT_SHARE))
         ? contextLimit
             ? `${Math.round((100 * contextTokens) / contextLimit)}%`
             : `${Math.round(contextTokens / 1000)}k`
@@ -420,6 +441,7 @@ async function finishTurn(t, live, outcome) {
         }
     };
 }
+const notSent = (error) => (0, net_1.isNotOpenCode1)(error) || (0, net_1.isIdentityUnknown)(error) || (0, server_session_1.isTurnPermissionError)(error);
 async function failTurn(t, live, error) {
     const { response, token, state, cwd, kind, agentLabel, executable, replay } = t;
     const { beat, linker } = live;
@@ -437,11 +459,15 @@ async function failTurn(t, live, error) {
             "or set an absolute path in the `opencodeCopilotBridge.executable` setting.");
         response.button({ command: "opencodeCopilotBridge.diagnose", title: "Run diagnostics" });
     }
+    else if (notSent(error)) {
+        response.markdown(`\n\n> ${(0, followups_1.mark)("fail")} ${err.message}`);
+        response.button({ command: "opencodeCopilotBridge.showLog", title: "Show debug log" });
+    }
     else {
         const message = err instanceof Error ? err.message : String(error);
         response.markdown(`\n\nOpenCode failed to start: ${message}`);
         response.button({ command: "opencodeCopilotBridge.showLog", title: "Show debug log" });
     }
-    return { metadata: { kind, agent: agentLabel, error: String(err?.message ?? error), prompt: replay } };
+    return { metadata: { kind, agent: agentLabel, error: String(err?.message ?? error), prompt: replay, ...(notSent(error) ? { notSent: true } : {}) } };
 }
 //# sourceMappingURL=chat-turn.js.map

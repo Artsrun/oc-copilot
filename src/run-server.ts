@@ -7,7 +7,7 @@ import { connectSse, ensureServer, httpRequestJson, sessionIdFromEvent, withDire
 import { RunMetrics, RunOptions, StepRecord, TokenUsage, contextOf } from "./metrics";
 import { watchFamily } from "./asks";
 import { EmitCursor, addSubagents, applyPartDelta, applyServerPart, blankMetrics, noteModel, notePartKind, partDeltaOf, providerRetryOf } from "./run-steps";
-import { abortChildren, applyTurnPermission, noteTurnPermission, sessionPath, turnPermission } from "./server-session";
+import { abortChildren, applyTurnPermission, assertReadOnly, noteTurnPermission, serverEnforcement, sessionPath, sessionRules } from "./server-session";
 
 interface ServerMessageResponse {
     info?: {
@@ -52,16 +52,21 @@ export async function runOpenCodeServer(options: RunOptions): Promise<RunMetrics
     const scoped = (path: string): string => withDirectory(`${base}${path}`, options.cwd);
 
     const readOnly = Boolean(options.readOnly);
+    if (readOnly) {
+        metrics.readOnlyEnforcement = await serverEnforcement(base, options.cwd, options.agent ?? "plan");
+        assertReadOnly(metrics.readOnlyEnforcement);
+    }
     let sessionId = options.sessionId;
     if (!sessionId) {
+        const permission = await sessionRules(base, options.cwd, readOnly);
         const created = await httpRequestJson<{ id: string }>("POST", scoped("/session"), {
             title: truncate(options.task, 60),
-            permission: turnPermission(readOnly)
+            permission
         });
         sessionId = created.id;
-        noteTurnPermission(base, sessionId, readOnly);
+        noteTurnPermission(base, sessionId, permission, options.cwd);
     } else {
-        await applyTurnPermission(base, options.cwd, sessionId, readOnly);
+        await applyTurnPermission(base, options.cwd, sessionId, readOnly, options.agent);
     }
     metrics.sessionId = sessionId;
     const mine = sessionId;
@@ -259,12 +264,10 @@ export async function runOpenCodeServer(options: RunOptions): Promise<RunMetrics
             metrics.cost += resp.info.cost ?? 0;
         }
 
+        // Each part that adds anything marks the first byte (run-steps markFirstByte).
         (resp.parts ?? []).forEach((part, i) => {
             applyServerPart(part, metrics, options, started, emitted, tools, cursor, i + 1);
         });
-        if (metrics.firstByteMs === undefined && (metrics.hadOutput || metrics.reasoning || metrics.steps.length)) {
-            metrics.firstByteMs = Date.now() - started;
-        }
 
         metrics.totalMs = Date.now() - started;
         return metrics;

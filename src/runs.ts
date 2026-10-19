@@ -15,7 +15,7 @@ import { runOpenCodeServer } from "./run-server";
 
 export { runOpenCode } from "./run-cli";
 export { runOpenCodeServer } from "./run-server";
-export { applyServerPart, emitKeyedDelta, noteTask, partDeltaOf, providerRetryOf, stepDetail } from "./run-steps";
+export { emitKeyedDelta, noteTask, partDeltaOf, providerRetryOf, stepDetail } from "./run-steps";
 export { setReplyConfirmWait } from "./asks";
 export {
     HEADLESS_PERMISSION,
@@ -28,9 +28,11 @@ export {
     isMissingSessionRun,
     safeSessionId,
     sessionBusy,
-    sessionModel,
     sessionPath,
     sessionRoot,
+    assertReadOnly,
+    readOnlyEvidence,
+    readOnlyReach,
     turnPermission
 } from "./server-session";
 
