@@ -5,26 +5,70 @@ import { ChildProcessWithoutNullStreams } from "node:child_process";
 import { debugLine, logChannel, secs, stamp, truncate } from "./core";
 import { mark } from "./followups";
 import { killTree, spawnOpenCode } from "./proc";
-import { connectSse, sessionIdFromEvent } from "./net";
-import { RunMetrics, RunOptions, StepRecord, TokenUsage, contextOf, stepOutput, toolFilePath } from "./metrics";
+import { connectSse, ensureCliIdentity, markNotOpenCode1, sessionIdFromEvent } from "./net";
+import { ReadOnlyEnforcement, RunMetrics, RunOptions, StepRecord, TokenUsage, contextOf, stepOutput, toolFilePath } from "./metrics";
 import { FamilyWatch, watchFamily } from "./asks";
 import { addSubagents, applyPartDelta, blankMetrics, markFirstByte, noteModel, notePartKind, noteTask, partDeltaOf, providerRetryOf, stepDetail } from "./run-steps";
-import { applyTurnPermission, safeSessionId } from "./server-session";
+import { applyTurnPermission, assertReadOnly, readOnlyEvidence, safeSessionId } from "./server-session";
 
 // Enough for any real stack trace or OpenCode error dump; small enough that a
 // process stuck printing cannot grow this string without limit.
 const STDERR_CAP = 256 * 1024;
 
+// A non-zero exit that sent no error event and no text: stderr names why (an
+// unknown model, a bad flag), else the code is all there is. OpenCode 2 rejects
+// the bridge's flags as `Unrecognized flag: --attach in command opencode run`
+// (2.0.27, REFS).
+function exitProblem(executable: string, stderr: string, code: number): string {
+    const flag = stderr.match(/Unrecognized flag: (--[\w-]+) in command opencode\b/);
+    if (flag) {
+        return markNotOpenCode1(executable, `it rejects \`${flag[1]}\``).message;
+    }
+    const line = stderr
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .find((l) => l && !/^errors?:?$/i.test(l) && /error|unrecognized|not recognized|unknown|not found|denied|failed|cannot|invalid/i.test(l));
+    return line ? truncate(line, 200) : `opencode exited with code ${code}`;
+}
+
 // An attached run gets this turn's permission rules first (read-only turns:
 // read-only subagents only); a cold run has no server to set them on.
 export async function runOpenCode(options: RunOptions): Promise<RunMetrics> {
-    if (options.attachUrl && options.sessionId && !options.token?.isCancellationRequested) {
-        await applyTurnPermission(options.attachUrl, options.cwd, options.sessionId, Boolean(options.readOnly));
+    if (options.token?.isCancellationRequested) {
+        return blankMetrics(options.sessionId);
     }
-    return runCli(options);
+    const ready = await untilStopped(ensureCliIdentity(options.executable, options.cwd).then(() => true), options);
+    if (!ready || options.token?.isCancellationRequested) {
+        return blankMetrics(options.sessionId);
+    }
+    if (options.attachUrl && options.sessionId && !options.token?.isCancellationRequested) {
+        await applyTurnPermission(options.attachUrl, options.cwd, options.sessionId, Boolean(options.readOnly), options.agent);
+    }
+    // Cold: `opencode agent list` (1.4 s, cached a minute), raced against Stop.
+    const evidence = options.readOnly
+        ? await untilStopped(readOnlyEvidence(options.attachUrl, options.cwd, options.agent ?? "plan"), options)
+        : undefined;
+    if (options.token?.isCancellationRequested) {
+        return blankMetrics(options.sessionId);
+    }
+    assertReadOnly(evidence);
+    return runCli(options, evidence);
 }
 
-function runCli(options: RunOptions): Promise<RunMetrics> {
+/** `work`, or undefined once Stop is pressed (the work is left to finish or time out). */
+async function untilStopped<T>(work: Promise<T>, options: RunOptions): Promise<T | undefined> {
+    let cancel: { dispose(): void } | undefined;
+    const stopped = new Promise<undefined>((resolve) => {
+        cancel = options.token?.onCancellationRequested(() => resolve(undefined));
+    });
+    try {
+        return await Promise.race([work, stopped]);
+    } finally {
+        cancel?.dispose();
+    }
+}
+
+function runCli(options: RunOptions, evidence?: ReadOnlyEnforcement): Promise<RunMetrics> {
     return new Promise((resolve, reject) => {
         const args = ["run"];
         // Attach to the warm server instead of booting OpenCode per turn; same
@@ -77,6 +121,7 @@ function runCli(options: RunOptions): Promise<RunMetrics> {
         child.stdin?.end();
 
         const metrics: RunMetrics = blankMetrics(options.sessionId);
+        metrics.readOnlyEnforcement = evidence;
 
         let buffer = "";
         let settled = false;
@@ -246,7 +291,6 @@ function runCli(options: RunOptions): Promise<RunMetrics> {
                     const text = (part?.text as string) ?? "";
                     const rest = text.slice(wholePart("r", part, text));
                     if (rest) {
-                        metrics.reasoning += (metrics.reasoning && rest === text ? "\n" : "") + rest;
                         options.onReasoning?.(rest);
                     }
                     if (text) {
@@ -377,6 +421,9 @@ function runCli(options: RunOptions): Promise<RunMetrics> {
             }
             metrics.totalMs = Date.now() - started;
             metrics.timedOut = timedOut;
+            if (!timedOut && metrics.exitCode && !metrics.error && !metrics.hadOutput) {
+                metrics.error = exitProblem(options.executable, metrics.stderr ?? "", metrics.exitCode);
+            }
             // Any stop (idle, tool-quiet, wall clock) while the server still
             // reported a tool running names it: that decides handoff vs not.
             if (timedOut && !metrics.stuckTool && runningTools.size > 0) {

@@ -4,6 +4,7 @@ import * as vscode from "vscode";
 import { logChannel, secs, stamp, truncate } from "./core";
 import { RunMetrics, emptyTokens, finalizeStepStatuses } from "./metrics";
 import { scrubLeakedContext, stepsLine } from "./format";
+import { enforcedReadOnlyNotice } from "./enforce";
 import { abortServerRun, createServerSession, runOpenCode } from "./runs";
 import { mark } from "./followups";
 import { cachedModelInfo, effortFor } from "./models";
@@ -20,7 +21,7 @@ import { cachedModelInfo, effortFor } from "./models";
 export interface LaneSpec {
     task: string;
     model?: string;
-    /** `a:<agent>`: confirmed against OpenCode's list (chat.ts), else `error`. */
+    /** `a:<agent>`: confirmed against OpenCode's list (chat-parallel.ts), else `error`. */
     agent?: string;
     error?: string;
 }
@@ -143,8 +144,7 @@ export async function runParallelLanes(opts: {
                 tokens: emptyTokens(),
                 cost: 0,
                 hadOutput: false,
-                sessionId: undefined,
-                reasoning: ""
+                sessionId: undefined
             };
             if (specs[i].error) {
                 blank.error = specs[i].error;
@@ -219,14 +219,23 @@ export async function runParallelLanes(opts: {
     const totalMs = Math.max(...results.map((r) => r.metrics.totalMs), 0);
     const serialMs = results.reduce((n, r) => n + r.metrics.totalMs, 0);
     const cost = results.reduce((n, r) => n + r.metrics.cost, 0);
+    const laneEnforcement = !opts.write
+        ? results.map((r, i) => (!specs[i].error ? r.metrics.readOnlyEnforcement : undefined)).filter((e) => Boolean(e))
+        : [];
+    const enforcementNotice = enforcedReadOnlyNotice(
+        laneEnforcement.find((e) => e?.kind === "unverified") ?? laneEnforcement.find((e) => e?.kind === "enforced")
+    );
     opts.response.markdown(
+        (enforcementNotice ? `\n\n> ${mark("step")} ${enforcementNotice}` : "") +
         `\n\n---\n\n**${ok}/${results.length} lanes returned.** ` +
         `Wall clock ${secs(totalMs)} vs ${secs(serialMs)} sequential` +
         (cost > 0 ? ` · $${cost.toFixed(4)}` : "") +
         ".\n\nLanes ran in isolated sessions, so nothing above is in your ongoing " +
-        // The Merge and Compare chips need two answers (followupsFor); name them only then.
+        // The Merge and Compare chips need two answers (followupsFor); name them
+        // only then, and say when they keep only the first LANE_COUNT_CAP.
         (results.filter((r, i) => !specs[i].error && r.answer.trim()).length >= 2
-            ? `conversation. ${sameTask ? "**Compare** or **Merge lanes**" : "**Merge lanes**"} below brings their answers into it.`
+            ? `conversation. ${sameTask ? "**Compare** or **Merge lanes**" : "**Merge lanes**"} below brings ` +
+            `${results.length > LANE_COUNT_CAP ? `the first ${LANE_COUNT_CAP} lanes' answers` : "their answers"} into it.`
             : "conversation. Paste the parts you want to keep into a normal `@opencode` turn.")
     );
 
@@ -241,11 +250,10 @@ export async function runParallelLanes(opts: {
     }));
 }
 
-
 // ---------------------------------------------------------------------------
 // The lane answers a Merge-lanes chip needs. A chip carries only a prompt and a
 // command, and the turn metadata is persisted by the host, so neither may hold
-// the answers: they stay here, behind an id, bounded like followupStore above.
+// the answers: they stay here, behind an id, bounded like ./chips' followupStore.
 // A window reload empties this, and the merge turn says so (./chat).
 
 export const LANE_STORE_CAP = 8;

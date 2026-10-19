@@ -42,6 +42,7 @@
         "failedLong": ["RETRY", "CONTINUE", "NEW"],
         "failedNet":  ["RETRY", "PING"],
         "failedModel": ["RETRY", "MODEL"],
+        "failedEarly": ["RETRY", "NEW"],
         "failedStuck": ["SKIP_STUCK", "CONTINUE"],
         "cancelled":  ["CONTINUE"],
         "cancelledEarly": ["RETRY"]

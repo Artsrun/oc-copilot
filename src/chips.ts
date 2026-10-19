@@ -139,7 +139,6 @@ export function resetChipBackoff(): void {
     void extensionContext?.globalState?.update(BACKOFF_KEY, undefined);
 }
 
-
 // ---------------------------------------------------------------------------
 // Follow-up chips, a pure function of the turn's metadata: the one channel for
 // "the next message". Words and cases live in ./followups.json. At most three:
@@ -149,8 +148,9 @@ export function resetChipBackoff(): void {
 const stripKind = (text: string): string => text.replace(/^\/(?:dev|plan)\b\s*/i, "");
 
 // A failure that looks like the bridge could not reach OpenCode at all gets
-// Ping (check the connection) instead of Continue.
-const UNREACHABLE = /ENOENT|ECONNREFUSED|ECONNRESET|EAI_AGAIN|ETIMEDOUT|not found on PATH|could not be started|unreachable|socket hang up|fetch failed/i;
+// Ping (check the connection) instead of Continue — an `opencode` that is not
+// OpenCode 1, or that `--version` could not confirm, included (/ping names its version).
+const UNREACHABLE = /ENOENT|ECONNREFUSED|ECONNRESET|EAI_AGAIN|ETIMEDOUT|not found on PATH|could not be started|unreachable|socket hang up|fetch failed|not OpenCode 1|not confirmed as OpenCode 1/i;
 // A failure the model or its provider caused — a rate limit, a spent quota, an
 // overload, a key or a model id it refused — gets Pick model: Continue would
 // meet the same wall.
@@ -169,6 +169,9 @@ export function outcomeOf(metadata: Record<string, unknown>): Outcome {
         case "clarify":
             return "clarify";
         case "parallel":
+            if (metadata.notSent === true && typeof metadata.error === "string" && metadata.error) {
+                break;
+            }
             // Lanes ran in isolated sessions that are already closed; a turn
             // that ran none offers the composer.
             return metadata.lanesMissing ? "lanesMissing" : "parallel";
@@ -180,6 +183,10 @@ export function outcomeOf(metadata: Record<string, unknown>): Outcome {
     switch (true) {
         case Boolean(error) && UNREACHABLE.test(error):
             return "failedNet";
+        // Refused before the message reached OpenCode (its permission rules
+        // could not be set): there is nothing to continue.
+        case Boolean(error) && metadata.notSent === true:
+            return "failedEarly";
         case Boolean(error) && MODEL_TROUBLE.test(error):
             return "failedModel";
         // Stopped while a tool still ran: that tool, not the session, is the problem.
@@ -223,11 +230,17 @@ export function followupsFor(metadata: Record<string, unknown>): vscode.ChatFoll
         case "failedLong":
         case "failedNet":
         case "failedModel":
+        case "failedEarly":
         case "cancelledEarly": {
             // A launch failure carries the user's words, and there may be no
             // session to "try again" in — so Retry resends them.
             const again = own ? stripKind(own) : "";
-            return chips(CASES[outcome], again ? { RETRY: again } : {});
+            return chips(CASES[outcome], again ? { RETRY: again } : {}).map((chip) => {
+                if (metadata.kind === "parallel" && chip.command === kind && chip.prompt === again) {
+                    chip.command = "parallel";
+                }
+                return chip;
+            });
         }
         case "failedStuck": {
             const tool = typeof metadata.stuckTool === "string" && metadata.stuckTool ? metadata.stuckTool : "tool";
@@ -306,7 +319,6 @@ export function followupsFor(metadata: Record<string, unknown>): vscode.ChatFoll
             return chips(CASES[outcome]);
     }
 }
-
 
 // Chips from what the run recorded, not from its words: structured, so they
 // outrank the answer-derived ones. Metadata only carries the few fields they

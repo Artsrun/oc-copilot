@@ -9,6 +9,7 @@ const agents_1 = require("./agents");
 const models_1 = require("./models");
 const chat_boot_1 = require("./chat-boot");
 const compose_1 = require("./compose");
+const runs_1 = require("./runs");
 async function runParallelTurn(p) {
     const { request, response, token, settings, cwd, autoLanes, parsed, resolveModel, transport, attachDev, settingPin, executable, timeoutMs, pure, devAgent, effortAsked } = p;
     const laneText = autoLanes
@@ -66,11 +67,32 @@ async function runParallelTurn(p) {
         return { metadata: { kind: "parallel", lanes: lanes.length, cancelled: true } };
     }
     const write = settings.get("parallelAllowWrite", false);
+    const refusedResult = (message) => ({
+        metadata: { kind: "parallel", lanes: lanes.length, error: message, notSent: true, prompt: autoLanes ? laneText : request.prompt, laneWrite: write }
+    });
     if (write) {
         response.markdown("> " + (0, followups_1.mark)("warn") + " `parallelAllowWrite` is on. Concurrent editing agents in one checkout can " +
             "overwrite each other — prefer the git-worktree scripts for parallel edits.\n");
     }
     const laneUrl = transport === "server" || attachDev ? await (0, core_1.untilStop)((0, net_1.warmServer)(cwd, (text) => response.progress(text)), token) : undefined;
+    const refused = (0, net_1.openCode1Refusal)(executable);
+    if (refused) {
+        response.markdown(`> ${(0, followups_1.mark)("fail")} ${refused.message}`);
+        return refusedResult(refused.message);
+    }
+    let identityError;
+    const identity = await (0, core_1.untilStop)((0, net_1.ensureCliIdentity)(executable, cwd).then(() => true, (error) => {
+        identityError = error;
+        return false;
+    }), token);
+    if (identity === false) {
+        const message = identityError instanceof Error ? identityError.message : String(identityError);
+        response.markdown(`> ${(0, followups_1.mark)("fail")} ${message}`);
+        return refusedResult(message);
+    }
+    if (token.isCancellationRequested) {
+        return { metadata: { kind: "parallel", lanes: lanes.length, cancelled: true } };
+    }
     const lanePlan = write ? undefined : await (0, core_1.untilStop)((0, agents_1.resolvePlanAgent)(cwd, laneUrl), token);
     for (const name of [...new Set(lanes.filter((l) => l.agent && !l.error).map((l) => l.agent))]) {
         if (token.isCancellationRequested) {
@@ -86,10 +108,35 @@ async function runParallelTurn(p) {
     if (token.isCancellationRequested) {
         return { metadata: { kind: "parallel", lanes: lanes.length, cancelled: true } };
     }
-    const laneCtx = (0, context_1.buildChatContext)(request, cwd, { inline: p.inline });
+    if (!write) {
+        const defaultAgent = lanePlan?.agent ?? "plan";
+        for (const agent of [...new Set(lanes.filter((l) => !l.error).map((l) => l.agent || defaultAgent))]) {
+            const evidence = await (0, core_1.untilStop)((0, runs_1.readOnlyEvidence)(laneUrl, cwd, agent), token);
+            if (token.isCancellationRequested) {
+                return { metadata: { kind: "parallel", lanes: lanes.length, cancelled: true } };
+            }
+            try {
+                (0, runs_1.assertReadOnly)(evidence);
+            }
+            catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                response.markdown(`> ${(0, followups_1.mark)("fail")} ${message}`);
+                return refusedResult(message);
+            }
+        }
+    }
+    const laneCtx = (0, context_1.buildChatContext)(request, cwd, { inline: p.inline, readOnly: !write });
     (0, context_1.emitReferences)(response, laneCtx.uris);
     if (laneCtx.uris.length) {
         core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] context for ${lanes.length} lanes: ${laneCtx.uris.map((u) => (0, core_1.relTo)(cwd, u)).join(", ")}`);
+    }
+    const laneReferences = (0, context_1.referenceLogLine)(laneCtx.notes);
+    if (laneReferences) {
+        core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] ${laneReferences}`);
+    }
+    const laneContextNote = (0, context_1.contextNotice)(laneCtx.notes, !write);
+    if (laneContextNote) {
+        response.markdown(`> ${(0, followups_1.mark)("warn")} ${laneContextNote}\n\n`);
     }
     const laneNote = (0, agents_1.planAgentNotice)(lanePlan, cwd);
     if (laneNote) {

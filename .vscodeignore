@@ -25,8 +25,8 @@ docs/**
 AGENTS.md
 REFS.md
 # The release history lives here, not in the readme. The readme ships inside
-# the .vsix and is installed on every machine; the history is ~29 KB of it and
-# nobody reads 0.0.13's notes from an installed extension. Keep BOTH out of the
+# the .vsix and is installed on every machine; the history runs to tens of KB
+# and nobody reads 0.0.13's notes from an installed extension. Keep BOTH out of the
 # package and keep the readme's changelog section to the last five releases.
 CHANGELOG.md
 
@@ -47,6 +47,10 @@ scripts/probe-opencode-pwd.js
 scripts/probe-server-adoption.js
 scripts/probe-plan-subagents.js
 scripts/probe-subtask-lanes.js
+scripts/probe-readonly.js
+scripts/probe-acp.js
+scripts/probe-model.js
+scripts/update.js
 scripts/verify-chat-output.js
 # macOS helper for repo users (install/doctor); not needed inside the .vsix
 scripts/mac-setup.sh

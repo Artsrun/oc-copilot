@@ -42,10 +42,6 @@ function applyPartDelta(d, metrics, options, started, emitted, closed) {
         options.onText?.(d.delta, d.part);
         return;
     }
-    if (!before && metrics.reasoning && !metrics.reasoning.endsWith("\n")) {
-        metrics.reasoning += "\n";
-    }
-    metrics.reasoning += d.delta;
     options.onReasoning?.(d.delta);
 }
 function providerRetryOf(ev, sessionId, now = Date.now()) {
@@ -86,8 +82,7 @@ const blankMetrics = (sessionId) => ({
     tokens: (0, metrics_1.emptyTokens)(),
     cost: 0,
     hadOutput: false,
-    sessionId,
-    reasoning: ""
+    sessionId
 });
 exports.blankMetrics = blankMetrics;
 function noteModel(ev, metrics) {
@@ -176,7 +171,6 @@ function applyServerPart(part, metrics, options, started, emitted, tools, cursor
             return;
         }
         markFirstByte(metrics, started);
-        metrics.reasoning += (metrics.reasoning && !metrics.reasoning.endsWith("\n") ? "\n" : "") + delta;
         options.onReasoning?.(delta);
         return;
     }

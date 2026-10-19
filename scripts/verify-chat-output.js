@@ -77,19 +77,36 @@ function sweepStaleTemp() {
 }
 sweepStaleTemp();
 
+const FAKE_AGENT_LIST =
+    "if (process.argv.includes('agent') && process.argv.includes('list')) {\n" +
+    "  let occ = {}; try { occ = JSON.parse(process.env.OPENCODE_CONFIG_CONTENT || '{}') || {}; } catch {}\n" +
+    "  const rules = (perm) => Object.entries(perm || {}).flatMap(([k, v]) => typeof v === 'string' ? [{ permission: k, pattern: '*', action: v }] : Object.entries(v || {}).map(([p, a]) => ({ permission: k, pattern: p, action: a })));\n" +
+    "  const out = [['build', 'primary'], ['plan', 'primary'], ['explore', 'subagent'], ['general', 'subagent']].map(([name, mode]) =>\n" +
+    "    name + ' (' + mode + ')\\n  ' + JSON.stringify([{ permission: '*', pattern: '*', action: 'allow' }, ...rules(occ.agent?.[name]?.permission), { permission: 'external_directory', pattern: '/tmp/ocb-fake-data/opencode/tool-output/*', action: 'allow' }], null, 2) + '\\n');\n" +
+    "  process.stdout.write(out.join(''));\n" +
+    "  process.exit(0);\n" +
+    "}\n";
+
 function writeFake(name, events, extraJs) {
     const file = path.join(work, name);
     const argvFile = file + ".argv";
     const body =
         "#!/usr/bin/env node\n" +
         "const fs = require('fs');\n" +
+        // 0.0.219: a cold read-only turn lists agents first (`opencode agent list`).
+        // Answer as OpenCode does — defaults, then the injected config's rules in
+        // key order, then the tool-output allow it appends (1.19.0 measured) —
+        // before the argv record, so lastArgv stays the run. Fakes that script
+        // their own listing (PA) keep it.
+        ((extraJs || "").includes("'agent'") ? "" : FAKE_AGENT_LIST) +
         "fs.writeFileSync(" +
         JSON.stringify(argvFile) +
         ", JSON.stringify(process.argv));\n" +
         // v183: what the real CLI resolves its directory from (PWD first).
         "fs.writeFileSync(" +
         JSON.stringify(file + ".env") +
-        ", JSON.stringify({ pwd: process.env.PWD ?? null, cwd: process.cwd() }));\n" +
+        ", JSON.stringify({ pwd: process.env.PWD ?? null, cwd: process.cwd(), occ: process.env.OPENCODE_CONFIG_CONTENT ?? null }));\n" +
+        ((extraJs || "").includes("--version") ? "" : "if (process.argv.includes('--version')) { process.stdout.write('1.19.0\\n'); process.exit(0); }\n") +
         "const events = " +
         JSON.stringify(events) +
         ";\nfor (const ev of events) process.stdout.write(JSON.stringify(ev) + '\\n');\n" +
@@ -202,6 +219,7 @@ const settings = {
     model: "",
     timeoutMs: 30000,
     pure: false,
+    gitScan: true,
     transport: "cli",
     autoCompact: false,
     autoCompactEveryTurns: 8,
@@ -226,6 +244,8 @@ const settings = {
     devAgent: "build",
     planAgent: "plan",
     readOnlySubagents: ["explore"],
+    enforceReadOnly: true,
+    readOnlyTools: ["git-scan_gitScan"],
     attachDevToServer: true,
     prewarmServer: true,
     toolQuietMs: 600000,
@@ -239,13 +259,15 @@ const repoDir = path.join(__dirname, "..");
 let quickPickScript;
 const quickPicksShown = [];
 let lastStatusItem;
-const webviewPanels = [];
 const registeredCommands = new Map();
 const logLines = [];
+let gitScanProvider;
+const workspaceEvents = { trust: [], folders: [], configuration: [] };
+const event210 = (list) => (cb) => (list.push(cb), { dispose() {} });
 
 const vscodeStub = {
     workspace: {
-        workspaceFolders: [{ uri: { fsPath: work }, name: path.basename(work), index: 0 }],
+        workspaceFolders: [{ uri: { fsPath: work, scheme: "file" }, name: path.basename(work), index: 0 }],
         getWorkspaceFolder: (uri) =>
             (vscodeStub.workspace.workspaceFolders || []).find(
                 (f) => uri && uri.fsPath && uri.fsPath.startsWith(f.uri.fsPath)
@@ -257,19 +279,20 @@ const vscodeStub = {
         fs: {
             createDirectory: async (uri) => fs.mkdirSync(uri.fsPath, { recursive: true }),
             readFile: async (uri) => fs.readFileSync(uri.fsPath),
-            writeFile: async (uri, buf) => fs.writeFileSync(uri.fsPath, buf),
-            readDirectory: async (uri) => {
-                if (!fs.existsSync(uri.fsPath)) return [];
-                return fs
-                    .readdirSync(uri.fsPath, { withFileTypes: true })
-                    .map((de) => [de.name, de.isDirectory() ? 2 : 1]);
-            },
-            stat: async (uri) => {
-                const st = fs.statSync(uri.fsPath);
-                return { mtime: st.mtimeMs ?? st.mtime * 1000, size: st.size };
-            },
-            delete: async (uri) => fs.rmSync(uri.fsPath, { force: true })
+            writeFile: async (uri, buf) => fs.writeFileSync(uri.fsPath, buf)
         }
+    },
+    lm: { registerMcpServerDefinitionProvider: (id, provider) => {
+        if (id === "opencodeCopilotBridge.gitScan") gitScanProvider = provider;
+        return { dispose() {} };
+    } },
+    McpStdioServerDefinition: class {
+        constructor(label, command, args, env, version) { Object.assign(this, { label, command, args, env, version }); }
+    },
+    EventEmitter: class {
+        constructor() { this.listeners = []; this.event = event210(this.listeners); }
+        fire() { for (const cb of this.listeners) cb(); }
+        dispose() { this.listeners = []; }
     },
     window: {
         activeTextEditor: undefined,
@@ -290,7 +313,6 @@ const vscodeStub = {
         showWarningMessage() { },
         showErrorMessage() { },
         showQuickPick: async () => undefined,
-        showInputBox: async () => undefined,
         // v190: a scriptable createQuickPick. `quickPickScript(qp)` drives it
         // after show() (set value, activeItems, fire accept/button/hide); by
         // default it is dismissed, as Esc would.
@@ -312,30 +334,7 @@ const vscodeStub = {
             qp.onDidHide = on(qp._hide);
             return qp;
         },
-        withProgress: async (_options, task) => task({ report() { } }, { isCancellationRequested: false }),
-        // Panels are kept so a check can read back what the extension decorated
-        // them with; a returned object nobody holds proves nothing.
-        createWebviewPanel: (viewType, title) => {
-            const disposeListeners = [];
-            const panel = {
-                viewType,
-                title,
-                iconPath: undefined,
-                messages: [],
-                webview: {
-                    html: "",
-                    cspSource: "vscode-webview:",
-                    postMessage: async (m) => (panel.messages.push(m), true)
-                },
-                reveal() { },
-                onDidDispose: (cb) => (disposeListeners.push(cb), { dispose() { } }),
-                dispose() {
-                    for (const cb of disposeListeners) cb();
-                }
-            };
-            webviewPanels.push(panel);
-            return panel;
-        }
+        withProgress: async (_options, task) => task({ report() { } }, { isCancellationRequested: false })
     },
     chat: {
         // v186: two participants (panel + inline). Keyed by id so the inline
@@ -367,16 +366,15 @@ const vscodeStub = {
     Location: class { constructor(uri, range) { this.uri = uri; this.range = range; } },
     MarkdownString: class { constructor(v) { this.value = v; } },
     ChatResponseReferencePart: class { constructor(value) { this.value = value; } },
-    QuickPickItemKind: { Separator: -1, Default: 0 },
     version: "1.136.0",
     env: { clipboard: { writeText: async () => { } }, appName: "Code", remoteName: undefined, uiKind: 1 },
     StatusBarAlignment: { Left: 1, Right: 2 },
-    FileType: { Unknown: 0, File: 1, Directory: 2, Symlink: 64 },
     ConfigurationTarget: { Global: 1, Workspace: 2, WorkspaceFolder: 3 },
-    ProgressLocation: { Notification: 15 },
-    ViewColumn: { Beside: 2 }
+    ProgressLocation: { Notification: 15 }
 };
-vscodeStub.workspace.onDidChangeConfiguration = () => ({ dispose() { } });
+vscodeStub.workspace.onDidChangeConfiguration = event210(workspaceEvents.configuration);
+vscodeStub.workspace.onDidGrantWorkspaceTrust = event210(workspaceEvents.trust);
+vscodeStub.workspace.onDidChangeWorkspaceFolders = event210(workspaceEvents.folders);
 
 const originalLoad = Module._load;
 Module._load = function (request, ...rest) {
@@ -391,6 +389,8 @@ ext.activate({
     subscriptions: [],
     extensionUri: { fsPath: repoDir, scheme: "file", toString: () => repoDir },
     extensionPath: repoDir,
+    globalStorageUri: vscodeStub.Uri.file(path.join(work, "global-storage")),
+    extension: { packageJSON: JSON.parse(fs.readFileSync(path.join(repoDir, "package.json"), "utf8")) },
     workspaceState: { get: (k) => memento.get(k), update: async (k, v) => void memento.set(k, v) },
     globalState: { get: (k) => globalMemento.get(k), update: async (k, v) => void globalMemento.set(k, v) }
 });
@@ -641,6 +641,11 @@ function collectConfigProperties(configuration) {
     add("A chat answer leads", chat.trimStart().startsWith("The redirect loop"));
     add("A chat has no mermaid", !chat.includes("```mermaid"));
     add("A chat hides raw thought", !chat.includes("Thinking about the redirect bug"));
+    // v215: the first enforced plan turn of an install says what changed, after the answer.
+    add(
+        "RE the first enforced plan turn says plan turns are read-only by permission now, after the answer",
+        /read-only by permission now/.test(chat) && chat.indexOf("read-only by permission now") > chat.indexOf("stale cookie")
+    );
     add("A a turn writes nothing into the workspace", !fs.existsSync(path.join(work, "sessions")));
 
     settings.executable = partial;
@@ -685,6 +690,17 @@ function collectConfigProperties(configuration) {
     // behaviour gets its own check below.
     await global.__handler({ prompt: "resolve a bare executable name" }, {}, c2.response, c2.token);
     add("C bare executable name launches", c2.chatMarkdown.join("").includes("bare-ok"));
+    // `~/…` in `executable` is the home folder (0.0.212): where the README puts
+    // a 1.x kept next to OpenCode 2. A spawn does not expand it.
+    const tildeHome = fs.mkdtempSync(path.join(os.tmpdir(), "ocb-home-"));
+    const homeSaved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+    Object.assign(process.env, { HOME: tildeHome, USERPROFILE: tildeHome });
+    const tildeTarget = ext.__test.resolveExecutable("~/.opencode1/node_modules/.bin/opencode").target;
+    for (const [k, v] of Object.entries(homeSaved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+    }
+    add("C `~/` in executable is the home folder", tildeTarget === path.join(tildeHome, ".opencode1", "node_modules", ".bin", "opencode"));
 
     // D: only last in-flight step is timeout
     settings.executable = inflight;
@@ -755,6 +771,8 @@ function collectConfigProperties(configuration) {
     await global.__handler({ prompt: "", command: "help" }, {}, iWs.response, iWs.token);
     settings.sessionScope = "thread";
     add("I …and one per folder under sessionScope: workspace", /one ongoing session per folder\b/.test(iWs.chatMarkdown.join("")) && !/per chat\b/.test(iWs.chatMarkdown.join("")));
+    // v212: /help is the in-chat reference; `effort:` / `e:` were in the README only.
+    add("I /help names every inline prefix, effort included", ["`plan:`", "`dev:`", "`par:`", "`model:", "`m:", "`effort:", "`e:"].every((p) => helpChat.includes(p)));
 
     const i2 = stream();
     await global.__handler({ prompt: "", command: "new" }, {}, i2.response, i2.token);
@@ -821,7 +839,383 @@ function collectConfigProperties(configuration) {
     );
     const sentJ2 = (lastArgv("fake-ok.js").slice(-1)[0]) || "";
     add("J includeChatReferences=false sends no context block", !/Files the user attached:/.test(sentJ2));
+    add(
+        "JN …and logs the attachment it left out, without a chat line",
+        logLines.some((l) => /references \(1\): kept none; dropped vscode\.file src\/login\.ts \(file: includeChatReferences is off\)/.test(l)) && !/Not sent to OpenCode/.test(j2.chatMarkdown.join(""))
+    );
     settings.includeChatReferences = true;
+
+    // JN (0.0.215): every reference the host sent is logged, kept or dropped and
+    // why, and the chat says what the user attached that OpenCode will not get.
+    // Shapes: VS Code's ChatReferenceBinaryData (mimeType) and
+    // ChatReferenceDiagnostic (diagnostics), an untitled editor, the implicit chip.
+    add("JN a turn with only files attached says nothing about them", !/Not sent to OpenCode|current-file chip|outside this folder/.test(j.chatMarkdown.join("")));
+    {
+        const jnDir = fs.mkdtempSync(path.join(os.tmpdir(), "ocb-outside-"));
+        const jnOutside = path.join(jnDir, "notes.log");
+        fs.writeFileSync(jnOutside, "outside\n");
+        const jnRefs = [
+            { id: "vscode.file", value: { fsPath: attached, scheme: "file" } },
+            { id: "vscode.implicit.file", value: { fsPath: attached, scheme: "file" } },
+            { id: "vscode.file", value: { fsPath: jnOutside, scheme: "file" } },
+            { id: "screenshot", value: { mimeType: "image/png", data: async () => new Uint8Array([1]) } },
+            { id: "vscode.problems", value: { diagnostics: [] } },
+            { id: "vscode.untitled", value: { fsPath: "Untitled-1", scheme: "untitled" } },
+            { id: "copilot.instructions", value: "<instructions>house rules</instructions>" }
+        ];
+        const jnSaved = { exe: settings.executable, t: settings.transport };
+        settings.executable = happy;
+        settings.transport = "cli";
+        memento.clear();
+        const jnLog = logLines.length;
+        const jn = stream();
+        await global.__handler({ prompt: "explain these for jn", references: jnRefs }, {}, jn.response, jn.token);
+        const jnChat = jn.chatMarkdown.join("");
+        const jnSent = lastArgv("fake-ok.js").slice(-1)[0] || "";
+        const jnLine = logLines.slice(jnLog).find((l) => /references \(7\)/.test(l)) || "";
+        add(
+            `JN every reference is logged: kept, or dropped and why (${jnLine.slice(jnLine.indexOf("references"), jnLine.indexOf("references") + 90)}…)`,
+            jnLine.includes(`kept src/login.ts (file), ${jnOutside} (file, outside the folder)`) &&
+                jnLine.includes("vscode.implicit.file src/login.ts (file: implicit context)") && jnLine.includes("screenshot image/png (image: not a file)") &&
+                jnLine.includes("vscode.problems (diagnostics: no problems listed)") && jnLine.includes("vscode.untitled untitled:Untitled-1 (resource: never saved)") &&
+                jnLine.includes("copilot.instructions (text: added by the host)") && !jnLine.includes("house rules")
+        );
+        add(
+            "JN the chat says what was not sent — the image, empty Problems, the unopened unsaved editor — and not the host's own additions",
+            /Not sent to OpenCode: an image, Problems, `untitled:Untitled-1` \(never saved\)\. The bridge passes files on disk, by path\./.test(jnChat) && !/text attachment|instructions/.test(jnChat)
+        );
+        add("JN …and that VS Code's current-file chip is not sent", /current-file chip is not sent: attach the file with `#file`/.test(jnChat));
+        add(
+            `JN a file outside the folder goes by path, and a read-only turn says it cannot open it (/dev can)${jnSent.includes(jnOutside) ? "" : " [path not sent]"}`,
+            jnSent.includes(jnOutside) && jnChat.includes("`" + jnOutside + "` is outside this folder: a read-only turn cannot open it (`/dev` can).")
+        );
+        add("JN …said before the answer", jnChat.indexOf("Not sent to OpenCode") < jnChat.indexOf("stale cookie") || !/stale cookie/.test(jnChat));
+        memento.clear();
+        const jn2 = stream();
+        await global.__handler({ prompt: "fix these for jn", command: "dev", references: jnRefs }, {}, jn2.response, jn2.token);
+        const jn2Chat = jn2.chatMarkdown.join("");
+        add("JN a /dev turn names what was not sent, but not the outside file (it can open it), and the chip line was said once", /Not sent to OpenCode: an image/.test(jn2Chat) && !/outside this folder/.test(jn2Chat) && !/current-file chip/.test(jn2Chat));
+        // JX (0.0.217): dirty buffers, line-range excerpts, open untitled editors, and #problems diagnostics are folded into bounded context sections and scrubbed by the leak gate.
+        fs.writeFileSync(attached, "export const line1 = 1;\nexport const line2 = 2;\nexport const line3 = 3;\nexport const line4 = 4;\n");
+        vscodeStub.workspace.textDocuments = [
+            {
+                uri: { fsPath: attached, scheme: "file" },
+                isDirty: true,
+                getText: () => "export const line1 = 'dirty1';\nexport const line2 = 'dirty2';\nexport const line3 = 'dirty3';\n"
+            },
+            {
+                uri: { fsPath: "Untitled-1", scheme: "untitled" },
+                isDirty: true,
+                getText: () => "draft schema line\n"
+            }
+        ];
+        memento.clear();
+        const jxLog = logLines.length;
+        const jx = stream();
+        await global.__handler(
+            {
+                prompt: "explain dirty, range, untitled and problems",
+                references: [
+                    { id: "vscode.file", value: { fsPath: attached, scheme: "file" } },
+                    { id: "vscode.range", value: { uri: { fsPath: attached, scheme: "file" }, range: { start: { line: 1 }, end: { line: 2 } } } },
+                    { id: "vscode.untitled", value: { fsPath: "Untitled-1", scheme: "untitled" } },
+                    {
+                        id: "vscode.problems",
+                        value: {
+                            diagnostics: [
+                                [
+                                    { fsPath: attached, scheme: "file" },
+                                    [
+                                        { message: "x is unused", severity: 0, code: "TS6133", range: { start: { line: 4 } } },
+                                        { message: "prefer const", severity: 1, range: { start: { line: 1 } } }
+                                    ]
+                                ]
+                            ]
+                        }
+                    }
+                ]
+            },
+            {},
+            jx.response,
+            jx.token
+        );
+        const jxSent = lastArgv("fake-ok.js").slice(-1)[0] || "";
+        const jxChat = jx.chatMarkdown.join("");
+        const jxLine = logLines.slice(jxLog).find((l) => /references \(4\)/.test(l)) || "";
+        add(
+            "JX dirty file buffer, line-range slice, open untitled editor and Problems diagnostics are kept and folded into the prompt",
+            /Files the user attached:\n- src\/login\.ts \(unsaved changes in editor\)\n- src\/login\.ts:2-3 \(unsaved changes in editor\)/.test(jxSent) &&
+                /Attached text excerpts:/.test(jxSent) &&
+                /### src\/login\.ts \(unsaved buffer\)\n```\nexport const line1 = 'dirty1';/.test(jxSent) &&
+                /### src\/login\.ts:2-3 \(unsaved\)\n```\nexport const line2 = 'dirty2';\nexport const line3 = 'dirty3';\n```/.test(jxSent) &&
+                /### untitled:Untitled-1 \(unsaved\)\n```\ndraft schema line\n```/.test(jxSent) &&
+                /Attached problems:\n- src\/login\.ts:5 \(error \[TS6133\]\): x is unused\n- src\/login\.ts:2 \(warning\): prefer const/.test(jxSent) &&
+                jxLine.includes("kept src/login.ts (file), src/login.ts:2-3 (range), untitled:Untitled-1 (text), Problems (diagnostics); dropped none") &&
+                !/Not sent to OpenCode/.test(jxChat)
+        );
+        delete vscodeStub.workspace.textDocuments;
+        const jxGate1 = ext.__test.createLeakGate();
+        const jxLeaked1 = jxGate1.push("---\nAttached text excerpts:\n### untitled:Untitled-1 (unsaved)\n```\ndraft\n```\n(Context only. Do not repeat or summarize this block.)\n\nReal answer.") + jxGate1.flush();
+        const jxGate2 = ext.__test.createLeakGate();
+        const jxLeaked2 = jxGate2.push("---\nAttached problems:\n- src/login.ts:5 (error): x is unused\n(Context only. Do not repeat or summarize this block.)\n\nClean answer.") + jxGate2.flush();
+        add("JX leak gate strips echoed Attached text excerpts and Attached problems preambles", jxLeaked1.trim() === "Real answer." && jxLeaked2.trim() === "Clean answer.");
+        const contextModule = require(path.join(__dirname, "..", "out", "context.js"));
+        const boundedRefs = Array.from({ length: 4 }, (_, i) => ({ id: "vscode.file", value: { scheme: "file", fsPath: path.join(jnDir, `dirty-${i}.ts`) } }));
+        let lastBufferReads = 0;
+        vscodeStub.workspace.textDocuments = boundedRefs.map((r, i) => ({ uri: r.value, isDirty: true, getText: () => { if (i === 3) lastBufferReads += 1; return "界".repeat(20000); } }));
+        const boundedContext = contextModule.buildChatContext({ references: boundedRefs }, jnDir);
+        const bodies = [...boundedContext.preamble.matchAll(/```\n([\s\S]*?)\n```/g)].map((m) => m[1]);
+        add("JX UTF-8 excerpts respect per-item and total byte caps, including truncation markers", bodies.length === 3 && bodies.every((s) => Buffer.byteLength(s) <= 16384 && !s.includes("\ufffd")) && bodies.reduce((n, s) => n + Buffer.byteLength(s), 0) <= 49152);
+        add("JX exhausted excerpt budget reports stale disk fallback and skips later dirty buffer reads", lastBufferReads === 0 && /dirty-3\.ts.*disk contents may be stale/.test(boundedContext.preamble) && /Unsaved editor text not sent.*dirty-3\.ts/.test(contextModule.contextNotice(boundedContext.notes, false) || ""));
+        const hugeProblem = contextModule.buildChatContext({ references: [{ id: "vscode.problems", value: { diagnostics: [[boundedRefs[0].value, [{ message: "界".repeat(200000) }]]] } }] }, jnDir);
+        add("JX one huge diagnostic remains byte-bounded", Buffer.byteLength(hugeProblem.preamble) < 2048 && hugeProblem.preamble.includes("truncated"));
+        delete vscodeStub.workspace.textDocuments;
+        const priorRead = fs.readFileSync;
+        let attachmentReads = 0;
+        let closedRange;
+        try {
+            fs.readFileSync = (...args) => { attachmentReads += 1; return priorRead(...args); };
+            closedRange = contextModule.buildChatContext({ references: [{ id: "vscode.range", value: { uri: { scheme: "file", fsPath: attached }, range: { start: { line: 1 }, end: { line: 2 } } } }] }, jnDir);
+        } finally {
+            fs.readFileSync = priorRead;
+        }
+        add("JX closed-file ranges retain their path without synchronous disk reads", attachmentReads === 0 && closedRange.preamble.includes(`${attached}:2-3`));
+        fs.writeFileSync(attached, "export const login = () => {};\n");
+        fs.rmSync(jnDir, { recursive: true, force: true });
+        Object.assign(settings, { executable: jnSaved.exe, transport: jnSaved.t });
+    }
+
+    // RX (0.0.219): read-only is judged on the EFFECTIVE rules. OpenCode merges a
+    // config file's agent permission into the bridge's overrides key by key and
+    // keeps the file's keys in place, so a key the bridge does not set — an MCP
+    // tool, `task: { general: allow }` — kept its allow after `"*": "deny"`
+    // (1.18.35 and 1.19.0 measured: an MCP tool and `general` wrote on a plan turn).
+    {
+        const rxSaved = { exe: settings.executable, t: settings.transport };
+        const rxDeny = ["edit", "write", "patch", "apply_patch", "multiedit", "shell", "execute", "question", "plan_enter", "plan_exit", "ocb-enforced", "bash"];
+        const marked = (extra, task = [{ permission: "task", pattern: "*", action: "deny" }, { permission: "task", pattern: "explore", action: "allow" }]) => [
+            { permission: "*", pattern: "*", action: "allow" },
+            { permission: "*", pattern: "*", action: "deny" },
+            { permission: "read", pattern: "*", action: "allow" },
+            ...task,
+            ...rxDeny.map((permission) => ({ permission, pattern: "*", action: "deny" })),
+            ...extra
+        ];
+        const exploreClean = marked([], [{ permission: "task", pattern: "*", action: "deny" }]);
+        const leaks = (rules, subs = ["explore"], sessionTask = false) => ext.__test.readOnlyLeaks(rules, subs, sessionTask);
+        add(
+            "RX the allowlist passes the overrides' own reach (read, readOnlyTools, task to readOnlySubagents, the tool-output folder)",
+            leaks(marked([{ permission: "git-scan_gitScan", pattern: "*", action: "allow" }, { permission: "external_directory", pattern: "/x/opencode/tool-output/*", action: "allow" }])).length === 0
+        );
+        add("RX an MCP key a config file keeps after `*: deny` is a leak, by name", JSON.stringify(leaks(marked([{ permission: "w_*", pattern: "*", action: "allow" }]))) === JSON.stringify(["w_*: allow"]));
+        add(
+            "RX task to an agent outside readOnlySubagents leaks on a cold run, not where the session's task rules follow",
+            JSON.stringify(leaks(marked([{ permission: "task", pattern: "general", action: "allow" }]))) === JSON.stringify(["task general: allow"]) &&
+                leaks(marked([{ permission: "task", pattern: "general", action: "allow" }]), ["explore"], true).length === 0
+        );
+        add("RX an ask is a leak too (a cold plan turn runs with --auto)", JSON.stringify(leaks(marked([{ permission: "mytool", pattern: "*", action: "ask" }]))) === JSON.stringify(["mytool: ask"]));
+        add("RX doom_loop (the repeated-call prompt, not a tool) is not a leak", leaks(marked([{ permission: "doom_loop", pattern: "*", action: "ask" }])).length === 0);
+        add("RX a rule before the last `*: deny` cannot leak", leaks([{ permission: "w_*", pattern: "*", action: "allow" }, ...marked([])]).length === 0);
+        add("RX read *.env allow after `*: deny` is a leak; wildcard readOnlyTools match", JSON.stringify(leaks(marked([{ permission: "read", pattern: "*.env", action: "allow" }]))) === JSON.stringify(["read *.env: allow"]));
+        add(
+            "RX `opencode agent list` parses each agent's effective rules (the JSON after its name)",
+            JSON.stringify(ext.__test.parseAgentList(`plan (primary)\n  ${JSON.stringify(exploreClean, null, 2)}\nexplore (subagent)\n  []\n`).map((a) => [a.name, (a.permission || []).length])) === JSON.stringify([["plan", exploreClean.length], ["explore", 0]])
+        );
+        // Cold runs: a fake whose `agent list` answers what a reopened config gives.
+        const listing = (plan, explore) =>
+            "if (process.argv.includes('agent') && process.argv.includes('list')) {\n" +
+            "  process.stdout.write('plan (primary)\\n  ' + " + JSON.stringify(JSON.stringify(plan, null, 2)) + " + '\\nexplore (subagent)\\n  ' + " + JSON.stringify(JSON.stringify(explore, null, 2)) + " + '\\n');\n" +
+            "  process.exit(0);\n" +
+            "}\n" +
+            "process.stdout.write(JSON.stringify({ type: 'text', sessionID: 'ses_rx', part: { text: 'rx answer' } }) + '\\n');\n";
+        const rxTurn = async (fakeName, plan, explore, prompt) => {
+            settings.executable = writeFake(fakeName, [], listing(plan, explore));
+            settings.transport = "cli";
+            memento.clear();
+            const from = logLines.length;
+            const s = stream();
+            const result = await global.__handler({ prompt }, {}, s.response, s.token);
+            const runs = logLines.slice(from).filter((l) => new RegExp(`\\$ .*${fakeName.replace(".", "\\.")} run\\b`).test(l)).length;
+            return { chat: s.chatMarkdown.join(""), result, runs };
+        };
+        const rxMcp = await rxTurn("fake-rx-mcp.js", marked([{ permission: "w_*", pattern: "*", action: "allow" }]), exploreClean, "explain the cart for rx mcp");
+        add(
+            `RX cold: an MCP tool a config file reopens on plan refuses the turn, names it, runs nothing (runs ${rxMcp.runs})`,
+            rxMcp.runs === 0 && rxMcp.result?.metadata?.notSent === true &&
+                /Nothing was sent: OpenCode's configuration gives `plan` back/.test(rxMcp.chat) && /`w_\*: allow`/.test(rxMcp.chat) && !/rx answer/.test(rxMcp.chat)
+        );
+        const rxTask = await rxTurn("fake-rx-task.js", marked([{ permission: "task", pattern: "general", action: "allow" }]), exploreClean, "explain the cart for rx task");
+        add(`RX cold: task to general reopened on plan refuses the turn (runs ${rxTask.runs})`, rxTask.runs === 0 && /`task general: allow`/.test(rxTask.chat));
+        const rxSub = await rxTurn("fake-rx-sub.js", marked([]), [...exploreClean, { permission: "w_*", pattern: "*", action: "allow" }], "explain the cart for rx sub");
+        add(
+            `RX cold: a reopened readOnlySubagent refuses the turn — a cold run cannot withhold it (runs ${rxSub.runs})`,
+            rxSub.runs === 0 && /gives `explore` back/.test(rxSub.chat) && /`w_\*: allow`/.test(rxSub.chat)
+        );
+        const rxPar = await rxTurn("fake-rx-par.js", marked([{ permission: "w_*", pattern: "*", action: "allow" }]), exploreClean, "parallel: audit auth | check logs");
+        add(
+            `RX /parallel refuses once up front when plan is reopened, runs no lanes (runs ${rxPar.runs})`,
+            rxPar.runs === 0 && rxPar.result?.metadata?.notSent === true && /Nothing was sent: OpenCode's configuration gives `plan` back/.test(rxPar.chat) && !/lanes returned/.test(rxPar.chat)
+        );
+        const rxOk = await rxTurn("fake-rx-ok.js", marked([{ permission: "git-scan_gitScan", pattern: "*", action: "allow" }]), exploreClean, "explain the cart for rx ok");
+        add(`RX cold: clean effective rules run the turn (runs ${rxOk.runs})`, rxOk.runs === 1 && /rx answer/.test(rxOk.chat) && !/Nothing was sent/.test(rxOk.chat));
+        // The minute's cache must not outlive a config edit: a checkout that adds
+        // an opencode.json reopening plan is listed afresh on the next turn.
+        {
+            const state = path.join(work, "rx-state.json");
+            const listed = path.join(work, "rx-listed.count");
+            fs.writeFileSync(state, JSON.stringify({ plan: marked([]), explore: exploreClean }));
+            fs.rmSync(listed, { force: true });
+            settings.executable = writeFake(
+                "fake-rx-edit.js",
+                [],
+                "if (process.argv.includes('agent') && process.argv.includes('list')) {\n" +
+                `  fs.appendFileSync(${JSON.stringify(listed)}, 'x');\n` +
+                `  const st = JSON.parse(fs.readFileSync(${JSON.stringify(state)}, 'utf8'));\n` +
+                "  process.stdout.write('plan (primary)\\n  ' + JSON.stringify(st.plan, null, 2) + '\\nexplore (subagent)\\n  ' + JSON.stringify(st.explore, null, 2) + '\\n');\n" +
+                "  process.exit(0);\n" +
+                "}\n" +
+                "process.stdout.write(JSON.stringify({ type: 'text', sessionID: 'ses_rx', part: { text: 'edit answer' } }) + '\\n');\n"
+            );
+            settings.transport = "cli";
+            const turn = async (prompt) => {
+                memento.clear();
+                const s = stream();
+                await global.__handler({ prompt }, {}, s.response, s.token);
+                return s.chatMarkdown.join("");
+            };
+            const projectJson = path.join(work, "opencode.json");
+            const e1 = await turn("explain the cart for rx edit one");
+            const e2 = await turn("explain the cart for rx edit two");
+            const listedBefore = fs.readFileSync(listed, "utf8").length;
+            fs.writeFileSync(state, JSON.stringify({ plan: marked([{ permission: "w_*", pattern: "*", action: "allow" }]), explore: exploreClean }));
+            fs.writeFileSync(projectJson, JSON.stringify({ agent: { plan: { permission: { "*": "allow", "w_*": "allow" } } } }));
+            const e3 = await turn("explain the cart for rx edit three");
+            fs.rmSync(projectJson, { force: true });
+            add(
+                `RX cold: the rules lookup is kept while config is unchanged, and an opencode.json edit is listed afresh (listings ${listedBefore} → ${fs.readFileSync(listed, "utf8").length})`,
+                /edit answer/.test(e1) && /edit answer/.test(e2) && listedBefore === 1 && fs.readFileSync(listed, "utf8").length === 2 && /`w_\*: allow`/.test(e3) && !/edit answer/.test(e3)
+            );
+            fs.rmSync(state, { force: true });
+            fs.rmSync(listed, { force: true });
+        }
+        // Stop while the cold listing is still running: no run, back at once.
+        settings.executable = writeFake(
+            "fake-rx-slow.js",
+            [],
+            "if (process.argv.includes('agent') && process.argv.includes('list')) { setTimeout(() => process.exit(0), 5000); } else {\n" +
+            "process.stdout.write(JSON.stringify({ type: 'text', sessionID: 'ses_rx', part: { text: 'slow answer' } }) + '\\n'); }\n"
+        );
+        memento.clear();
+        const rxStopFrom = logLines.length;
+        const rxStop = stream();
+        const rxStopStarted = Date.now();
+        const rxStopRun = global.__handler({ prompt: "explain the cart for rx stop" }, {}, rxStop.response, rxStop.token);
+        await waitFor(() => logLines.slice(rxStopFrom).some((l) => /\$ .*fake-rx-slow\.js agent list/.test(l)), 4000);
+        rxStop.token.cancel();
+        await rxStopRun;
+        const rxStopMs = Date.now() - rxStopStarted;
+        add(
+            `RX Stop during the cold rules lookup returns at once and runs nothing (${rxStopMs}ms)`,
+            rxStopMs < 2500 && !logLines.slice(rxStopFrom).some((l) => /\$ .*fake-rx-slow\.js run\b/.test(l))
+        );
+        Object.assign(settings, { executable: rxSaved.exe, transport: rxSaved.t });
+    }
+
+    // EX (0.0.219): excerpts keep to the read-only turn's own read rules, and
+    // the leak gate holds a whole echoed context block.
+    {
+        const contextModule = require(path.join(__dirname, "..", "out", "context.js"));
+        const exDir = fs.mkdtempSync(path.join(os.tmpdir(), "ocb-ex-"));
+        const envFile = path.join(exDir, ".env");
+        const exampleFile = path.join(exDir, ".env.example");
+        const outsideFile = path.join(os.tmpdir(), `ocb-ex-outside-${process.pid}.ts`);
+        vscodeStub.workspace.textDocuments = [
+            { uri: { fsPath: envFile, scheme: "file" }, isDirty: true, getText: () => "API_KEY=sk-ex-secret\n" },
+            { uri: { fsPath: exampleFile, scheme: "file" }, isDirty: true, getText: () => "API_KEY=example\n" },
+            { uri: { fsPath: outsideFile, scheme: "file" }, isDirty: false, getText: () => "export const far = 1;\nexport const away = 2;\n" }
+        ];
+        const exRefs = [
+            { id: "vscode.file", value: { fsPath: envFile, scheme: "file" } },
+            { id: "vscode.file", value: { fsPath: exampleFile, scheme: "file" } },
+            { id: "vscode.range", value: { uri: { fsPath: outsideFile, scheme: "file" }, range: { start: { line: 0 }, end: { line: 1 } } } }
+        ];
+        const exRo = contextModule.buildChatContext({ references: exRefs }, exDir, { readOnly: true });
+        const exDev = contextModule.buildChatContext({ references: exRefs }, exDir, { readOnly: false });
+        const exRoNote = contextModule.contextNotice(exRo.notes, true) || "";
+        add(
+            "EX a read-only turn keeps an unsaved .env's text out (plan's read denies it); .env.example and /dev still send theirs",
+            !exRo.preamble.includes("sk-ex-secret") && exRo.preamble.includes("API_KEY=example") && exDev.preamble.includes("sk-ex-secret") &&
+                /Text of `\.env` not sent: a read-only turn keeps `\.env` files out/.test(exRoNote) && !/disk contents may be stale/.test(exRoNote)
+        );
+        add(
+            "EX an outside file whose excerpt went in is not called out of reach",
+            exRo.preamble.includes("export const far = 1;") && !/outside this folder/.test(exRoNote)
+        );
+        vscodeStub.window.activeTextEditor = {
+            document: { uri: { fsPath: envFile, scheme: "file" }, getText: () => "SECRET_SEL=sk-sel-secret" },
+            selection: { isEmpty: false, start: { line: 0 }, end: { line: 0 }, active: { line: 0 } }
+        };
+        const exSelRo = contextModule.buildChatContext({ references: [] }, exDir, { inline: true, readOnly: true });
+        const exSelDev = contextModule.buildChatContext({ references: [] }, exDir, { inline: true, readOnly: false });
+        const exSelNote = contextModule.contextNotice(exSelRo.notes, true) || "";
+        delete vscodeStub.window.activeTextEditor;
+        add(
+            "EX an active .env selection is withheld on a read-only turn (/dev sends it)",
+            !exSelRo.preamble.includes("sk-sel-secret") && exSelDev.preamble.includes("sk-sel-secret") && /Text of `\.env:1-1` not sent/.test(exSelNote)
+        );
+        delete vscodeStub.workspace.textDocuments;
+        fs.rmSync(exDir, { recursive: true, force: true });
+        const fullBlock = "---\nAttached text excerpts:\n### big.ts (unsaved)\n```\n" + "y".repeat(48 * 1024) + "\n```\n\nAttached problems:\n" +
+            Array.from({ length: 31 }, (_, i) => `- big.ts:${i} (error): ${"z".repeat(1000)}`).join("\n") + "\n(Context only. Do not repeat or summarize this block.)\n\nAfter block.";
+        const exGate = ext.__test.createLeakGate();
+        let exOut = "";
+        for (let i = 0; i < fullBlock.length; i += 997) exOut += exGate.push(fullBlock.slice(i, i + 997));
+        exOut += exGate.flush();
+        add(`EX an echoed full excerpt + problems block (${Math.round(fullBlock.length / 1024)} KB) stays hidden: the hold covers the caps`, exOut.trim() === "After block." && fullBlock.length < ext.__test.CONTEXT_HOLD_BYTES);
+    }
+
+    // UP (0.0.219): scripts/update.js installs the newest delivered VSIX, and only
+    // one whose sha256 is the one docs/released.txt records for its version.
+    {
+        const upDir = fs.mkdtempSync(path.join(os.tmpdir(), "ocb-up-"));
+        const upDist = path.join(upDir, "dist");
+        fs.mkdirSync(upDist);
+        const installed = path.join(upDir, "installed.txt");
+        const installs = path.join(upDir, "installs.log");
+        const fakeCode = writeFake(
+            "fake-code.js",
+            [],
+            `const have = fs.existsSync(${JSON.stringify(installed)}) ? fs.readFileSync(${JSON.stringify(installed)}, "utf8") : "";\n` +
+            "if (process.argv.includes('--list-extensions')) { process.stdout.write('other.ext@1.0.0\\n' + (have ? 'local.opencode-copilot-bridge@' + have + '\\n' : '')); }\n" +
+            `if (process.argv.includes('--install-extension')) { fs.appendFileSync(${JSON.stringify(installs)}, JSON.stringify(process.argv.slice(2)) + "\\n"); }\n`
+        );
+        const vsixOf = (v) => path.join(upDist, `opencode-copilot-bridge-${v}.vsix`);
+        const ledgerFile = path.join(upDir, "released.txt");
+        const deliver = (versions) => {
+            for (const v of versions) fs.writeFileSync(vsixOf(v), `vsix ${v}`);
+            fs.writeFileSync(ledgerFile, "# Delivered VSIXes\n" + versions.map((v) => `${v} ${require("crypto").createHash("sha256").update(`vsix ${v}`).digest("hex")} ${"0".repeat(64)}`).join("\n") + "\n");
+        };
+        const up = (have, extra = []) => {
+            if (have) fs.writeFileSync(installed, have); else fs.rmSync(installed, { force: true });
+            fs.rmSync(installs, { force: true });
+            const r = require("node:child_process").spawnSync(process.execPath, [path.join(__dirname, "update.js"), "--from", upDist, "--ledger", ledgerFile, "--editor", fakeCode, ...extra], { encoding: "utf8" });
+            return { out: r.stdout + r.stderr, code: r.status, installs: fs.existsSync(installs) ? fs.readFileSync(installs, "utf8").trim().split("\n").map((l) => JSON.parse(l)) : [] };
+        };
+        deliver(["0.0.9", "0.0.10"]);
+        const upOld = up("0.0.9");
+        add(
+            `UP an older install gets the newest delivered VSIX, compared by number (0.0.10 > 0.0.9): ${upOld.out.trim().split("\n").pop()}`,
+            upOld.code === 0 && upOld.installs.length === 1 && upOld.installs[0][0] === "--install-extension" && path.resolve(upOld.installs[0][1]) === vsixOf("0.0.10") && upOld.installs[0][2] === "--force"
+        );
+        const upCur = up("0.0.10");
+        add("UP a current install is left alone", upCur.code === 0 && upCur.installs.length === 0 && /0\.0\.10 is current/.test(upCur.out));
+        const upCheck = up("0.0.9", ["--check"]);
+        add("UP --check reports and installs nothing", upCheck.code === 0 && upCheck.installs.length === 0 && /0\.0\.9 → 0\.0\.10 available/.test(upCheck.out));
+        fs.writeFileSync(vsixOf("0.0.10"), "rebuilt under the same number");
+        const upBad = up("0.0.9");
+        add("UP a VSIX that is not the delivered build is refused (exit 2), nothing installed", upBad.code === 2 && upBad.installs.length === 0 && /REFUSED opencode-copilot-bridge-0\.0\.10\.vsix/.test(upBad.out));
+        fs.rmSync(upDir, { recursive: true, force: true });
+    }
 
     // J: a /parallel turn hands the attachment to every lane. 0.0.195 built the
     // context after the parallel branch had returned, so `#file:` reached no lane.
@@ -1341,6 +1735,34 @@ function collectConfigProperties(configuration) {
     add("BF taskkill is the only non-spawnOpenCode spawn", spawnLines.length === 3);
     add("BF status bar APIs stay optional-chained for the headless stub", /createStatusBarItem\?\./.test(srcText));
 
+    // LY (v212): AGENTS §1 says the layering has no cycles and names the leaves
+    // that import nothing local; nothing measured either. Read from the source.
+    const lyImports = Object.fromEntries(
+        fs.readdirSync(srcDir).filter((f) => f.endsWith(".ts")).map((f) => {
+            const name = f.slice(0, -3);
+            const text = fs.readFileSync(path.join(srcDir, f), "utf8");
+            return [name, [...new Set([...text.matchAll(/from "\.\/([\w-]+)(?:\.json)?"/g)].map((m) => m[1]))].filter((d) => d !== name)];
+        })
+    );
+    const lyState = {};
+    const lyVisit = (m, stack) => {
+        if (lyState[m] === 1) return [...stack.slice(stack.indexOf(m)), m];
+        if (lyState[m] === 2 || !lyImports[m]) return undefined;
+        lyState[m] = 1;
+        for (const d of lyImports[m]) {
+            const cycle = lyVisit(d, [...stack, m]);
+            if (cycle) return cycle;
+        }
+        lyState[m] = 2;
+        return undefined;
+    };
+    const lyCycle = Object.keys(lyImports).map((m) => lyVisit(m, [])).find(Boolean);
+    add(`LY the module graph has no import cycle${lyCycle ? ` (${lyCycle.join(" → ")})` : ` (${Object.keys(lyImports).length} modules)`}`, !lyCycle);
+    const lyLeaves = ["core", "env", "metrics", "context-markers", "git-scan-server", "followups"];
+    const lyBusy = lyLeaves.filter((m) => !lyImports[m] || lyImports[m].length);
+    add(`LY the leaves AGENTS names import nothing local${lyBusy.length ? ` (${lyBusy.join(", ")})` : ""}`, lyBusy.length === 0);
+    add("LY natural.ts and env.ts import no vscode", ["natural.ts", "env.ts"].every((f) => !/from "vscode"/.test(fs.readFileSync(path.join(srcDir, f), "utf8"))));
+
     // BF (v172): three crash-safety guards that no behavioural check can reach
     // from here — they need a socket to drop mid-body, a taskkill binary to be
     // missing, and a serve spawn to fail with EACCES. Until the harness can
@@ -1448,7 +1870,36 @@ function collectConfigProperties(configuration) {
     await global.__handler({ prompt: "an aborted step with zero usage" }, {}, cd.response, cd.token);
     // v165: emptyRunDiagnosis is disabled, so the reply is the short no-output line.
     add("CD zero-cost zero-token steps do not claim usage is known", /returned no output|usage n\/a|no token usage|without producing/.test(cd.chatMarkdown.join("")));
+
+    // SE (v212): a run that exits non-zero with no error event and no text left
+    // its reason on stderr, and chat said only "returned no output" — no reason,
+    // no debug-log button, no chips (outcome "done").
+    const seFake = writeFake("fake-stderr.js", [], "process.stderr.write('Error: Model not found: acme/ghost\\n'); process.exit(1);\n");
+    settings.executable = seFake;
+    memento.clear();
+    const se = stream();
+    const seR = await global.__handler({ prompt: "a run that only fails on stderr" }, {}, se.response, se.token);
+    const chatSE = plain(se.chatMarkdown.join(""));
+    const seChips = global.__participant.followupProvider.provideFollowups(seR, {}, stream().token) || [];
+    add("SE a non-zero exit with nothing but stderr names its reason in chat", /OpenCode reported an error: `Error: Model not found: acme\/ghost`/.test(chatSE));
+    add(
+        `SE …offers the debug log, and chips that fit it (${seChips.map((c) => c.label).join(" | ")})`,
+        se.buttons.some((b) => b.command === "opencodeCopilotBridge.showLog") && seR.metadata.error === "Error: Model not found: acme/ghost" && seChips.some((c) => /Pick model/.test(c.label))
+    );
+    settings.executable = silentFake;
+    memento.clear();
+    const se0 = stream();
+    await global.__handler({ prompt: "a run that exits 3 and says nothing" }, {}, se0.response, se0.token);
+    add("SE …and a bare non-zero exit says its code", /OpenCode reported an error: `opencode exited with code 3`/.test(plain(se0.chatMarkdown.join(""))));
     settings.executable = happy;
+
+    // LN (v212): lanes have no cap, but Merge and Retry keep the first 8
+    // (LANE_COUNT_CAP); 0.0.211 said nothing about the rest.
+    memento.clear();
+    const ln = stream();
+    await global.__handler({ prompt: Array.from({ length: 9 }, (_, i) => `lane ${i + 1} of nine`).join(" | "), command: "parallel" }, {}, ln.response, ln.token);
+    const lnChat = plain(ln.chatMarkdown.join(""));
+    add("LN nine lanes run, and the merge line says it keeps the first 8", /\*\*9\/9 lanes returned\.\*\*/.test(lnChat) && /first 8 lanes/.test(lnChat));
 
     // CE: /ping never calls a model.
     memento.clear();
@@ -1840,6 +2291,13 @@ function collectConfigProperties(configuration) {
 
     const fb = stream();
     await global.__handler({ prompt: "which repository am I rooted in?" }, {}, fb.response, fb.token);
+    // v215: the suite's first plan turn on a server the bridge did not start.
+    const fbChat = fb.chatMarkdown.join("");
+    add(
+        "RE the first plan turn on a server the bridge did not start says, after the answer, that read-only turns there start no subagents",
+        /no verified shell-free read-only rules.*Its agents keep their own permissions/.test(fbChat) &&
+            fbChat.indexOf("no verified shell-free read-only rules") > fbChat.indexOf("an answer from the server transport")
+    );
 
     const encodedCwd = encodeURIComponent(work);
     // Match the path only, so "did the run reach the server" stays independent
@@ -2120,6 +2578,8 @@ function collectConfigProperties(configuration) {
     const ga3 = stream();
     await global.__handler({ prompt: "an unrelated question entirely" }, { history: [] }, ga3.response, ga3.token);
     add("GA a second chat in the same folder still starts clean", !lastArgv("fake-ok.js").includes("--session"));
+    // v212: the notice printed on the first turn of every new chat in the folder.
+    add("GA …and the new-chat notice is said once per window and folder, not on every new chat", !/New chat/.test(ga3.chatMarkdown.join("")));
 
     // Tripwire: the handler must never go back to reading the folder pointer for
     // continuity, which is exactly how this bug was written in the first place.
@@ -3306,7 +3766,7 @@ const lbProvider = (global.__participant || {}).followupProvider;
 
         // WT4: git runs without a shell, from one file only.
         const execFileFiles = fs.readdirSync(path.join(__dirname, "..", "src")).filter((f) => /execFile\(/.test(fs.readFileSync(path.join(__dirname, "..", "src", f), "utf8")));
-        add("WT4 execFile appears only in worktree.ts", execFileFiles.length === 1 && execFileFiles[0] === "worktree.ts");
+        add("WT4 execFile appears only in the two Git boundaries", execFileFiles.sort().join(",") === "git-scan-server.ts,worktree.ts");
         add("WT4 git is never run through a shell", !/shell\s*:\s*true/.test(srcText));
 
         g("worktree", "remove", "--force", wtPath);
@@ -3619,7 +4079,7 @@ const lbProvider = (global.__participant || {}).followupProvider;
     add("KB no markdown part is sent with supportHtml (parts must merge)", mdPartsAll.length > 100 && mdPartsAll.every((v) => typeof v === "string" || v.supportHtml !== true));
     add("KB no markdown part carries a <span>", !mdPartsAll.some((v) => /<span/.test(kbText(v))));
     add("KB progress lines carry no pill", progressAll.length > 50 && !progressAll.some((l) => Object.values(M).some((m) => l.includes(kbPill(m)))));
-    const kbBm = ext.__test.badgeMarks;
+    const kbBm = (text) => ext.__test.createBadger()(text);
     add("KB a pill wraps a mark and nothing else", Object.values(M).every((m) => kbBm(m) === kbPill(m) && ext.__test.badge(m) === kbPill(m)));
     add(
         "KB mid-sentence, blockquote and table cell marks become pills",
@@ -3884,6 +4344,14 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
     add("PW the suite's own PWD is not the workspace, so PW can fail", !samePath(process.env.PWD, work));
     add("PW a CLI turn hands OpenCode the folder as PWD", samePath(pwEnv.pwd, work));
     add("PW …and as cwd, as before", samePath(pwEnv.cwd, work));
+    const pwOcc = (() => {
+        try {
+            return JSON.parse(pwEnv.occ);
+        } catch {
+            return undefined;
+        }
+    })();
+    add("RE a CLI turn's OpenCode gets the read-only overrides for plan and explore (OPENCODE_CONFIG_CONTENT)", pwOcc?.agent?.plan?.permission?.["*"] === "deny" && pwOcc?.agent?.explore?.permission?.task === "deny");
 
     // The plan → dev handoff, through the real turn: a plan whose item 1 is an
     // instruction offers its step 1 first and the full handoff after it.
@@ -4374,13 +4842,44 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
     // PA (planAgent), HQ (headless asks), DM (which model answers). One fake
     // server records the wire: what the bridge sent, and what it replied.
     {
-        const v5 = { agentCalls: [], sessions: [], messages: [], replies: [], summarize: [], sse: [], asks: [], mode: "answer", sessionMsgs: {}, held: [], patches: [], aborts: [], children: {}, preEmit: [], confirm: true, swallow: {}, askSession: {} };
+        const v5 = { agentCalls: [], sessions: [], messages: [], replies: [], summarize: [], sse: [], asks: [], mode: "answer", sessionMsgs: {}, held: [], patches: [], aborts: [], children: {}, preEmit: [], confirm: true, swallow: {}, askSession: {}, rules: {}, delegations: [] };
+        // OpenCode's evaluate: the LAST rule whose permission and pattern both
+        // match (wildcards: `*` any run, `?` one character). No match: ask.
+        const v5Wild = (pattern, value) => new RegExp("^" + String(pattern).replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".") + "$", "s").test(value);
+        const v5Eval = (rules, permission, value) => rules.findLast((r) => v5Wild(r.permission, permission) && v5Wild(r.pattern, value))?.action ?? "ask";
+        const v5DecideGlob = (sid, permission, value) => v5Eval(v5.rules[sid] ?? [], permission, value);
+        // A session's rules as OpenCode 1.19.0 keeps them (measured, and
+        // handlers/session.ts): POST /session sets them, PATCH APPENDS
+        // (`Permission.merge` is `flat()`), and a decision is the LAST rule that
+        // matches (`evaluate` → findLast). "agent": no session rule, the agent decides.
+        const v5Decide = (sid, permission, pattern) =>
+            (v5.rules[sid] ?? []).findLast((r) => (r.permission === permission || r.permission === "*") && (r.pattern === "*" || r.pattern === pattern))?.action ?? "agent";
         let v5Next = 0;
-        // What GET /agent returns on 1.18.32 (trimmed): name, mode, hidden.
+        let v5ChildNext = 0;
+        // What GET /agent returns (trimmed): name, mode, hidden, and each agent's
+        // own rules — 1.19.0 lists `permission`, every list starting `* * allow`.
+        // `strict` is a dev agent of the user's that keeps `general` out.
         const V5_AGENTS = [
-            { name: "build", mode: "primary", native: true },
+            { name: "build", mode: "primary", native: true, permission: [{ permission: "*", pattern: "*", action: "allow" }] },
+            {
+                name: "strict",
+                mode: "primary",
+                native: false,
+                permission: [{ permission: "*", pattern: "*", action: "allow" }, { permission: "task", pattern: "general", action: "deny" }]
+            },
             { name: "plan", mode: "primary", native: true },
-            { name: "explore", mode: "subagent", native: true },
+            // 1.19.0's own explore rules (GET /agent, measured): `* deny`, then
+            // search, read, web — and `bash * allow`, so it runs any command.
+            {
+                name: "explore",
+                mode: "subagent",
+                native: true,
+                permission: [
+                    { permission: "*", pattern: "*", action: "allow" },
+                    { permission: "*", pattern: "*", action: "deny" },
+                    ...["grep", "glob", "list", "bash", "webfetch", "websearch", "read"].map((permission) => ({ permission, pattern: "*", action: "allow" }))
+                ]
+            },
             { name: "title", mode: "primary", native: true, hidden: true },
             { name: "look", mode: "primary", native: false }
         ];
@@ -4417,7 +4916,7 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
             if (u.pathname === "/agent") {
                 v5.agentCalls.push(u.searchParams.get("directory"));
                 if (v5.agentFail) return send(500, { name: "UnknownError", data: { message: "Unexpected server error" } });
-                return send(200, V5_AGENTS);
+                return send(200, v5.agentOverride ?? V5_AGENTS);
             }
             if (u.pathname === "/session/status") return send(200, v5.status ?? {});
             if (u.pathname === "/__ask") {
@@ -4439,7 +4938,15 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
                 if (req.method === "POST" && u.pathname === "/session") {
                     const id = `ses_v5${++v5Next}`;
                     v5.sessions.push({ id, body, dir });
+                    v5.rules[id] = [...(body?.permission ?? [])];
                     return send(200, { id });
+                }
+                const v5Root = u.pathname.match(/^\/session\/([^/]+)$/);
+                if (v5Root?.[1] === "ses_review_deleted" && (req.method === "GET" || req.method === "PATCH")) {
+                    return send(404, { error: "Session not found" });
+                }
+                if (v5Root && req.method === "GET" && v5Root[1] !== "status") {
+                    return send(200, { id: v5Root[1], ...(v5.rules[v5Root[1]] ? { permission: v5.rules[v5Root[1]] } : {}) });
                 }
                 const reply = u.pathname.match(/^\/(permission|question)\/([^/]+)\/reply$/);
                 const legacy = u.pathname.match(/^\/session\/([^/]+)\/permissions\/([^/]+)$/);
@@ -4477,6 +4984,11 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
                 }
                 if (req.method === "PATCH") {
                     v5.patches.push({ path: u.pathname, body, dir });
+                    if (v5.patchFail) return send(500, { error: "permission update failed" });
+                    if (v5Root && Array.isArray(body?.permission)) {
+                        v5.rules[v5Root[1]] = [...(v5.rules[v5Root[1]] ?? []), ...body.permission];
+                        return send(200, { id: v5Root[1], permission: v5.rules[v5Root[1]] });
+                    }
                     return send(200, {});
                 }
                 const kids = u.pathname.match(/^\/session\/([^/]+)\/children$/);
@@ -4499,6 +5011,33 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
                 if (msg && req.method === "POST") {
                     const sid = msg[1];
                     v5.messages.push({ sid, body, dir });
+                    // A delegation the model makes: `[[delegate:<agent>]] [[cmd:<shell>]]`.
+                    // A task child gets its parent's session DENY rules (every allow
+                    // dropped), then `todowrite`/`task` denied (1.19.0, measured with
+                    // scripts/probe-readonly.js), and runs with its own agent's rules
+                    // first: session rules come after them. An agent with no list here
+                    // stands for `* * allow`, as every 1.19.0 list starts.
+                    const said = (body?.parts ?? []).map((p) => p.text ?? "").join(" ");
+                    const delegate = said.match(/\[\[delegate:([\w-]+)\]\]/);
+                    const command = said.match(/\[\[cmd:([^\]]+)\]\]/);
+                    if (delegate && command) {
+                        const child = `ses_v5c${++v5ChildNext}`;
+                        const parentRules = v5.rules[sid] ?? [];
+                        v5.rules[child] = [
+                            ...parentRules.filter((r) => r.action === "deny"),
+                            { permission: "todowrite", action: "deny", pattern: "*" },
+                            { permission: "task", action: "deny", pattern: "*" }
+                        ];
+                        const own = V5_AGENTS.find((a) => a.name === delegate[1])?.permission ?? [{ permission: "*", pattern: "*", action: "allow" }];
+                        v5.delegations.push({
+                            parent: sid,
+                            child,
+                            agent: delegate[1],
+                            command: command[1],
+                            started: v5Eval([{ permission: "*", pattern: "*", action: "allow" }, ...parentRules], "task", delegate[1]),
+                            decision: v5Eval([...own, ...v5.rules[child]], "bash", command[1])
+                        });
+                    }
                     if (v5.mode === "fail-post") return send(500, { name: "UnknownError", data: { message: "Unexpected server error" } });
                     if (v5.mode === "tool-silent") {
                         // A tool the server reports as running, then only heartbeats.
@@ -4567,6 +5106,10 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         const count = (text, re) => (text.match(re) || []).length;
 
         // ---- PA: which agent a read-only turn runs as ----
+        // Enforcement off here: on a server the bridge did not start (this one)
+        // it asks GET /agent whether `plan` carries the overrides (RE), and PA
+        // counts the planAgent lookups alone.
+        settings.enforceReadOnly = false;
         const pa1 = await v5Turn("explain the cart for pa one");
         add("PA the default planAgent runs the built-in plan", lastMsg().body.agent === "plan" && /answered by/.test(pa1.md));
         add("PA the default costs nothing: no agent lookup", v5.agentCalls.length === 0);
@@ -4750,7 +5293,7 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
             lastMsg().body.agent === "look" && paSFArgv[paSFArgv.indexOf("--agent") + 1] === "plan" && /cli answer/.test(paSF.md) && /the CLI ran this turn as the built-in `plan`/.test(paSF.md)
         );
         fs.rmSync(paFailDir, { recursive: true, force: true });
-        Object.assign(settings, { transport: "server", executable: happy, planAgent: "plan" });
+        Object.assign(settings, { transport: "server", executable: happy, planAgent: "plan", enforceReadOnly: true });
 
         // ---- HQ: nobody can answer OpenCode's prompts in a chat turn ----
         const hqRules = (s) =>
@@ -4877,31 +5420,410 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         // ---- RO: a read-only turn's subagents are read-only ones ----
         // A subagent runs with its own permissions (`general` edits), so a
         // plan turn's session allows `task` only for readOnlySubagents.
-        Object.assign(settings, { transport: "server", executable: happy, planAgent: "plan" });
+        // These are the rules a read-only session gets on a server the bridge
+        // started (its explore is read-only by permission), and on any server
+        // with enforceReadOnly off. This fake is one the bridge did not start:
+        // with enforcement on, read-only turns there start no subagent (RE).
+        Object.assign(settings, { transport: "server", executable: happy, planAgent: "plan", enforceReadOnly: false });
         v5.mode = "answer";
         const roTask = (rules) => (Array.isArray(rules) ? rules.filter((r) => r.permission === "task").map((r) => `${r.action}:${r.pattern}`) : []);
         const roFrom = v5.sessions.length;
         const ro1 = await v5Turn("explain the cart for ro one");
         const roS1 = v5.sessions[roFrom];
         add("RO a plan turn's new session denies every subagent but explore (last match wins)", JSON.stringify(roTask(roS1?.body?.permission)) === JSON.stringify(["deny:*", "allow:explore"]) && hqRules(roS1));
+        add("PM …so on the server general is denied and explore allowed", v5Decide(roS1.id, "task", "general") === "deny" && v5Decide(roS1.id, "task", "explore") === "allow");
         const roPatch0 = v5.patches.length;
         const ro2 = await v5Turn("now add the test for ro", { command: "dev" }, v5Hist(ro1));
         const roP2 = v5.patches.slice(roPatch0);
+        // v212: this asserted the PATCH body had no task rule. OpenCode APPENDS a
+        // PATCH (1.19.0, measured), so the read-only rules stayed last and /dev
+        // kept them: the effect, read back from the merged rules, is the check.
         add(
-            "RO the next turn in that session, /dev, PATCHes the headless rules back (subagents unrestricted)",
+            "RO the next turn in that session, /dev, PATCHes the headless rules back and lifts the read-only limit (subagents unrestricted)",
             /answered by/.test(ro2.md) && roP2.length === 1 && roP2[0].path === `/session/${roS1.id}` && roP2[0].dir === work &&
-                roTask(roP2[0].body.permission).length === 0 && hqRules({ body: roP2[0].body })
+                hqRules({ body: roP2[0].body }) && v5Decide(roS1.id, "task", "general") === "allow" && v5Decide(roS1.id, "task", "explore") === "allow"
         );
         const ro3 = await v5Turn("and explain it again for ro", {}, v5Hist(ro1, ro2));
         const ro4 = await v5Turn("once more for ro", {}, v5Hist(ro1, ro2, ro3));
         const roP3 = v5.patches.slice(roPatch0 + 1);
         add("RO …a plan turn after it restores the read-only rules, and a second plan turn PATCHes nothing", /answered by/.test(ro4.md) && roP3.length === 1 && JSON.stringify(roTask(roP3[0].body.permission)) === JSON.stringify(["deny:*", "allow:explore"]));
+        add("PM …and on the server general is denied again, explore allowed", v5Decide(roS1.id, "task", "general") === "deny" && v5Decide(roS1.id, "task", "explore") === "allow");
+        const roLen = (roS1?.body?.permission ?? []).length;
+        const devLen = ext.__test.turnPermission(false).length + 1;
+        add(`PM rules grow by one PATCH per kind switch, never per turn (${(v5.rules[roS1.id] ?? []).length} rules, ≤ ${roLen * 2 + devLen})`, (v5.rules[roS1.id] ?? []).length <= roLen * 2 + devLen);
+        // A session from an earlier window: this one never saw its rules, so
+        // the first /dev turn reads them before it PATCHes.
+        const pmRo = [...ext.__test.turnPermission(false), { permission: "task", action: "deny", pattern: "*" }, { permission: "task", action: "allow", pattern: "explore" }];
+        const pmOld = (sid) => ({ result: { metadata: { kind: "plan", agent: "plan", sessionId: sid, cwd: work, turns: 3 } } });
+        v5.rules.ses_pm_ro = [...pmRo];
+        v5.rules.ses_pm_free = [...ext.__test.turnPermission(false)];
+        const pmPatch0 = v5.patches.length;
+        await v5Turn("edit it for pm ro", { command: "dev" }, v5Hist(pmOld("ses_pm_ro")));
+        await v5Turn("edit it for pm free", { command: "dev" }, v5Hist(pmOld("ses_pm_free")));
+        add("PM a session an earlier window made read-only gets its subagents back on its first /dev turn here", v5Decide("ses_pm_ro", "task", "general") === "allow");
+        add(
+            "PM …one that carries no task rule gets none: the dev agent's own rules decide",
+            v5Decide("ses_pm_free", "task", "general") === "agent" && v5.patches.slice(pmPatch0).filter((x) => x.path === "/session/ses_pm_free").every((x) => roTask(x.body.permission).length === 0)
+        );
+        const pmFrom = v5.sessions.length;
+        await v5Turn("start fresh editing for pm", { command: "dev" });
+        add("PM a session /dev creates carries no task rule", v5.sessions.length === pmFrom + 1 && roTask(v5.sessions[pmFrom].body?.permission).length === 0 && v5Decide(v5.sessions[pmFrom].id, "task", "general") === "agent");
+        // "Gets them back" means the dev agent's own `task` rules, not every
+        // subagent: the restore re-applies what GET /agent lists for it.
+        settings.devAgent = "strict";
+        const pmS1 = await v5Turn("explain the cart for pm strict");
+        const pmS2 = await v5Turn("edit it for pm strict", { command: "dev" }, v5Hist(pmS1));
+        const pmSid = pmS1.result?.metadata?.sessionId;
+        settings.devAgent = "build";
+        add(
+            "PM …after a plan turn, /dev as `strict` gets what strict allows (docs) and keeps what it denies (general)",
+            /answered by/.test(pmS2.md) && v5Decide(pmSid, "task", "docs") === "allow" && v5Decide(pmSid, "task", "general") === "deny" && v5Decide(pmSid, "task", "explore") === "allow"
+        );
         settings.readOnlySubagents = [];
+        const safetyBuild = await v5Turn("edit again with build", { command: "dev" }, v5Hist(pmS1, pmS2));
+        add("PM switching strict to build restores build permissions", /answered by/.test(safetyBuild.md) && v5Decide(pmSid, "task", "general") === "allow");
+        settings.devAgent = "strict";
+        const safetyStrict = await v5Turn("edit again with strict", { command: "dev" }, v5Hist(pmS1, pmS2, safetyBuild));
+        add("PM switching build to strict restores strict restrictions", /answered by/.test(safetyStrict.md) && v5Decide(pmSid, "task", "general") === "deny");
+        const safetyPatches = v5.patches.length;
+        await v5Turn("edit once more with strict", { command: "dev" }, v5Hist(pmS1, pmS2, safetyBuild, safetyStrict));
+        add("PM repeated same-agent dev turns do not append rules", v5.patches.length === safetyPatches);
+        settings.devAgent = "missing-safety-agent";
+        const safetyMessages = v5.messages.length;
+        const safetyLog = logLines.length;
+        const safetyMissing = await v5Turn("edit with an unavailable agent", { command: "dev" }, v5Hist(pmS1, pmS2));
+        add("PM unverified restoration sends neither a message nor a CLI fallback", v5.messages.length === safetyMessages && !logLines.slice(safetyLog).some((l) => /fake-ok\.js run\b/.test(l)) && /permission/i.test(safetyMissing.md));
+        // v214: nothing reached OpenCode, so Continue would send "continue" to a
+        // session that never got the task. Retry resends the words; New session
+        // gets a session with its rules at creation.
+        const safetyChips = global.__participant.followupProvider.provideFollowups(safetyMissing.result, {}, stream().token) || [];
+        const safetyRetry = safetyChips.find((c) => /Retry/.test(c.label));
+        add(
+            `PM …and says nothing was sent: Retry resends the words, then New session, never Continue (${safetyChips.map((c) => c.label).join(" | ")})`,
+            /Nothing was sent/.test(safetyMissing.md) && !/failed to start/.test(safetyMissing.md) &&
+            safetyRetry?.prompt === "edit with an unavailable agent" && safetyRetry?.command === "dev" &&
+            safetyChips.some((c) => /New session/.test(c.label)) && !safetyChips.some((c) => /Continue/.test(c.label))
+        );
+        settings.devAgent = "build";
+        for (const scenario of ["missing-permission", "malformed-permission", "discovery-failure"]) {
+            settings.devAgent = `safety-${scenario}`;
+            v5.agentOverride = [{ name: settings.devAgent, mode: "primary", ...(scenario === "malformed-permission" ? { permission: [{ permission: "task", pattern: "*", action: "invalid" }] } : {}) }];
+            v5.agentFail = scenario === "discovery-failure";
+            const messagesBefore = v5.messages.length;
+            const patchesBefore = v5.patches.length;
+            await v5Turn("verify restoration fails closed", { command: "dev" }, v5Hist(pmS1, pmS2));
+            add(`PM ${scenario} blocks sends without appending permissive rules`, v5.messages.length === messagesBefore && v5.patches.length === patchesBefore);
+        }
+        v5.agentOverride = undefined;
+        v5.agentFail = false;
+        settings.devAgent = "build";
+        const reviewAgents = require(path.join(repoDir, "out", "agents.js"));
+        add("PM invalid permission actions are rejected", !reviewAgents.isPermissionRule({ permission: "task", pattern: "*", action: "invalid" }));
+        v5.agentOverride = [{ name: "invalid-action", permission: [{ permission: "task", pattern: "*", action: "invalid" }] }];
+        const reviewInvalid = await reviewAgents.listAgents(`${work}-invalid-action`, `http://127.0.0.1:${v5Server.address().port}`);
+        add("PM GET agent with an invalid action exposes no authoritative permissions", reviewInvalid?.[0]?.name === "invalid-action" && reviewInvalid[0].permission === undefined);
+        v5.agentOverride = undefined;
+        const reviewDeleted = await v5Turn("recover the deleted session", { command: "plan" }, v5Hist(pmOld("ses_review_deleted")));
+        add("FC a deleted session during permission preparation recovers to a fresh session", /answered by/.test(reviewDeleted.md) && reviewDeleted.result?.metadata?.sessionId !== "ses_review_deleted");
+        const reviewDeletedDev = await v5Turn("recover the deleted editing session", { command: "dev" }, v5Hist(pmOld("ses_review_deleted")));
+        add("FC a deleted session during permission discovery recovers to a fresh editing session", /answered by/.test(reviewDeletedDev.md) && reviewDeletedDev.result?.metadata?.sessionId !== "ses_review_deleted");
+        for (const kind of ["plan", "dev"]) {
+            const sid = `ses_safety_patch_${kind}`;
+            v5.rules[sid] = kind === "dev" ? [...pmRo] : [...ext.__test.turnPermission(false)];
+            const beforeMessages = v5.messages.length;
+            const beforeLog = logLines.length;
+            v5.patchFail = true;
+            await v5Turn("check permission failure boundary", { command: kind }, v5Hist(pmOld(sid)));
+            add(`PM failed ${kind} permission PATCH blocks messages and CLI fallback`, v5.messages.length === beforeMessages && !logLines.slice(beforeLog).some((l) => /fake-ok\.js run\b/.test(l)));
+            v5.patchFail = false;
+            const beforeRetry = v5.patches.length;
+            await v5Turn("retry the permission update", { command: kind }, v5Hist(pmOld(sid)));
+            add(`PM successful ${kind} retry PATCHes before sending`, v5.patches.length === beforeRetry + 1 && v5.messages.length === beforeMessages + 1);
+        }
         const roFrom2 = v5.sessions.length;
         await v5Turn("explain the cart for ro none");
         add("RO readOnlySubagents [] denies every subagent on a read-only turn", JSON.stringify(roTask(v5.sessions[roFrom2]?.body?.permission)) === JSON.stringify(["deny:*"]));
         settings.readOnlySubagents = ["explore"];
         add("RO turnPermission(false) is exactly the headless rules", JSON.stringify(ext.__test.turnPermission(false)) === JSON.stringify(v5.sessions[0].body.permission.filter((r) => r.permission !== "task")));
+
+        // ---- RE: read-only by permission (0.0.215) ----
+        // This fake is a server the bridge did not start: its agents keep their
+        // own rules (1.19.0's explore runs any command), so read-only turns there
+        // start no subagent, and put no bash/edit deny on the session — a task
+        // child inherits every deny, so one would stop later /dev subagents.
+        settings.enforceReadOnly = true;
+        const v5Base = `http://127.0.0.1:${v5Server.address().port}`;
+        const reFrom = v5.sessions.length;
+        const re1 = await v5Turn("find the cart handlers [[delegate:explore]] [[cmd:echo hi > notes.txt]]");
+        const reS = v5.sessions[reFrom];
+        const reW = v5.delegations[v5.delegations.length - 1];
+        add(
+            `RE a read-only turn on a server the bridge did not start starts no subagent, explore included (explore: ${reW?.started})`,
+            /answered by/.test(re1.md) && JSON.stringify(roTask(reS?.body?.permission)) === JSON.stringify(["deny:*"]) && reW?.agent === "explore" && reW?.started === "deny" && !(await ext.__test.readOnlyReach(v5Base, work)).planEnforced
+        );
+        add("RE …and leaves bash and edit to the agent: no deny a later subagent would inherit", !(reS?.body?.permission ?? []).some((r) => r.permission === "bash" || r.permission === "edit"));
+        const re2 = await v5Turn("now fix the cart for re [[delegate:general]] [[cmd:echo hi > notes.txt]]", { command: "dev" }, v5Hist(re1));
+        const reD = v5.delegations[v5.delegations.length - 1];
+        add(
+            `RE the next /dev turn's subagent can still write (general: started ${reD?.started}, echo > file ${reD?.decision})`,
+            /answered by/.test(re2.md) && reD?.parent === reS?.id && reD?.agent === "general" && reD?.started === "allow" && reD?.decision === "allow"
+        );
+        add("RE unverified evidence belongs to the read-only turn, never the following dev turn", /no verified shell-free read-only rules/.test(re1.md) && !/no verified shell-free read-only rules/.test(re2.md));
+        // A server another window of the bridge started on the shared port: its
+        // `plan` lists the marker rule, so its read-only turns may start explore.
+        const reDir = fs.mkdtempSync(path.join(os.tmpdir(), "ocb-remark-"));
+        const reFolders = vscodeStub.workspace.workspaceFolders;
+        vscodeStub.workspace.workspaceFolders = [{ uri: { fsPath: reDir }, name: path.basename(reDir), index: 0 }];
+        const reMarked = (names) => V5_AGENTS.map((a) => (names.includes(a.name) ? { ...a, permission: [{ permission: "*", pattern: "*", action: "deny" }, { permission: "ocb-enforced", pattern: "*", action: "deny" }, { permission: "bash", pattern: "*", action: "deny" }] } : a));
+        v5.agentOverride = reMarked(["plan", "explore"]);
+        const reCalls = v5.agentCalls.length;
+        const reMFrom = v5.sessions.length;
+        await v5Turn("explain the cart for re marked");
+        add(
+            "RE a server whose plan lists the overrides' marker (another window started it) may start explore: one GET /agent, in this folder",
+            JSON.stringify(roTask(v5.sessions[reMFrom]?.body?.permission)) === JSON.stringify(["deny:*", "allow:explore"]) && v5.agentCalls.length === reCalls + 1 && v5.agentCalls[reCalls] === reDir
+        );
+        await v5Turn("explain the cart again for re marked");
+        add("RE …and that answer is kept a minute (no lookup per turn)", v5.agentCalls.length === reCalls + 1);
+        for (const variant of ["marker-only", "late-allow", "marker-last"]) {
+            const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ocb-repolicy-"));
+            vscodeStub.workspace.workspaceFolders = [{ uri: { fsPath: dir }, name: path.basename(dir), index: 0 }];
+            v5.agentOverride = reMarked(["plan", "explore"]).map((a) => ({ ...a, permission: variant === "marker-only"
+                ? [{ permission: "ocb-enforced", pattern: "*", action: "deny" }]
+                : [...(a.permission ?? []), { permission: "bash", pattern: variant === "late-allow" ? "git *" : "ocb-enforced", action: variant === "late-allow" ? "allow" : "deny" }] }));
+            const before = v5.sessions.length;
+            const sentBefore = v5.messages.length;
+            const result = await v5Turn(`explain policy variant ${variant}`);
+            if (variant === "marker-last") {
+                // 0.0.216's shape from an older window: every bash rule denies, but the tool is still offered.
+                add(`RE ${variant} cannot prove shell removal or permit delegation`, JSON.stringify(roTask(v5.sessions[before]?.body?.permission)) === JSON.stringify(["deny:*"]) && /no verified shell-free read-only rules/.test(result.md));
+            } else {
+                // 0.0.219: the bridge's own overrides with something given back refuse the turn before any session or message.
+                const named = variant === "late-allow" ? /`bash git \*: allow`/ : /no `\*: deny`/;
+                add(
+                    `RE ${variant}: overrides reopened on a bridge server refuse the turn, nothing sent (sessions +${v5.sessions.length - before}, messages +${v5.messages.length - sentBefore})`,
+                    v5.sessions.length === before && v5.messages.length === sentBefore && /Nothing was sent: OpenCode's configuration gives `plan` back/.test(result.md) && named.test(result.md)
+                );
+            }
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+        // RX on the server path: an MCP key a config file keeps after the bridge's
+        // `*: deny` on a bridge server refuses the turn before any session or message.
+        {
+            const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ocb-rxsrv-"));
+            vscodeStub.workspace.workspaceFolders = [{ uri: { fsPath: dir }, name: path.basename(dir), index: 0 }];
+            v5.agentOverride = reMarked(["plan", "explore"]).map((a) => (a.name === "plan" ? { ...a, permission: [...a.permission, { permission: "github_*", pattern: "*", action: "allow" }] } : a));
+            const before = v5.sessions.length;
+            const sentBefore = v5.messages.length;
+            const rxSrv = await v5Turn("explain the cart for rx server mcp");
+            add(
+                `RX server: an MCP tool reopened on the bridge's plan refuses the turn, nothing sent (sessions +${v5.sessions.length - before}, messages +${v5.messages.length - sentBefore})`,
+                v5.sessions.length === before && v5.messages.length === sentBefore && /`github_\*: allow`/.test(rxSrv.md) && rxSrv.result?.metadata?.notSent === true
+            );
+            // A fresh folder per scenario: GET /agent answers are kept a minute per folder.
+            const subDir = fs.mkdtempSync(path.join(os.tmpdir(), "ocb-rxsub-"));
+            v5.agentOverride = reMarked(["plan", "explore"]).map((a) => (a.name === "explore" ? { ...a, permission: [...a.permission, { permission: "github_*", pattern: "*", action: "allow" }] } : a));
+            const reach = await ext.__test.readOnlyReach(v5Base, subDir);
+            fs.rmSync(subDir, { recursive: true, force: true });
+            add("RX server: a reopened subagent is withheld (session rules can), the turn itself still runs", reach.planEnforced && reach.allowed.length === 0);
+            settings.planAgent = "look";
+            const lookDir = fs.mkdtempSync(path.join(os.tmpdir(), "ocb-rxlook-"));
+            vscodeStub.workspace.workspaceFolders = [{ uri: { fsPath: lookDir }, name: path.basename(lookDir), index: 0 }];
+            v5.agentOverride = V5_AGENTS.map((a) => (a.name === "look" ? { ...a, permission: [{ permission: "*", pattern: "*", action: "deny" }, { permission: "read", pattern: "*", action: "allow" }, { permission: "github_*", pattern: "*", action: "allow" }] } : a));
+            const look1 = await v5Turn("explain the cart for rx custom one");
+            const look2 = await v5Turn("explain the cart for rx custom two");
+            add(
+                "RX a custom planAgent keeps its own rules: it runs, and the chat names what they allow, once",
+                /answered by/.test(look1.md) && /`look` is a custom agent: its own rules apply, and they allow `github_\*: allow`/.test(look1.md) && /answered by/.test(look2.md) && !/custom agent/.test(look2.md)
+            );
+            const cleanDir = fs.mkdtempSync(path.join(os.tmpdir(), "ocb-rxclean-"));
+            vscodeStub.workspace.workspaceFolders = [{ uri: { fsPath: cleanDir }, name: path.basename(cleanDir), index: 0 }];
+            v5.agentOverride = V5_AGENTS.map((a) => (a.name === "look" ? { ...a, permission: [{ permission: "*", pattern: "*", action: "deny" }, { permission: "read", pattern: "*", action: "allow" }] } : a));
+            const notedSaved = globalMemento.get("shellFreeReadOnlyNoted");
+            globalMemento.delete("shellFreeReadOnlyNoted");
+            const look3 = await v5Turn("explain the cart for rx custom clean");
+            const notedAfter = globalMemento.get("shellFreeReadOnlyNoted");
+            globalMemento.set("shellFreeReadOnlyNoted", notedSaved);
+            add("RX a clean custom planAgent gets neither a warning nor the bridge's own read-only note (nor uses it up)", /answered by/.test(look3.md) && !/custom agent|read-only by permission now/.test(look3.md) && !notedAfter);
+            settings.planAgent = "plan";
+            for (const d of [dir, lookDir, cleanDir]) fs.rmSync(d, { recursive: true, force: true });
+        }
+        const subTaskAllowDir = fs.mkdtempSync(path.join(os.tmpdir(), "ocb-retask-"));
+        vscodeStub.workspace.workspaceFolders = [{ uri: { fsPath: subTaskAllowDir }, name: path.basename(subTaskAllowDir), index: 0 }];
+        v5.agentOverride = reMarked(["plan", "explore"]).map((a) => (a.name === "explore" ? { ...a, permission: [...(a.permission ?? []), { permission: "task", pattern: "*", action: "allow" }] } : a));
+        const subTaskReach = await ext.__test.readOnlyReach(v5Base, subTaskAllowDir);
+        add("RE a subagent whose final task rule is not `* deny` is withheld from read-only delegation", subTaskReach.planEnforced && subTaskReach.allowed.length === 0);
+        fs.rmSync(subTaskAllowDir, { recursive: true, force: true });
+        const customLookDir = fs.mkdtempSync(path.join(os.tmpdir(), "ocb-relook-"));
+        vscodeStub.workspace.workspaceFolders = [{ uri: { fsPath: customLookDir }, name: path.basename(customLookDir), index: 0 }];
+        settings.planAgent = "look";
+        v5.agentOverride = V5_AGENTS.map((a) => (a.name === "look" ? { ...a, permission: [{ permission: "*", pattern: "*", action: "deny" }, { permission: "read", pattern: "*", action: "allow" }] } : a));
+        const customLookRes = await v5Turn("explain custom look with writer denies");
+        add("RE a custom planAgent (`look`) whose rules deny writers gets no false unverified server warning", /answered by/.test(customLookRes.md) && !/no verified shell-free read-only rules|not verified/.test(customLookRes.md));
+        settings.planAgent = "plan";
+        fs.rmSync(customLookDir, { recursive: true, force: true });
+        const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "ocb-reoutput-"));
+        v5.agentOverride = reMarked(["plan", "explore"]).map((a) => ({ ...a, permission: [...(a.permission ?? []), { permission: "external_directory", pattern: `${outputDir}/*`, action: "allow" }] }));
+        const outputReach = await ext.__test.readOnlyReach(v5Base, outputDir);
+        add("RE OpenCode's tool-output read reach does not invalidate shell-free agent permissions", outputReach.planEnforced && JSON.stringify(outputReach.allowed) === JSON.stringify(["explore"]));
+        fs.rmSync(outputDir, { recursive: true, force: true });
+        const literalDir = fs.mkdtempSync(path.join(os.tmpdir(), "ocb-reliteral-"));
+        vscodeStub.workspace.workspaceFolders = [{ uri: { fsPath: literalDir }, name: path.basename(literalDir), index: 0 }];
+        const literalLogFrom = logLines.length;
+        settings.readOnlySubagents = ["*", "gen?ral", "build", "general", " explore ", "explore"];
+        v5.agentOverride = reMarked(["plan", "explore"]);
+        const literalStart = v5.sessions.length;
+        await v5Turn("explain literal subagent wire rules");
+        add(
+            "RE wildcard and primary/dev subagents never reach session creation and are logged once; literals appear once",
+            JSON.stringify(roTask(v5.sessions[literalStart]?.body?.permission)) === JSON.stringify(["deny:*", "allow:explore"]) &&
+                logLines.slice(literalLogFrom).some((l) => /readOnlySubagents: \*, gen\?ral, build, general is a wildcard or primary\/dev agent; left out/.test(l))
+        );
+        settings.readOnlySubagents = ["explore"];
+        fs.rmSync(literalDir, { recursive: true, force: true });
+        // Its plan has the overrides but explore not (readOnlySubagents changed
+        // after it started): explore is left out, and said in the log only.
+        const reDir2 = fs.mkdtempSync(path.join(os.tmpdir(), "ocb-remark-"));
+        vscodeStub.workspace.workspaceFolders = [{ uri: { fsPath: reDir2 }, name: path.basename(reDir2), index: 0 }];
+        v5.agentOverride = reMarked(["plan"]);
+        const reM2From = v5.sessions.length;
+        const reM2Log = logLines.length;
+        const reM2 = await v5Turn("explain the cart for re half marked");
+        add(
+            "RE …a subagent its server lacks the overrides for is left out, logged, with no chat line (plan is read-only there)",
+            JSON.stringify(roTask(v5.sessions[reM2From]?.body?.permission)) === JSON.stringify(["deny:*"]) &&
+                logLines.slice(reM2Log).some((l) => /explore: not read-only by permission on http:\/\/127\.0\.0\.1:\d+ \(it started before readOnlySubagents changed: restart it\) — left out of read-only turns/.test(l)) &&
+                !/without the bridge's read-only rules/.test(reM2.md)
+        );
+        fs.rmSync(reDir2, { recursive: true, force: true });
+        // Concurrent listAgents deduplication: N simultaneous readOnlyReach calls on a cold directory fire only one GET /agent.
+        const dedupDir = fs.mkdtempSync(path.join(os.tmpdir(), "ocb-rededup-"));
+        v5.agentOverride = reMarked(["plan", "explore"]);
+        const dedupBefore = v5.agentCalls.length;
+        await Promise.all([ext.__test.readOnlyReach(v5Base, dedupDir), ext.__test.readOnlyReach(v5Base, dedupDir), ext.__test.readOnlyReach(v5Base, dedupDir)]);
+        add("RE concurrent readOnlyReach calls on a cold directory share one in-flight GET /agent request", v5.agentCalls.length === dedupBefore + 1);
+        fs.rmSync(dedupDir, { recursive: true, force: true });
+        // Task 4 boundary checks:
+        // (1) Unenforced adopted server twice: both turns emit the unverified warning and do not mark shellFreeReadOnlyNoted.
+        // (2) Switching to an enforced endpoint emits the one-time notice once, marks shellFreeReadOnlyNoted, and does not repeat on the next enforced turn.
+        const lifecycleDir = fs.mkdtempSync(path.join(os.tmpdir(), "ocb-relife-"));
+        vscodeStub.workspace.workspaceFolders = [{ uri: { fsPath: lifecycleDir }, name: path.basename(lifecycleDir), index: 0 }];
+        globalMemento.delete("shellFreeReadOnlyNoted");
+        v5.agentOverride = V5_AGENTS;
+        const unv1 = await v5Turn("explain lifecycle unverified 1");
+        const unv2 = await v5Turn("explain lifecycle unverified 2");
+        add(
+            "RE two consecutive read-only turns on an unenforced server both emit the unverified notice and leave shellFreeReadOnlyNoted unset",
+            /no verified shell-free read-only rules for `plan`/.test(unv1.md) &&
+                /no verified shell-free read-only rules for `plan`/.test(unv2.md) &&
+                globalMemento.get("shellFreeReadOnlyNoted") === undefined
+        );
+        const lifecycleEnfDir = fs.mkdtempSync(path.join(os.tmpdir(), "ocb-relife-enf-"));
+        vscodeStub.workspace.workspaceFolders = [{ uri: { fsPath: lifecycleEnfDir }, name: path.basename(lifecycleEnfDir), index: 0 }];
+        v5.agentOverride = reMarked(["plan", "explore"]);
+        const enf1 = await v5Turn("explain lifecycle enforced 1");
+        const enf2 = await v5Turn("explain lifecycle enforced 2");
+        add(
+            "RE switching from an unenforced server to an enforced one emits the one-time notice once and sets shellFreeReadOnlyNoted",
+            /Plan turns are read-only by permission now/.test(enf1.md) &&
+                !/Plan turns are read-only by permission now/.test(enf2.md) &&
+                globalMemento.get("shellFreeReadOnlyNoted") === true
+        );
+        fs.rmSync(lifecycleDir, { recursive: true, force: true });
+        fs.rmSync(lifecycleEnfDir, { recursive: true, force: true });
+        // (3) Custom planAgent fallback to `plan` on an enforced server is enforced as `plan`; an unverified custom `look` (allowing edit) names `look` once.
+        const fbDir = fs.mkdtempSync(path.join(os.tmpdir(), "ocb-refb-"));
+        vscodeStub.workspace.workspaceFolders = [{ uri: { fsPath: fbDir }, name: path.basename(fbDir), index: 0 }];
+        settings.planAgent = "nonexistent-agent";
+        v5.agentOverride = reMarked(["plan", "explore"]);
+        const fbTurn = await v5Turn("explain fallback planAgent enforcement");
+        settings.planAgent = "look";
+        const lookUnvDir = fs.mkdtempSync(path.join(os.tmpdir(), "ocb-relook-unv-"));
+        vscodeStub.workspace.workspaceFolders = [{ uri: { fsPath: lookUnvDir }, name: path.basename(lookUnvDir), index: 0 }];
+        v5.agentOverride = V5_AGENTS;
+        const lookUnv1 = await v5Turn("explain unverified custom look 1");
+        const lookUnv2 = await v5Turn("explain unverified custom look 2");
+        settings.planAgent = "plan";
+        add(
+            "RE a missing custom planAgent falling back to `plan` uses `plan`'s enforcement; an unverified custom `look` warns once per endpoint",
+            !/no verified shell-free read-only rules|not verified/.test(fbTurn.md) &&
+                /`look` is a custom agent whose read-only permissions are not verified by the bridge/.test(lookUnv1.md) &&
+                !/`look` is a custom agent whose read-only permissions are not verified by the bridge/.test(lookUnv2.md)
+        );
+        fs.rmSync(fbDir, { recursive: true, force: true });
+        fs.rmSync(lookUnvDir, { recursive: true, force: true });
+        // (4) /parallel on an unenforced server surfaces the unverified notice; coldEnforcement checks all writer tools.
+        const parUnvDir = fs.mkdtempSync(path.join(os.tmpdir(), "ocb-repar-"));
+        vscodeStub.workspace.workspaceFolders = [{ uri: { fsPath: parUnvDir }, name: path.basename(parUnvDir), index: 0 }];
+        v5.agentOverride = V5_AGENTS;
+        const parUnv = stream();
+        await global.__handler({ prompt: "check a | check b", command: "parallel" }, { history: [] }, parUnv.response, parUnv.token);
+        const parUnvMd = parUnv.chatMarkdown.join("");
+        add(
+            "RE read-only /parallel on an unenforced server surfaces the unverified notice and coldEnforcement rejects writer-allowing configs",
+            /no verified shell-free read-only rules for `plan`/.test(parUnvMd) &&
+                ext.__test.coldEnforcement(ext.__test.enforcedConfigContent("{}"), "plan").kind === "enforced" &&
+                ext.__test.coldEnforcement(JSON.stringify({ agent: { plan: { permission: { "*": "deny", "ocb-enforced": "deny", bash: "deny", edit: "allow" } } } }), "plan").kind === "unverified"
+        );
+        fs.rmSync(parUnvDir, { recursive: true, force: true });
+        v5.agentOverride = undefined;
+        vscodeStub.workspace.workspaceFolders = reFolders;
+        fs.rmSync(reDir, { recursive: true, force: true });
+        settings.enforceReadOnly = false;
+        const reOff = await ext.__test.readOnlyReach(v5Base, work);
+        add("RE enforceReadOnly false: literal subagents remain available without claiming enforcement", !reOff.planEnforced && JSON.stringify(reOff.allowed) === JSON.stringify(["explore"]) && ext.__test.enforcedConfigContent(undefined) === undefined);
+        settings.enforceReadOnly = true;
+        // What a process the bridge starts merges over its config (OPENCODE_CONFIG_CONTENT).
+        const reCfg = JSON.parse(ext.__test.enforcedConfigContent(undefined) ?? "{}");
+        const rePlan = reCfg.agent?.plan?.permission ?? {};
+        const reExplore = reCfg.agent?.explore?.permission ?? {};
+        const reKeys = (o) => Object.keys(o ?? {});
+        const reShell = (command) => v5Eval(typeof rePlan.bash === "string" ? [{ permission: "bash", pattern: "*", action: rePlan.bash }] : Object.entries(rePlan.bash ?? {}).map(([pattern, action]) => ({ permission: "bash", pattern, action })), "bash", command);
+        add(
+            "RE the overrides: plan denies anything unlisted first (MCP, Code Mode), explicitly denies writers, reads, searches and the web, delegates only to explore",
+            reKeys(rePlan)[0] === "*" && rePlan["*"] === "deny" && rePlan.edit === "deny" && rePlan.write === "deny" && rePlan["ocb-enforced"] === "deny" && rePlan.bash === "deny" &&
+                rePlan.read?.["*.env"] === "deny" && rePlan.read?.["*.env.example"] === "allow" &&
+                rePlan.webfetch === "allow" && rePlan.websearch === "allow" && JSON.stringify(rePlan.task) === JSON.stringify({ "*": "deny", explore: "allow" })
+        );
+        add(
+            "RE shell is withheld: scalar `bash: deny` replaces any config map, including external helpers and parser edges",
+            rePlan.bash === "deny" && rePlan["ocb-enforced"] === "deny" &&
+                ["git status", "git diff --no-index --ext-diff a b", "> sentinel", "git diff --no-index -- a b"].every((c) => reShell(c) === "deny")
+        );
+        settings.readOnlySubagents = ["*", "gen?ral", "build", "general", " explore ", "explore", "team/look"];
+        const reLiteral = JSON.parse(ext.__test.enforcedConfigContent("{}"));
+        add("RE subagent overrides use deduplicated literal names only and exclude build/general", JSON.stringify(Object.keys(reLiteral.agent)) === JSON.stringify(["plan", "explore", "team/look"]) && JSON.stringify(reLiteral.agent.plan.permission.task) === JSON.stringify({ "*": "deny", explore: "allow", "team/look": "allow" }));
+        settings.readOnlySubagents = ["explore"];
+        add("RE …and explore gets the same rules, with no subagents of its own", reExplore["*"] === "deny" && reExplore.task === "deny" && JSON.stringify(reExplore.bash) === JSON.stringify(rePlan.bash));
+        const reMerged = JSON.parse(ext.__test.enforcedConfigContent(JSON.stringify({ model: "p/m", agent: { plan: { model: "x/y", permission: { edit: "allow" } }, build: { model: "b/c" } } })) ?? "{}");
+        add(
+            "RE a user's own OPENCODE_CONFIG_CONTENT is kept; only the read-only agents' permission is replaced",
+            reMerged.model === "p/m" && reMerged.agent?.plan?.model === "x/y" && reMerged.agent?.plan?.permission?.edit === "deny" && reMerged.agent?.plan?.permission?.["*"] === "deny" &&
+                JSON.stringify(reMerged.agent?.build) === JSON.stringify({ model: "b/c" })
+        );
+        add("RE …and one that is not a JSON object is left alone (no overrides)", ext.__test.enforcedConfigContent("[1]") === undefined && ext.__test.enforcedConfigContent("{not json") === undefined);
+        const reEnvBefore = process.env.OPENCODE_CONFIG_CONTENT;
+        const reTransport = settings.transport;
+        settings.transport = "cli";
+        process.env.OPENCODE_CONFIG_CONTENT = "{not json";
+        const invalidHost = hostStream();
+        const invalidResult = await invalidHost.invoke((api, token) => global.__handler({ prompt: "explain malformed inherited config evidence" }, { history: [] }, api, token));
+        await invalidResult.handlerTask;
+        const invalidText = invalidHost.main.parts.filter((p) => p.kind === "markdownContent").map((p) => p.content).join("");
+        add("RE malformed inherited config never receives an enforcement success notice", /Read-only permissions could not be verified/.test(invalidText) && !/Plan turns are read-only by permission now/.test(invalidText));
+        settings.transport = reTransport;
+        if (reEnvBefore === undefined) delete process.env.OPENCODE_CONFIG_CONTENT;
+        else process.env.OPENCODE_CONFIG_CONTENT = reEnvBefore;
+        // readOnlyTools: MCP tools by permission name (1.19.0 names gitScan `git-scan_gitScan`, measured).
+        add("RE readOnlyTools: the bridge's gitScan stays usable on read-only turns (right after `*`)", reKeys(rePlan)[1] === "git-scan_gitScan" && rePlan["git-scan_gitScan"] === "allow" && reExplore["git-scan_gitScan"] === "allow");
+        settings.readOnlyTools = ["jira_get*", "*", "e*", "bash", " "];
+        const reTools = JSON.parse(ext.__test.enforcedConfigContent(undefined) ?? "{}").agent?.plan?.permission ?? {};
+        add(
+            "RE …a name that would allow a tool that writes, runs or delegates is left out, wildcards included",
+            reTools["jira_get*"] === "allow" && reTools["*"] === "deny" && reTools["e*"] === undefined && reTools.bash === "deny" && !Object.keys(reTools).includes(" ") &&
+                logLines.some((l) => /readOnlyTools: \*, e\*, bash would allow a tool that writes, runs or delegates; left out/.test(l))
+        );
+        settings.readOnlyTools = ["git-scan_gitScan"];
 
         // ---- SC: what the subagents cost joins the turn ----
         v5.mode = "asks";
@@ -5059,6 +5981,21 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         const cp4 = await v5Turn("", { command: "compact" });
         add("CP /compact in a chat with no session runs nothing", /Nothing to compact/.test(cp4.md) && v5.summarize.length === 1);
         add("CP /compact is a control command, in /help and the manifest", ext.__test.slashCommands.includes("compact") && /`\/compact`/.test(cp4.md === "" ? "" : (await v5Turn("", { command: "help" })).md));
+        // v212: `autoCompactEveryTurns: 0` is documented as "rely only on
+        // OpenCode's native autocompaction"; 0.0.211 still summarized past 60k / 70%.
+        Object.assign(settings, { autoCompact: true, autoCompactEveryTurns: 0 });
+        v5.summarize.length = 0;
+        v5.tokens = { input: 5, output: 2, reasoning: 0, total: 70000, cache: { read: 0, write: 0 } };
+        const cp0 = await v5Turn("explain the cart for cp zero");
+        await new Promise((r) => setTimeout(r, 150));
+        const cp0Chips = chipsOf(cp0.result);
+        add(
+            `CP autoCompactEveryTurns 0 leaves compaction to OpenCode: no summary at 70k, a Compact chip instead (${cp0Chips.map((c) => c.label).join(" | ")})`,
+            v5.summarize.length === 0 && cp0Chips.some((c) => /Compact · 70k$/.test(c.label))
+        );
+        Object.assign(settings, { autoCompact: false, autoCompactEveryTurns: 8 });
+        v5.tokens = undefined;
+        v5.summarize.length = 0;
 
         // After a failed server start autocompact backs off for minutes; a /compact the user typed does not.
         const cbFree = await new Promise((resolve) => {
@@ -5157,13 +6094,17 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         // (xAI image attachments, message-v2.ts) touches nothing the bridge uses.
         v5.version = "1.18.35";
         const vn35 = await v5Turn("explain the cart for vn latest");
+        // v212: 1.18.35 → 1.19.0 was diffed and a 1.19.0 server measured (REFS).
+        v5.version = "1.19.0";
+        const vn190 = await v5Turn("explain the cart for vn 1.19");
         v5.version = "1.19.2";
         const vn1 = await v5Turn("explain the cart for vn new");
         const vn2 = await v5Turn("explain the cart for vn again");
         v5.version = undefined;
         add("VN a version inside the tested range says nothing", !/outside the versions/.test(vn0.md));
-        add("VN 1.18.35, the newest measured, says nothing", !/outside the versions/.test(vn35.md) && /answered by/.test(vn35.md));
-        add("VN …one outside it says so once per window, and the turn runs", /OpenCode 1\.19\.2 is outside the versions this bridge was tested with \(1\.18\.27–1\.18\.35\)/.test(vn1.md) && /answered by/.test(vn1.md) && !/outside the versions/.test(vn2.md));
+        add("VN 1.18.35 says nothing", !/outside the versions/.test(vn35.md) && /answered by/.test(vn35.md));
+        add("VN 1.19.0, the newest diffed and measured, says nothing", !/outside the versions/.test(vn190.md) && /answered by/.test(vn190.md));
+        add("VN …one outside it says so once per window, and the turn runs", /OpenCode 1\.19\.2 is outside the versions this bridge was tested with \(1\.18\.27–1\.19\.0\)/.test(vn1.md) && /answered by/.test(vn1.md) && !/outside the versions/.test(vn2.md));
 
 
         // demux hands unattributed events to every subscriber, and v184 counted
@@ -5475,31 +6416,23 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         const front = block.split("\n---\n")[0];
         add("LK the README ships the look agent", block.length > 200 && /\nmode: primary\n/.test(front));
         add("LK everything not named is denied (task, MCP tools, webfetch, edit)", /\npermission:\n {2}"\*": deny\n/.test(front));
-        add("LK bash is deny-by-default, with redirects denied last", /\n {2}bash:\n {4}"\*": deny\n/.test(front) && /\n {4}"\*>\*": deny\n$/.test(front + "\n"));
-        add("LK find's writing flags are denied", ["-delete", "-exec", "-ok", "-fprint", "-fls"].every((f) => front.includes(`"find *${f}*": deny`)));
+        add("LK bash is disabled at the tool boundary", /\n {2}bash: deny(?:\n|$)/.test(front));
         add("LK it never asks (an ask hangs a headless turn or is auto-approved)", !/:\s*ask\b/.test(front));
         // Allow-lists, so a looser edit fails here rather than in someone's repo.
         const lkTop = [];
-        const lkBash = [];
-        let lkIn = "";
         for (const line of front.split("\n").slice(front.split("\n").indexOf("permission:") + 1)) {
             const top = line.match(/^ {2}"?([^":]+)"?:\s*(\S*)$/);
             if (top) {
-                lkIn = top[1];
                 lkTop.push([top[1], top[2]]);
                 continue;
             }
-            const rule = line.match(/^ {4}"(.+)": (allow|deny)$/);
-            if (rule && lkIn === "bash") lkBash.push(rule);
         }
         const LK_TOOLS = new Set(["*", "read", "grep", "glob", "list", "lsp", "skill", "todowrite", "todoread", "bash"]);
         add(
             "LK only inspect tools are allowed (anything else is absent or denied)",
             lkTop.length >= 8 && lkTop.every(([k, v]) => LK_TOOLS.has(k) || v === "deny") && lkTop.some(([k]) => k === "bash")
         );
-        const LK_BASH = new Set(["ls", "ls *", "pwd", "cat *", "head *", "wc *", "grep *", "rg *", "find *", "git status", "git status *", "git show *", "git log *", "git diff *", "git rev-parse *", "git branch", "git branch --list*"]);
-        const lkAllowed = lkBash.filter((r) => r[2] === "allow").map((r) => r[1]);
-        add(`LK bash allows only inspect commands (${lkAllowed.length})`, lkAllowed.length >= 10 && lkAllowed.every((c) => LK_BASH.has(c)));
+        add("LK inspection uses dedicated read and search tools", lkTop.some(([k, v]) => k === "grep" && v === "allow") && lkTop.some(([k, v]) => k === "glob" && v === "allow"));
     }
 
 
@@ -6810,8 +7743,13 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         const sb4Transport = settings.transport;
         Object.assign(settings, { executable: sbServe("fake-sb-lanes.js", 2200), serverPort: await sbPort(), transport: "server" });
         const sb4 = stream();
+        const sb4Log = logLines.length;
         await global.__handler({ prompt: "a for sb | b for sb", command: "parallel" }, {}, sb4.response, sb4.token);
         add("SB a /parallel turn that waits on a first boot says so", sb4.progress.some((t) => /Starting the OpenCode server/.test(t)));
+        // v212: the boot it waited on must be its own. stopServer() left a start
+        // still polling, the next turn joined it, and this check passed in 45 s
+        // without ever starting fake-sb-lanes.js (0.0.211, measured).
+        add("SB …and the boot it waited on was its own: stopServer() ends a start still polling", logLines.slice(sb4Log).some((l) => /fake-sb-lanes\.js serve\b/.test(l)));
         // A chat turn warms the same server before its heartbeat exists: it
         // has to pass the slow-start note itself, not only /sessions and /parallel.
         add(
@@ -6821,6 +7759,210 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         ext.deactivate();
         settings.transport = sb4Transport;
         Object.assign(settings, { executable: sbSaved.exe, serverPort: sbSaved.port, serverStartupPollMs: sbSaved.poll });
+
+        // OC (v212): an `opencode` that is OpenCode 2. Measured on 2.0.27: `serve`
+        // answers /global/health with its web app (200, HTML) and prints a server
+        // password; `run` rejects --attach, --dir, --variant and --pure (exit 1,
+        // "Unrecognized flag"). 0.0.211 waited out the start deadline twice per
+        // plan turn, then ran a cold CLI fallback without the bridge's rules.
+        {
+            const ocScript =
+                "const a = process.argv.slice(2);\n" +
+                "if (a.includes('--version')) { process.stdout.write('opencode v2.0.27\\n'); process.exit(0); }\n" +
+                "const i = a.indexOf('--port');\n" +
+                "if (a.includes('serve') && i >= 0) {\n" +
+                "  process.stdout.write('server listening on http://127.0.0.1:' + a[i + 1] + '\\nserver pass');\n" +
+                "  setTimeout(() => process.stdout.write('word s3cret'), 15); setTimeout(() => process.stdout.write('PW0rd\\n'), 30);\n" +
+                "  require('http').createServer((q, s) => { s.setHeader('content-type', 'text/html'); s.end('<!doctype html><html><title>OpenCode</title></html>'); }).listen(Number(a[i + 1]), '127.0.0.1');\n" +
+                "} else if (a.includes('run')) {\n" +
+                "  const bad = a.find((x) => ['--attach', '--dir', '--variant', '--pure'].includes(x));\n" +
+                "  if (bad) { process.stdout.write('DESCRIPTION\\n  Run OpenCode with a message\\n'); process.stderr.write('ERRORS\\n  Unrecognized flag: ' + bad + ' in command opencode run\\n'); process.exit(1); }\n" +
+                "}\n";
+            const ocFake = writeFake("fake-oc2.js", [], ocScript);
+            const ocCli = writeFake("fake-oc2-cli.js", [], ocScript);
+            const ocSaved = { exe: settings.executable, port: settings.serverPort, t: settings.transport, poll: settings.serverStartupPollMs, effort: settings.effort };
+            Object.assign(settings, { executable: ocFake, serverPort: await sbPort(), transport: "server", serverStartupPollMs: 50 });
+            // Bounds 0.0.211's red run; 0.0.212 never gets near it.
+            ext.__test.setStartupDeadline(4000);
+            const ocLog = logLines.length;
+            const oc1 = stream();
+            const oc1T0 = Date.now();
+            const oc1R = await global.__handler({ prompt: "explain the cart for oc two" }, { history: [] }, oc1.response, oc1.token);
+            const oc1Ms = Date.now() - oc1T0;
+            const oc1Chat = plain(oc1.chatMarkdown.join(""));
+            add(
+                `OC an OpenCode 2 server (its health is a web page) is refused at once, not after the start deadline (${oc1Ms}ms)`,
+                oc1Ms < 3000 && /not OpenCode 1/.test(oc1Chat) && /opencode-ai@1/.test(oc1Chat)
+            );
+            add("OC …and nothing runs: no CLI fallback without the bridge's rules", !logLines.slice(ocLog).some((l) => /fake-oc2\.js run\b/.test(l)));
+            await waitFor(() => logLines.slice(ocLog).some((l) => /\[serve\][\s\S]*password \[redacted\]/.test(l)), 1500);
+            add(
+                "OC …its server password reaches neither chat nor the log",
+                !/s3cret|PW0rd/.test(oc1Chat) && !logLines.slice(ocLog).some((l) => /s3cret|PW0rd/.test(l)) && logLines.slice(ocLog).some((l) => /\[serve\][\s\S]*password \[redacted\]/.test(l))
+            );
+            const oc1Chips = global.__participant.followupProvider.provideFollowups(oc1R, {}, stream().token) || [];
+            const lineFake = writeFake("fake-redaction-lines.js", [],
+                "if (process.argv.includes('--version')) { process.stdout.write('1.19.0\\n'); process.exit(0); }\n" +
+                "if (!process.argv.includes('serve')) process.exit(0);\n" +
+                "process.stdout.write('server password sample'); process.stderr.write('ordinary stderr line\\n');\n" +
+                "setTimeout(() => process.stdout.write('Secret\\r'), 20);\n" +
+                "setTimeout(() => process.stdout.write('\\n' + 'x'.repeat(9000) + 'oversizeSecret\\nordinary stdout line\\nserver password final'), 40);\n" +
+                "setTimeout(() => { process.stdout.write('Secret'); process.exit(1); }, 60);\n");
+            settings.executable = lineFake;
+            const lineLog = logLines.length;
+            const lineChat = stream();
+            await global.__handler({ prompt: "verify bounded server diagnostics" }, { history: [] }, lineChat.response, lineChat.token);
+            const lineOutput = logLines.slice(lineLog).join("\n") + lineChat.chatMarkdown.join("");
+            add(`OC CRLF, unterminated and oversized password diagnostics reveal no secret fragments (leak=${/sample|Secret|oversizeSecret/.test(lineOutput)}, discarded=${/discarded/.test(lineOutput)}, redacted=${/password \[redacted\]/.test(lineOutput)})`, !/sample|Secret|oversizeSecret/.test(lineOutput) && /discarded/.test(lineOutput) && /password \[redacted\]/.test(lineOutput));
+            add("OC stdout and stderr buffers preserve ordinary independent lines", /ordinary stderr line/.test(lineOutput) && /ordinary stdout line/.test(lineOutput));
+            settings.executable = ocFake;
+            add(`OC …and the chips are Retry and Ping, not Continue (${oc1Chips.map((c) => c.label).join(" | ")})`, oc1Chips.some((c) => /Ping/.test(c.label)) && !oc1Chips.some((c) => /Continue/.test(c.label)));
+            const ocServes = () => logLines.filter((l) => /fake-oc2\.js serve\b/.test(l)).length;
+            const ocServesBefore = ocServes();
+            const oc2 = stream();
+            const oc2T0 = Date.now();
+            await global.__handler({ prompt: "and again for oc two" }, { history: [] }, oc2.response, oc2.token);
+            const oc2Ms = Date.now() - oc2T0;
+            add(`OC …and the next turn says so at once, without starting it again (${oc2Ms}ms)`, oc2Ms < 1000 && /not OpenCode 1/.test(plain(oc2.chatMarkdown.join(""))) && ocServes() === ocServesBefore);
+            ext.__test.setStartupDeadline();
+            ext.deactivate();
+
+            // The CLI path: OpenCode 2 rejects a flag the bridge sends.
+            Object.assign(settings, { executable: ocCli, transport: "cli", effort: "high" });
+            const oc3 = stream();
+            await global.__handler({ prompt: "explain it on the cli for oc two" }, { history: [] }, oc3.response, oc3.token);
+            const oc3Chat = plain(oc3.chatMarkdown.join(""));
+            add(
+                "OC the first CLI turn refuses OpenCode 2 by version before sending flags",
+                /not OpenCode 1/.test(oc3Chat) && /--version/.test(oc3Chat) && oc3.buttons.some((b) => b.command === "opencodeCopilotBridge.showLog")
+            );
+            const oc4Log = logLines.length;
+            const oc4 = stream();
+            await global.__handler({ prompt: "and once more on the cli for oc two" }, { history: [] }, oc4.response, oc4.token);
+            add("OC …and the next CLI turn is refused before anything runs", /not OpenCode 1/.test(plain(oc4.chatMarkdown.join(""))) && !logLines.slice(oc4Log).some((l) => /fake-oc2-cli\.js run\b/.test(l)));
+            settings.effort = ocSaved.effort;
+            const oc5 = stream();
+            const oc5R = await global.__handler({ prompt: "", command: "ping" }, {}, oc5.response, oc5.token);
+            const oc5Chat = plain(oc5.chatMarkdown.join(""));
+            add("OC /ping names OpenCode 2 in its version row, and the bridge as unable to reach OpenCode 1", /opencode v2\.0\.27[^|\n]*OpenCode 2/.test(oc5Chat) && oc5R.metadata.healthy === false);
+            // writeFake, not a bare write: on POSIX the fake IS the file it runs, and
+            // without its shebang /bin/sh reads it (0.0.213 was red there, green on Windows).
+            writeFake("fake-oc2-cli.js", [], "if (process.argv.includes('--version')) { process.stdout.write('1.19.0\\n'); } else { process.stdout.write(JSON.stringify({ type: 'text', part: { text: 'recovered identity' } }) + '\\n'); }\n");
+            const recoveryPing = stream();
+            await global.__handler({ prompt: "", command: "ping" }, {}, recoveryPing.response, recoveryPing.token);
+            const recoveryTurn = stream();
+            await global.__handler({ prompt: "verify replacement CLI recovery" }, { history: [] }, recoveryTurn.response, recoveryTurn.token);
+            add("OC ping lifts refusal after replacing the executable with 1.x", /recovered identity/.test(recoveryTurn.chatMarkdown.join("")));
+            // Transport cli with no flag OpenCode 2 rejects (no effort, no pure):
+            // only `--version` tells, and prewarmServer runs it in the background
+            // there, so the first turn is refused instead of run without the rules.
+            const ocQuiet = writeFake("fake-oc2-quiet.js", [], ocScript);
+            const ocTrust = vscodeStub.workspace.isTrusted;
+            Object.assign(settings, { executable: ocQuiet, transport: "cli", effort: "", prewarmServer: false });
+            vscodeStub.workspace.isTrusted = true;
+            const ocPre = ext.__test.prewarmServer();
+            vscodeStub.workspace.isTrusted = ocTrust;
+            const oc6Log = logLines.length;
+            const oc6 = stream();
+            await global.__handler({ prompt: "explain it quietly for oc two" }, { history: [] }, oc6.response, oc6.token);
+            add(
+                "OC transport cli with prewarming disabled refuses the first plain turn before run",
+                ocPre === undefined && /not OpenCode 1/.test(plain(oc6.chatMarkdown.join(""))) && !logLines.slice(oc6Log).some((l) => /fake-oc2-quiet\.js run\b/.test(l))
+            );
+            // v214: /parallel confirms identity once, before any lane: the refusal
+            // is said whole (the 1.x recipe too), not cut to a line under each lane.
+            const ocLanes = writeFake("fake-oc2-lanes.js", [], ocScript);
+            settings.executable = ocLanes;
+            const ocLanesLog = logLines.length;
+            const ocPar = stream();
+            const ocParPrompt = "audit the cart for oc two | list the routes for oc two";
+            const ocParResult = await global.__handler({ prompt: ocParPrompt, command: "parallel" }, {}, ocPar.response, ocPar.token);
+            const ocParChat = plain(ocPar.chatMarkdown.join(""));
+            add(
+                "OC /parallel on an OpenCode 2 CLI says why once, in full, and runs no lane",
+                (ocParChat.match(/not OpenCode 1/g) || []).length === 1 && /opencode-ai@1/.test(ocParChat) &&
+                !logLines.slice(ocLanesLog).some((l) => /fake-oc2-lanes\.js run\b/.test(l))
+            );
+            const ocParChips = global.__participant.followupProvider.provideFollowups(ocParResult, {}, stream().token) || [];
+            add("OC refused parallel turn offers its original lanes as Retry on parallel, plus Ping, never Continue",
+                ocParChips.some((c) => /Retry/.test(c.label) && c.prompt === ocParPrompt && c.command === "parallel") &&
+                ocParChips.some((c) => /Ping/.test(c.label)) && !ocParChips.some((c) => /Continue/.test(c.label)));
+            const ocParAgain = stream();
+            const ocParAgainResult = await global.__handler({ prompt: ocParPrompt, command: "parallel" }, {}, ocParAgain.response, ocParAgain.token);
+            const ocParAgainChips = global.__participant.followupProvider.provideFollowups(ocParAgainResult, {}, stream().token) || [];
+            add("OC a cached parallel refusal also keeps Retry on parallel and Ping",
+                ocParAgainChips.some((c) => c.prompt === ocParPrompt && c.command === "parallel") && ocParAgainChips.some((c) => /Ping/.test(c.label)));
+            if (process.platform === "win32") {
+                const shimOne = writeFake("fake-shim-one.js", [],
+                    "if (process.argv.includes('--version')) { process.stdout.write('1.19.0\\n'); } else { process.stdout.write(JSON.stringify({ type: 'text', part: { text: 'shim one answered' } }) + '\\n'); }\n");
+                writeFake("fake-shim-two.js", [], ocScript);
+                settings.executable = shimOne;
+                const shimBefore = stream();
+                await global.__handler({ prompt: "verify original shim target" }, { history: [] }, shimBefore.response, shimBefore.token);
+                add("OC shim fixture runs its original 1.x target", /shim one answered/.test(shimBefore.chatMarkdown.join("")));
+                fs.writeFileSync(shimOne, `@echo off\r\n"${process.execPath}" "${path.join(work, "fake-shim-two.js")}" %*\r\n`);
+                const shimLog = logLines.length;
+                const shimAfter = stream();
+                await global.__handler({ prompt: "verify retargeted shim identity" }, { history: [] }, shimAfter.response, shimAfter.token);
+                add("OC a retargeted Windows shim is resolved and checked again before any run",
+                    /not OpenCode 1/.test(plain(shimAfter.chatMarkdown.join(""))) &&
+                    logLines.slice(shimLog).some((l) => /fake-shim-two\.js --version\b/.test(l)) &&
+                    !logLines.slice(shimLog).some((l) => /fake-shim-(?:one|two)\.js run\b/.test(l)));
+            }
+            settings.effort = ocSaved.effort;
+            settings.prewarmServer = true;
+            const delayedIdentity = writeFake("fake-delayed-identity.js", [],
+                "if (process.argv.includes('--version')) { setTimeout(() => process.stdout.write('1.19.0\\n'), 1500); } else { process.stdout.write(JSON.stringify({ type: 'text', part: { text: 'identity checked' } }) + '\\n'); }\n");
+            Object.assign(settings, { executable: delayedIdentity, transport: "cli", attachDevToServer: false });
+            const identityLog = logLines.length;
+            const identityStop = stream();
+            const identityStarted = Date.now();
+            setTimeout(() => identityStop.token.cancel(), 50);
+            await global.__handler({ prompt: "stop while checking CLI identity" }, { history: [] }, identityStop.response, identityStop.token);
+            add("OC Stop during first-use CLI identity returns within one second and sends no run", Date.now() - identityStarted < 1000 && !logLines.slice(identityLog).some((l) => /fake-delayed-identity\.js run\b/.test(l)));
+            const identityA = stream();
+            const identityB = stream();
+            await Promise.all([identityA, identityB].map((h) => global.__handler({ prompt: "verify shared CLI identity" }, { history: [] }, h.response, h.token)));
+            add("OC concurrent CLI turns share the pending identity check", logLines.slice(identityLog).filter((l) => /fake-delayed-identity\.js --version\b/.test(l)).length === 1 && [identityA, identityB].every((h) => /identity checked/.test(h.chatMarkdown.join(""))));
+            // v214: the check is of the file, not the name. A 2.x installer
+            // replaces a 1.x in place; its plain-turn flags are all ones 2.x takes.
+            const steadyLog = logLines.length;
+            const steady = stream();
+            await global.__handler({ prompt: "verify the cached CLI identity" }, { history: [] }, steady.response, steady.token);
+            add("OC an unchanged executable reuses its identity: no second --version", /identity checked/.test(steady.chatMarkdown.join("")) && !logLines.slice(steadyLog).some((l) => /fake-delayed-identity\.js --version\b/.test(l)));
+            writeFake("fake-delayed-identity.js", [],
+                "if (process.argv.includes('--version')) { process.stdout.write('opencode v2.0.27\\n'); process.exit(0); }\n" +
+                "process.stdout.write(JSON.stringify({ type: 'text', part: { text: 'ran on two' } }) + '\\n');\n");
+            const replacedLog = logLines.length;
+            const replaced = stream();
+            await global.__handler({ prompt: "verify the replaced CLI identity" }, { history: [] }, replaced.response, replaced.token);
+            const replacedChat = plain(replaced.chatMarkdown.join(""));
+            add(
+                "OC a 1.x replaced in place by 2.x is checked again before the next CLI run, and nothing runs",
+                /not OpenCode 1/.test(replacedChat) && !/ran on two/.test(replacedChat) &&
+                !logLines.slice(replacedLog).some((l) => /fake-delayed-identity\.js run\b/.test(l)) &&
+                logLines.slice(replacedLog).some((l) => /changed on disk/.test(l))
+            );
+            for (const scenario of ["unknown", "failed-version"]) {
+                const identityFake = writeFake(`fake-identity-${scenario}.js`, [],
+                    `if (process.argv.includes('--version')) { process.stdout.write('${scenario === "unknown" ? "not a version" : "1.19.0"}\\n'); process.exit(${scenario === "failed-version" ? 1 : 0}); }\n`);
+                settings.executable = identityFake;
+                const before = logLines.length;
+                const h = stream();
+                const hR = await global.__handler({ prompt: "verify failed CLI identity" }, { history: [] }, h.response, h.token);
+                add(`OC ${scenario} identity never authorizes run`, !logLines.slice(before).some((l) => new RegExp(`fake-identity-${scenario}\\.js run\\b`).test(l)));
+                // v214: nothing ran — Retry and Ping (it prints the version), never Continue.
+                const hChips = global.__participant.followupProvider.provideFollowups(hR, {}, stream().token) || [];
+                add(
+                    `OC …${scenario}: says nothing ran, with Retry and Ping, never Continue (${hChips.map((c) => c.label).join(" | ")})`,
+                    /Nothing was run/.test(plain(h.chatMarkdown.join(""))) && !/failed to start/.test(h.chatMarkdown.join("")) &&
+                    hChips.some((c) => /Retry/.test(c.label)) && hChips.some((c) => /Ping/.test(c.label)) && !hChips.some((c) => /Continue/.test(c.label))
+                );
+            }
+            settings.attachDevToServer = true;
+            Object.assign(settings, { executable: ocSaved.exe, serverPort: ocSaved.port, transport: ocSaved.t, serverStartupPollMs: ocSaved.poll });
+            ext.deactivate();
+        }
 
         // ---- v207 ----
         const occurrences = (text, needle) => text.split(needle).length - 1;
@@ -6837,6 +7979,82 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
             const lg3 = ext.__test.createLeakGate();
             const lg3Out = [lg3.push("x\n---\n(Context"), lg3.push(" only. Do not repeat or summarize this block.)"), lg3.flush()].join("");
             add("GT …and the bridge's own preamble said back in pieces", lg3Out === "x\n");
+            const lg4 = ext.__test.createLeakGate();
+            const lg4Out = [lg4.push("Answer <workspace-context>SECRET"), lg4.flush(), lg4.flush()].join("");
+            add(`GT an unclosed context block is dropped at flush (${JSON.stringify(lg4Out)})`, lg4Out === "Answer ");
+            const lg5 = ext.__test.createLeakGate();
+            const lg5First = lg5.push("<workspace-context>A</workspace-context><workspace-context>B");
+            const lg5Out = [lg5First, lg5.push("</workspace-context>Done"), lg5.flush()].join("");
+            add("GT a second block stays hidden until its own close arrives", lg5First === "" && lg5Out === "Done");
+            for (const opener of ["<workspace-context>", "---\nFiles the user attached:", "---\n(Context only."]) {
+                const text = `Answer\n${opener}SECRET`;
+                const outputs = Array.from({ length: text.length + 1 }, (_, at) => {
+                    const gate = ext.__test.createLeakGate();
+                    return gate.push(text.slice(0, at)) + gate.push(text.slice(at)) + gate.flush();
+                });
+                add(`GT an unclosed ${JSON.stringify(opener)} stays hidden at every split`, outputs.every((out) => out === "Answer\n"));
+            }
+            const lg6 = ext.__test.createLeakGate();
+            add("GT an unfinished opener without context remains ordinary text", lg6.push("Answer <workspace-") + lg6.flush() === "Answer <workspace-");
+            const filter210 = (text, size = 7) => {
+                const gate = ext.__test.createLeakGate();
+                const out = [];
+                for (let at = 0; at < text.length; at += size) out.push(gate.push(text.slice(at, at + size)));
+                return out.join("") + gate.flush();
+            };
+            for (const label of ["Active selection", "Inline chat"]) {
+                const text = `Before\n---\n\n${label} — src/a.ts:1\nSECRET210\n(Context only. Do not repeat or summarize this block.)After`;
+                add(`GT ${label} only preamble stays hidden`, filter210(text) === "Before\nAfter");
+            }
+            for (const text of [
+                "Wrap it in a `<workspace-context>` tag. Then step 2.",
+                "Use ``<workspace-context>`` here.",
+                "```xml\n<workspace-context>literal\n```\nThen step 2.",
+                "~~~xml\n<workspace-context>literal\n~~~\nThen step 2.",
+                "  ```xml\n<workspace-context>literal\n  ```\nThen step 2.",
+                "An escaped \\` then `<workspace-context>` stays literal.",
+                "foo---\nFiles the user attached: ordinary prose"
+            ]) add(`GT literal mention survives ${JSON.stringify(text)}`, filter210(text) === text);
+            add("GT nested context is removed completely", filter210("X <workspace-context>a<workspace-context>b</workspace-context>c</workspace-context> Y") === "X Y");
+            for (const text of [
+                "Wrap it in a `<workspace-context>` tag. Then step 2.",
+                "```xml\n<workspace-context>literal\n```\nThen step 2.",
+                "foo---\nFiles the user attached: ordinary prose",
+                "Before\n---\n\nActive selection — src/a.ts:1\nSECRET210\n(Context only. Do not repeat or summarize this block.)After"
+            ]) {
+                const expected = filter210(text);
+                add(`GT every two-chunk split agrees for ${JSON.stringify(text.slice(0, 40))}`, Array.from({ length: text.length + 1 }, (_, at) => {
+                    const gate = ext.__test.createLeakGate();
+                    return gate.push(text.slice(0, at)) + gate.push(text.slice(at)) + gate.flush();
+                }).every((out) => out === expected));
+            }
+            const big210 = "<workspace-context>" + "x".repeat(1024 * 1024);
+            const whole210 = require(path.join(repoDir, "out", "format.js")).scrubLeakedContext;
+            const boundaryCases = [
+                ["blank line ends unmatched inline code", "An unmatched `tick\n\n<workspace-context>SECRET</workspace-context>\nAnswer", "An unmatched `tick\n\nAnswer"],
+                ["CRLF blank line ends unmatched inline code", "An unmatched `tick\r\n  \r\n<workspace-context>SECRET</workspace-context>\nAnswer", "An unmatched `tick\r\n  \r\nAnswer"],
+                ["invalid fence closer keeps literal code", "```text\n```not-a-close\n<workspace-context>literal</workspace-context>\n```", "```text\n```not-a-close\n<workspace-context>literal</workspace-context>\n```"],
+                ["valid fence closer resumes filtering", "```text\nliteral\n``` \t\r\n<workspace-context>SECRET</workspace-context>Answer", "```text\nliteral\n``` \t\r\nAnswer"],
+                ["scrub preserves separating newline", "Hello<workspace-context>hidden</workspace-context>\nworld", "Hello\nworld"],
+                ["scrub preserves separating space", "Hello<workspace-context>hidden</workspace-context> world", "Hello world"]
+            ];
+            for (const [label, text, expected] of boundaryCases) {
+                add(`GT ${label} at every two-chunk boundary`, Array.from({ length: text.length + 1 }, (_, at) => {
+                    const gate = ext.__test.createLeakGate();
+                    return gate.push(text.slice(0, at)) + gate.push(text.slice(at)) + gate.flush();
+                }).every((out) => out === expected) && whole210(text) === expected);
+            }
+            for (const [open, close] of [["<workspace-context>", "</workspace-context>"], ["---\nFiles the user attached:", "(Context only. note)"]]) {
+                const oversized = open + "x".repeat(ext.__test.CONTEXT_HOLD_BYTES + 1) + close;
+                const tail = "\n<workspace-context>SECOND_SECRET</workspace-context>\nAnswer";
+                add(`GT oversized ${JSON.stringify(open)} releases only its own block`, [1, 7, 50, oversized.length + tail.length].every((size) => filter210(oversized + tail, size) === oversized + "\nAnswer") && whole210(oversized + tail) === oversized + "\nAnswer");
+            }
+            add("GT whole-answer scrub handles selection, cursor and nested blocks", whole210("---\n\nActive selection — a:1\nx\n(Context only. note)After") === "After" && whole210("---\n\nInline chat — a:1\nx\n(Context only. note)After") === "After" && whole210("X <workspace-context>a<workspace-context>b</workspace-context>c</workspace-context> Y") === "X Y");
+            add("GT whole-answer scrub preserves literal code and unclosed prose", whole210("Use `<workspace-context>` then proceed.") === "Use `<workspace-context>` then proceed." && whole210("Answer <workspace-context>unclosed") === "Answer <workspace-context>unclosed");
+            const at210 = performance.now();
+            const bigOut210 = filter210(big210, 50);
+            const ms210 = performance.now() - at210;
+            add(`GT 1 MB unclosed context releases past 64 KiB in < 200ms (${ms210.toFixed(1)}ms)`, bigOut210 === big210 && ms210 < 200);
             const eg = ext.__test.createEchoGate(["what does the cart total do"]);
             const egOut = [eg.push("what does ", "p1"), eg.push("the cart total do", "p1"), eg.push("The total is 3.", "p2"), eg.flush()];
             add(`GT the echo gate drops a prompt said back in deltas (${JSON.stringify(egOut)})`, egOut.join("") === "The total is 3." && egOut[0] === "" && egOut[1] === "");
@@ -6877,7 +8095,8 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
             const emit = (o) => dsSse.forEach((r) => r.write(`data: ${JSON.stringify(o)}\n\n`));
             const part = (p) => ({ type: "message.part.updated", properties: { sessionID: dsSid, part: { sessionID: dsSid, messageID: "msg_ds", ...p } } });
             const delta = (id, text) => ({ type: "message.part.delta", properties: { sessionID: dsSid, messageID: "msg_ds", partID: id, field: "text", delta: text } });
-            const full = "The total is computed once. <workspace-context>SECRET-CTX</workspace-context> Done.";
+            const ds210 = "\n---\n\nActive selection — src/a.ts:1\nSELECTION210\n(Context only. Do not repeat or summarize this block.)\n---\n\nInline chat — src/a.ts:1\nCURSOR210\n(Context only. Do not repeat or summarize this block.)Use `<workspace-context>` literally.\n```xml\n<workspace-context>fenced\n```\n";
+            const full = "The total is computed once. <workspace-context>SECRET-CTX</workspace-context><workspace-context>SECOND-CTX</workspace-context> Done." + ds210 + "<workspace-context>UNCLOSED-CTX";
             const dsServer = http.createServer((req, res) => {
                 const u = new URL(req.url, "http://x");
                 const send = (code, payload) => {
@@ -6909,11 +8128,13 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
                             [110, part({ id: "prt_t", type: "text", text: "" })],
                             [120, delta("prt_t", "The total is ")],
                             [130, delta("prt_t", "computed once. <workspace-")],
-                            [140, delta("prt_t", "context>SECRET-CTX</workspace-context>")],
-                            [150, delta("prt_t", " Done.")],
+                            [140, delta("prt_t", "context>SECRET-CTX</workspace-context><workspace-context>SECOND-CTX")],
+                            [150, delta("prt_t", "</workspace-context> Done.")],
                             [160, part({ id: "prt_t", type: "text", text: full, time: { start: 1, end: 2 } })],
                             [170, part({ id: "prt_sf", type: "step-finish", reason: "length", tokens: { input: 9, output: 9, total: 18, reasoning: 0, cache: { read: 0, write: 0 } } })]
                         ];
+                        for (let at = 0; at < ds210.length; at += 7) plan.push([151, delta("prt_t", ds210.slice(at, at + 7))]);
+                        plan.push([152, delta("prt_t", "<workspace-context>UNCLOSED-CTX")]);
                         for (const [ms, ev] of plan) setTimeout(() => emit(ev), ms);
                         setTimeout(() => {
                             dsAnsweredAt = Date.now();
@@ -6956,7 +8177,10 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
             );
             add("DS each piece of the answer arrives once", occurrences(dsChat, "The total is") === 1 && occurrences(dsChat, "computed once.") === 1 && occurrences(dsChat, "Done.") === 1);
             add("DS a prompt said back in deltas is dropped", !dsChat.includes("what does the cart total do"));
-            add("DS a context block leaked across deltas is dropped", !/SECRET-CTX|workspace-context/.test(dsChat));
+            add("DS a context block leaked across deltas is dropped", !/SECRET-CTX/.test(dsChat));
+            add("DS selection and cursor-only echoes never reach chat", !/SELECTION210|CURSOR210|Active selection|Inline chat/.test(dsChat));
+            add("DS literal backtick and fenced context mentions reach chat", dsChat.includes("Use `<workspace-context>` literally.") && dsChat.includes("```xml\n<workspace-context>fenced\n```"));
+            add("DS repeated and output-cut context blocks never reach chat", !/SECOND-CTX|UNCLOSED-CTX/.test(dsChat));
             add("DS reasoning deltas reach the live thought line", ds.progress.some((p) => /Checking the cart totals now/.test(p)));
             add("DS a provider retry names the wait", ds.progress.some((p) => /Provider retry 2 · Rate limited · next in \d+s/.test(p)));
             add("DS an answer cut at the output limit says so", /output limit/.test(dsChat) && dsResult?.metadata?.truncated === true);
@@ -7068,6 +8292,10 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
                 ext.__test.outcomeOf({ kind: "plan", turns: 1, error: "connect ECONNREFUSED 127.0.0.1:53200" }) === "failedNet" &&
                 ext.__test.outcomeOf({ kind: "plan", turns: 1, error: 'Agent not found: "ghost"' }) === "failed"
             );
+            add(
+                "FX an opencode that is not OpenCode 1 gets Ping, not Continue",
+                ext.__test.outcomeOf({ kind: "plan", turns: 1, error: "`opencode` here is not OpenCode 1: it rejects `--attach`" }) === "failedNet"
+            );
             const fxStuck = { kind: "dev", agent: "dev", turns: 3, timedOut: true, stuckTool: "bash" };
             const fxS = fx(fxStuck);
             add(
@@ -7107,7 +8335,8 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
                 "  require('http').createServer((q, s) => {\n" +
                 "    if (Date.now() - t0 < 1900) return; // booting: accepts, never answers\n" +
                 "    s.setHeader('content-type', 'application/json');\n" +
-                "    s.end(q.url.startsWith('/global/health') ? JSON.stringify({ healthy: true, version: '1.18.34' }) : q.url.startsWith('/session') ? '[]' : '{}');\n" +
+                "    const agents = Object.entries(JSON.parse(process.env.OPENCODE_CONFIG_CONTENT || '{}').agent || {}).map(([name, a]) => ({ name, permission: Object.entries(a.permission).flatMap(([permission, value]) => typeof value === 'string' ? [{permission, pattern: '*', action: value}] : Object.entries(value).map(([pattern, action]) => ({permission, pattern, action}))) }));\n" +
+                "    s.end(q.url.startsWith('/global/health') ? JSON.stringify({ healthy: true, version: '1.18.34' }) : q.url.startsWith('/agent') ? JSON.stringify(agents) : q.url.startsWith('/session') ? '[]' : '{}');\n" +
                 "  }).listen(Number(process.argv[i + 1]), '127.0.0.1');\n" +
                 "}\n"
             );
@@ -7137,6 +8366,16 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
             );
             add(`PV a turn mid-boot joins that start: one spawn (saw ${pvSpawned})`, pvSpawned === 1 && /No OpenCode sessions in/.test(pvTurn.chatMarkdown.join("")));
             add("PV …and is told it waits on a boot", pvTurn.progress.some((t) => /Starting the OpenCode server/.test(t)));
+            const pvOcc = lastEnv("fake-pv-serve.js").occ;
+            // The overrides are the ones it started with: a subagent listed later is not read-only there until a restart.
+            settings.readOnlySubagents = ["explore", "docs"];
+            const pvReach = await ext.__test.readOnlyReach(pvBase, work);
+            add("RE a server this window started allows only the subagents it was started read-only for", JSON.stringify(pvReach.allowed) === JSON.stringify(["explore"]) && pvReach.planEnforced === true);
+            settings.readOnlySubagents = ["explore"];
+            add(
+                "RE a server the bridge starts gets the overrides, so its read-only turns may start the readOnlySubagents",
+                typeof pvOcc === "string" && JSON.parse(pvOcc).agent?.plan?.permission?.["*"] === "deny" && (await ext.__test.readOnlyReach(pvBase, work)).planEnforced
+            );
             const pvPkg = JSON.parse(fs.readFileSync(path.join(repoDir, "package.json"), "utf8"));
             add(
                 "PV activation schedules it after startup, off the activation path",
@@ -7183,6 +8422,178 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
 
         vscodeStub.commands.executeCommand = realExec;
         globalMemento.clear();
+    }
+
+    // GS: real stdio MCP boundary, actual Git records, and provider lifecycle.
+    {
+        const cp210 = require("node:child_process");
+        const gsRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ocb-gs-"));
+        const gsRepo = path.join(gsRoot, "repo");
+        fs.mkdirSync(gsRepo);
+        const git210 = (cwd, ...args) => {
+            const r = cp210.spawnSync("git", args, { cwd, encoding: "utf8", env: { ...process.env, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: process.platform === "win32" ? "NUL" : "/dev/null" } });
+            if (r.status !== 0) throw new Error(`GS git ${args.join(" ")}: ${r.stderr}`);
+            return r.stdout;
+        };
+        git210(gsRepo, "init", "-b", "main");
+        git210(gsRepo, "config", "user.name", "Fixture");
+        git210(gsRepo, "config", "user.email", "fixture@example.com");
+        fs.writeFileSync(path.join(gsRepo, "tracked.txt"), "original\n");
+        git210(gsRepo, "add", ".");
+        git210(gsRepo, "commit", "-m", "initial");
+        const server210 = path.join(repoDir, "out", "git-scan-server.js");
+        const rpc210 = async (cwd, frames, env = process.env) => {
+            const child = cp210.spawn(process.execPath, [server210, cwd], { env, stdio: ["pipe", "pipe", "pipe"] });
+            let output = "", stderr = "";
+            child.stdout.on("data", (b) => output += b);
+            child.stderr.on("data", (b) => stderr += b);
+            const done = new Promise((resolve, reject) => {
+                child.on("error", reject);
+                child.on("close", (code) => code === 0 ? resolve() : reject(new Error(`GS server ${code}: ${stderr}`)));
+            });
+            const timer = setTimeout(() => child.kill(), 15000);
+            child.stdin.end(frames.map((f) => typeof f === "string" ? f : JSON.stringify(f)).join("\n") + "\n");
+            try { await done; } finally { clearTimeout(timer); }
+            return output.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+        };
+        const call210 = { jsonrpc: "2.0", id: 5, method: "tools/call", params: { name: "gitScan", arguments: {} } };
+        const scan210 = async (cwd = gsRepo, env = process.env) => (await rpc210(cwd, [call210], env))[0];
+        const text210 = (response) => response.result.content[0].text;
+        const frames210 = await rpc210(gsRepo, [
+            { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18" } },
+            { jsonrpc: "2.0", method: "notifications/initialized" },
+            { jsonrpc: "2.0", id: 2, method: "ping" },
+            { jsonrpc: "2.0", id: 3, method: "tools/list" },
+            { jsonrpc: "2.0", id: 4, method: "unknown" }, call210,
+            "not json", { jsonrpc: "2.0", id: 6, method: "tools/call", params: { name: "bad" } },
+            { jsonrpc: "2.0", id: 7, method: "tools/call", params: { name: "gitScan", arguments: { cwd: "outside" } } },
+            { jsonrpc: "1.0", id: 8, method: "ping" }
+        ]);
+        add("GS JSON-RPC initialization, notifications, ping and tool schema", frames210.length === 9 && frames210.every((f) => f.jsonrpc === "2.0") && frames210[0].result.protocolVersion === "2025-06-18" && frames210[1].id === 2 && frames210[2].result.tools[0].name === "gitScan" && frames210[2].result.tools[0].inputSchema.additionalProperties === false);
+        add("GS protocol errors use proper codes and reject tool arguments", frames210[3].error.code === -32601 && frames210[5].error.code === -32700 && frames210[6].error.code === -32602 && frames210[7].error.code === -32602 && frames210[8].error.code === -32600);
+        // v212: the server is copied out of the extension, so it names its version
+        // itself; nothing checked it, and a bump would leave the old one behind.
+        const gsVersion = JSON.parse(fs.readFileSync(path.join(repoDir, "package.json"), "utf8")).version;
+        add(`GS initialize names the extension's own version (${frames210[0].result.serverInfo?.version} vs ${gsVersion})`, frames210[0].result.serverInfo?.name === "git-scan" && frames210[0].result.serverInfo?.version === gsVersion);
+        const head210 = git210(gsRepo, "rev-parse", "HEAD").trim();
+        add("GS clean repository, HEAD from porcelain v2 and no upstream", text210(frames210[4]) === `Branch: main\nHEAD: ${head210.slice(0, 7)}\nUpstream: (none)\nAhead/behind: (none)\nWorking tree: clean`);
+        for (let n = 0; n < 45; n++) fs.writeFileSync(path.join(gsRepo, `dirty-${String(n).padStart(2, "0")}.txt`), "x");
+        const dirty210 = text210(await scan210());
+        add("GS 45 dirty files cap at 40 with exact overflow count", dirty210.split("\n").filter((l) => l.startsWith("?? ")).length === 40 && dirty210.endsWith("…5 more") && !dirty210.includes("dirty-44"));
+        for (let n = 0; n < 45; n++) fs.unlinkSync(path.join(gsRepo, `dirty-${String(n).padStart(2, "0")}.txt`));
+        git210(gsRepo, "mv", "tracked.txt", "renamed with spaces.txt");
+        fs.writeFileSync(path.join(gsRepo, "untracked.txt"), "x");
+        const rename210 = text210(await scan210());
+        const porcelain210 = git210(gsRepo, "--no-optional-locks", "-c", "core.fsmonitor=false", "status", "--porcelain=v2", "--branch", "-z");
+        add("GS rename and untracked match Git XY and both rename paths", porcelain210.includes("2 R.") && rename210.includes('R. "tracked.txt" -> "renamed with spaces.txt"') && rename210.includes('?? "untracked.txt"'));
+        git210(gsRepo, "reset", "--hard", "HEAD");
+        fs.unlinkSync(path.join(gsRepo, "untracked.txt"));
+        git210(gsRepo, "checkout", "--detach", "HEAD");
+        add("GS detached HEAD retains its oid", text210(await scan210()).startsWith(`Branch: (detached)\nHEAD: ${head210.slice(0, 7)}`));
+        git210(gsRepo, "checkout", "main");
+        // Local upstream on a diverged branch avoids network dependencies.
+        git210(gsRepo, "checkout", "-b", "upstream");
+        fs.writeFileSync(path.join(gsRepo, "other.txt"), "upstream\n");
+        git210(gsRepo, "add", "."); git210(gsRepo, "commit", "-m", "upstream");
+        git210(gsRepo, "checkout", "main");
+        fs.writeFileSync(path.join(gsRepo, "local.txt"), "local\n");
+        git210(gsRepo, "add", "."); git210(gsRepo, "commit", "-m", "local");
+        git210(gsRepo, "branch", "--set-upstream-to=upstream", "main");
+        add("GS upstream and ahead/behind are from the same status", text210(await scan210()).includes("Upstream: upstream\nAhead/behind: +1 -1"));
+        const noRepo210 = await scan210(gsRoot);
+        add("GS not-a-repo is stderr tool content, not an MCP error", !noRepo210.error && noRepo210.result.isError === true && /not a git repository/i.test(text210(noRepo210)));
+        const env210 = Object.fromEntries(Object.entries(process.env).filter(([key]) => key.toLowerCase() !== "path"));
+        env210.PATH = gsRoot;
+        add("GS missing Git says git not on PATH", text210(await scan210(gsRepo, env210)) === "git not on PATH");
+        const monitor210 = path.join(gsRoot, "monitor.sh");
+        const marker210 = path.join(gsRoot, "EXECUTED");
+        fs.writeFileSync(monitor210, `#!/bin/sh\ntouch '${marker210.replace(/\\/g, "/")}'\n`, { mode: 0o755 });
+        git210(gsRepo, "config", "core.fsmonitor", monitor210.replace(/\\/g, "/"));
+        git210(gsRepo, "status", "--porcelain=v2", "--branch", "-z");
+        add("GS fsmonitor fixture executes when the protection is removed", fs.existsSync(marker210));
+        fs.rmSync(marker210, { force: true });
+        const monitored210 = await scan210();
+        add("GS repository fsmonitor hook is never executed", !fs.existsSync(marker210) && !monitored210.result.isError);
+        git210(gsRepo, "config", "--unset", "core.fsmonitor");
+        // 0.0.220: a stat-dirty file goes through its clean filter, and each
+        // submodule gets a status of its own: both run the repo's commands.
+        const filtered220 = path.join(gsRoot, "FILTERED");
+        const filterCmd220 = `touch '${filtered220.replace(/\\/g, "/")}'; cat`;
+        fs.writeFileSync(path.join(gsRepo, ".gitattributes"), "*.flt filter=pwn\n");
+        fs.writeFileSync(path.join(gsRepo, "a.flt"), "a\n");
+        git210(gsRepo, "add", "."); git210(gsRepo, "commit", "-m", "filtered");
+        git210(gsRepo, "config", "filter.pwn.clean", filterCmd220);
+        git210(gsRepo, "config", "filter.pwn.required", "true");
+        const staleStat220 = () => { fs.writeFileSync(path.join(gsRepo, "a.flt"), "b\n"); fs.utimesSync(path.join(gsRepo, "a.flt"), 1e9, 1e9); };
+        staleStat220();
+        git210(gsRepo, "--no-optional-locks", "-c", "core.fsmonitor=false", "status", "--porcelain=v2", "--branch", "-z");
+        add("GS clean-filter fixture executes when the protection is removed", fs.existsSync(filtered220));
+        fs.rmSync(filtered220, { force: true });
+        staleStat220();
+        const filteredScan220 = await scan210();
+        add("GS a repository clean filter is never executed (required driver too)", !fs.existsSync(filtered220) && !filteredScan220.result.isError && text210(filteredScan220).includes('.M "a.flt"'));
+        git210(gsRepo, "config", "--remove-section", "filter.pwn");
+        fs.unlinkSync(path.join(gsRepo, ".gitattributes")); fs.unlinkSync(path.join(gsRepo, "a.flt"));
+        git210(gsRepo, "add", "-A"); git210(gsRepo, "commit", "-m", "unfiltered");
+        const subSrc220 = path.join(gsRoot, "sub-src");
+        fs.mkdirSync(subSrc220);
+        git210(subSrc220, "init", "-b", "main");
+        git210(subSrc220, "config", "user.name", "Fixture"); git210(subSrc220, "config", "user.email", "fixture@example.com");
+        fs.writeFileSync(path.join(subSrc220, ".gitattributes"), "*.flt filter=subpwn\n");
+        fs.writeFileSync(path.join(subSrc220, "s.flt"), "s\n");
+        git210(subSrc220, "add", "."); git210(subSrc220, "commit", "-m", "sub");
+        git210(gsRepo, "-c", "protocol.file.allow=always", "submodule", "add", "-q", subSrc220.replace(/\\/g, "/"), "sub");
+        git210(gsRepo, "commit", "-m", "submodule");
+        git210(path.join(gsRepo, "sub"), "config", "filter.subpwn.clean", filterCmd220);
+        const subStale220 = () => fs.utimesSync(path.join(gsRepo, "sub", "s.flt"), 1e9, 1e9);
+        subStale220();
+        git210(gsRepo, "--no-optional-locks", "-c", "core.fsmonitor=false", "status", "--porcelain=v2", "--branch", "-z");
+        add("GS submodule filter fixture executes when the protection is removed", fs.existsSync(filtered220));
+        fs.rmSync(filtered220, { force: true });
+        subStale220();
+        const subScan220 = await scan210();
+        add("GS a submodule's own filter is never executed", !fs.existsSync(filtered220) && !subScan220.result.isError && text210(subScan220).includes("Working tree: clean"));
+        git210(gsRepo, "rm", "-q", "-f", "sub"); git210(gsRepo, "commit", "-m", "no submodule");
+        fs.rmSync(path.join(gsRepo, ".git", "modules"), { recursive: true, force: true });
+        add("GS status takes no optional index lock", !fs.existsSync(path.join(gsRepo, ".git", "index.lock")) && /GIT_OPTIONAL_LOCKS: "0"/.test(fs.readFileSync(path.join(repoDir, "src", "git-scan-server.ts"), "utf8")));
+        add("GS shipped server imports only Node modules", !/require\(["']vscode["']\)/.test(fs.readFileSync(server210, "utf8")));
+
+        const saved210 = { trusted: vscodeStub.workspace.isTrusted, folders: vscodeStub.workspace.workspaceFolders };
+        vscodeStub.workspace.workspaceFolders = [{ uri: vscodeStub.Uri.file(work), name: path.basename(work), index: 0 }];
+        const token210 = { isCancellationRequested: false };
+        vscodeStub.workspace.isTrusted = false;
+        add("GS provider registers at activation but offers no untrusted server", !!gitScanProvider && gitScanProvider.provideMcpServerDefinitions(token210).length === 0);
+        let changed210 = 0;
+        gitScanProvider.onDidChangeMcpServerDefinitions(() => changed210++);
+        vscodeStub.workspace.isTrusted = true;
+        workspaceEvents.trust.forEach((cb) => cb());
+        const defs210 = gitScanProvider.provideMcpServerDefinitions(token210);
+        add("GS trusted definition uses host Node, cwd, env and extension version", defs210.length === 1 && defs210[0].command === process.execPath && defs210[0].env.ELECTRON_RUN_AS_NODE === "1" && defs210[0].cwd.fsPath === work && defs210[0].version === JSON.parse(fs.readFileSync(path.join(repoDir, "package.json"), "utf8")).version);
+        vscodeStub.workspace.isTrusted = false;
+        add("GS resolve rechecks trust after a definition was listed", gitScanProvider.resolveMcpServerDefinition(defs210[0], token210) === undefined);
+        vscodeStub.workspace.isTrusted = true;
+        settings.gitScan = false;
+        workspaceEvents.configuration.forEach((cb) => cb({ affectsConfiguration: (key) => key === "opencodeCopilotBridge.gitScan" }));
+        add("GS disabling setting removes definitions and rejects cached resolution", gitScanProvider.provideMcpServerDefinitions(token210).length === 0 && !gitScanProvider.resolveMcpServerDefinition(defs210[0], token210));
+        settings.gitScan = true;
+        vscodeStub.workspace.workspaceFolders = [{ uri: vscodeStub.Uri.file(gsRepo) }, ...saved210.folders];
+        workspaceEvents.folders.forEach((cb) => cb());
+        add("GS trust, setting and folder events refire definitions; first folder wins", changed210 === 3 && gitScanProvider.provideMcpServerDefinitions(token210)[0].cwd.fsPath === gsRepo && !gitScanProvider.resolveMcpServerDefinition(defs210[0], token210));
+        add("GS cancelled requests list no definitions", gitScanProvider.provideMcpServerDefinitions({ isCancellationRequested: true }).length === 0);
+        vscodeStub.workspace.workspaceFolders = [{ uri: { scheme: "vscode-remote", fsPath: gsRepo } }];
+        add("GS remote and empty folders list no local servers", gitScanProvider.provideMcpServerDefinitions(token210).length === 0);
+        vscodeStub.workspace.workspaceFolders = [];
+        add("GS empty window lists no server", gitScanProvider.provideMcpServerDefinitions(token210).length === 0);
+        vscodeStub.workspace.workspaceFolders = [{ uri: vscodeStub.Uri.file(work), name: path.basename(work), index: 0 }];
+        const oldClip210 = vscodeStub.env.clipboard.writeText;
+        let snippet210;
+        vscodeStub.env.clipboard.writeText = async (text) => snippet210 = JSON.parse(text);
+        await registeredCommands.get("opencodeCopilotBridge.gitScanConfig")();
+        const command210 = snippet210.mcp["git-scan"].command;
+        add("GS config uses stable storage and byte-identical standalone copy", snippet210.$schema === "https://opencode.ai/config.json" && command210[0] === "node" && command210[1] === path.join(work, "global-storage", "git-scan-server.js") && command210[2] === work && fs.readFileSync(command210[1]).equals(fs.readFileSync(server210)));
+        vscodeStub.env.clipboard.writeText = oldClip210;
+        Object.assign(vscodeStub.workspace, { isTrusted: saved210.trusted, workspaceFolders: saved210.folders });
+        fs.rmSync(gsRoot, { recursive: true, force: true });
     }
 
     let failed = 0;

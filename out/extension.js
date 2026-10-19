@@ -47,15 +47,18 @@ const context_1 = require("./context");
 const session_1 = require("./session");
 const models_1 = require("./models");
 const runs_1 = require("./runs");
+const enforce_1 = require("./enforce");
 const compose_1 = require("./compose");
 const agents_1 = require("./agents");
 const chat_boot_1 = require("./chat-boot");
 const chat_1 = require("./chat");
 const followups_1 = require("./followups");
 const format_1 = require("./format");
+const context_markers_1 = require("./context-markers");
 const natural_1 = require("./natural");
 const commands_registry_1 = require("./commands-registry");
 const worktree_1 = require("./worktree");
+const git_scan_mcp_1 = require("./git-scan-mcp");
 function activate(context) {
     (0, core_1.setExtensionContext)(context);
     (0, core_1.setLogChannel)(vscode.window.createOutputChannel("OpenCode"));
@@ -71,6 +74,7 @@ function activate(context) {
         core_1.logChannel.appendLine(`inline @opencode unavailable: ${err instanceof Error ? err.message : String(err)}`);
     }
     (0, commands_registry_1.registerCommands)(context);
+    (0, git_scan_mcp_1.registerGitScan)(context);
     const prewarm = setTimeout(() => void (0, net_1.prewarmServer)(), net_1.PREWARM_DELAY_MS);
     prewarm.unref?.();
     context.subscriptions.push({ dispose: () => clearTimeout(prewarm) });
@@ -127,7 +131,6 @@ exports.__test = {
     stepLabel: chat_boot_1.stepLabel,
     GROUP_MAX_ROWS: chat_boot_1.GROUP_MAX_ROWS,
     badge: followups_1.badge,
-    badgeMarks: followups_1.badgeMarks,
     naturalFollowups: (input, max) => (0, natural_1.naturalFollowups)(input, max, chat_boot_1.splitLanes),
     laneItems: natural_1.laneItems,
     effortFor: models_1.effortFor,
@@ -162,6 +165,10 @@ exports.__test = {
     laneAgentProblem: agents_1.laneAgentProblem,
     retryLanesPrompt: chat_boot_1.retryLanesPrompt,
     turnPermission: runs_1.turnPermission,
+    readOnlyReach: runs_1.readOnlyReach,
+    enforcedConfigContent: enforce_1.enforcedConfigContent,
+    coldEnforcement: enforce_1.coldEnforcement,
+    readOnlyLeaks: enforce_1.readOnlyLeaks,
     lastServeLine: net_1.lastServeLine,
     setStartupDeadline: net_1.setStartupDeadline,
     setReplyConfirmWait: runs_1.setReplyConfirmWait,
@@ -169,6 +176,7 @@ exports.__test = {
     CHILD_MAX_ROWS: chat_boot_1.CHILD_MAX_ROWS,
     prewarmServer: net_1.prewarmServer,
     createLeakGate: format_1.createLeakGate,
+    CONTEXT_HOLD_BYTES: context_markers_1.CONTEXT_HOLD_BYTES,
     createEchoGate: format_1.createEchoGate,
     partDeltaOf: runs_1.partDeltaOf,
     providerRetryOf: runs_1.providerRetryOf,

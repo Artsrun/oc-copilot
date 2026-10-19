@@ -1,8 +1,8 @@
 import * as vscode from "vscode";
 import { config, formatBytes, logChannel, own, stamp, truncate, untilStop } from "./core";
 import { mark } from "./followups";
-import { resolveExecutable } from "./proc";
-import { ensureServer, httpGetJson, knownServerBase, withDirectory } from "./net";
+import { resolveExecutable, runCapture } from "./proc";
+import { ensureServer, httpGetJson, isNotOpenCode1, knownServerBase, majorVersionNote, withDirectory } from "./net";
 import { abortServerRun, compactSession, sessionBusy } from "./runs";
 import { discoverOpenCodeEnv, openCodeConfigModel, summariseEnv } from "./env";
 import { planTimeout } from "./prompt";
@@ -15,7 +15,6 @@ import {
     setActiveSession,
     threadScopeActive
 } from "./session";
-import { runCapture } from "./commands";
 import { helpMarkdown } from "./chat-boot";
 import { handleSessions } from "./chat-sessions";
 
@@ -46,13 +45,18 @@ export async function handleControlCommand(p: ControlProps): Promise<vscode.Chat
                 return { metadata: { kind: "stop" } };
             }
             let base: string | undefined;
+            let why: unknown;
             try {
                 base = await ensureServer(p.cwd, (text) => p.response.progress(text));
-            } catch {
-                base = undefined;
+            } catch (error) {
+                why = error;
             }
             if (!base) {
-                p.response.markdown("The OpenCode server is not reachable, so there is no server-side run to stop.");
+                p.response.markdown(
+                    isNotOpenCode1(why)
+                        ? `${mark("fail")} ${(why as Error).message}`
+                        : "The OpenCode server is not reachable, so there is no server-side run to stop."
+                );
                 return { metadata: { kind: "stop" } };
             }
             const busy = await sessionBusy(base, p.state.id, p.cwd);
@@ -161,9 +165,11 @@ export async function handleControlCommand(p: ControlProps): Promise<vscode.Chat
             }
             if (resolvedTarget) {
                 const version = (await runCapture(exe, ["--version"], p.cwd, 6000)).trim();
-                const ok = version && !/^error|timed out/i.test(version);
+                // OpenCode 2 answers too, but the bridge cannot drive it.
+                const major = majorVersionNote(exe, version);
+                const ok = version && !/^error|timed out/i.test(version) && !major;
                 healthy = healthy && Boolean(ok);
-                rows.push(`| version | ${ok ? mark("ok") : mark("fail")} \`${truncate(version || "no output", 60)}\` |`);
+                rows.push(`| version | ${ok ? mark("ok") : mark("fail")} \`${truncate(version || "no output", 60)}\`${major ? ` — ${major}` : ""} |`);
             }
             const serverBase = knownServerBase();
             try {
@@ -221,6 +227,9 @@ export async function handleControlCommand(p: ControlProps): Promise<vscode.Chat
             p.response.markdown(
                 `**OpenCode environment for \`${p.folder.name}\`**\n\n${summariseEnv(items)}`
             );
+            if (config().get<boolean>("gitScan", true) && !items.some((item) => item.kind === "mcp" && item.name === "git-scan")) {
+                p.response.markdown("\n\ngitScan is configured separately for OpenCode. Run **OpenCode: gitScan config for opencode.json**, merge the snippet, then restart OpenCode. CLI runs with `pure` hide external MCP servers; the server transport does not apply `--pure`.");
+            }
             p.response.button({ command: "opencodeCopilotBridge.diagnose", title: "Full diagnostics" });
             return { metadata: { kind: "env", items: items.length } };
         }

@@ -84,7 +84,7 @@ const vscodeStub = {
     },
     chat: { createChatParticipant: (_i, h) => ((global.__handler = h), { dispose() {} }) },
     commands: { registerCommand: () => ({ dispose() {} }), executeCommand: async () => {} },
-    Uri: { file: (p) => ({ fsPath: p, scheme: "file", toString: () => p }) },
+    Uri: { file: (p) => ({ fsPath: p, scheme: "file", toString: () => p }), joinPath: (b, ...s) => { const p = require("node:path").join(b.fsPath, ...s); return { fsPath: p, scheme: "file", toString: () => p }; } },
     ThemeColor: class {},
     MarkdownString: class { constructor(v) { this.value = v; } },
     version: "1.136.0",

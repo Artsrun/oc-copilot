@@ -4,12 +4,13 @@
 import * as vscode from "vscode";
 import { logChannel, relTo, stamp, untilStop } from "./core";
 import { mark } from "./followups";
-import { buildChatContext, emitReferences, parseChatPrompt, splitLanePrefixes, splitModelsFanout } from "./context";
-import { warmServer } from "./net";
+import { buildChatContext, contextNotice, emitReferences, parseChatPrompt, referenceLogLine, splitLanePrefixes, splitModelsFanout } from "./context";
+import { ensureCliIdentity, openCode1Refusal, warmServer } from "./net";
 import { laneAgentProblem, listAgents, planAgentNotice, resolvePlanAgent } from "./agents";
 import { modelRefProblem, modelResolver } from "./models";
 import { LaneSpec, answeredLanes, failedLanes, newLaneRunId, rememberLanes, runParallelLanes, splitLanes } from "./chat-boot";
 import { chatQuery, composeLanes, composeParallel, insertIntoChat } from "./compose";
+import { assertReadOnly, readOnlyEvidence } from "./runs";
 
 /** What the router had worked out before it knew this was a `/parallel` turn. */
 export interface ParallelTurn {
@@ -102,6 +103,9 @@ export async function runParallelTurn(p: ParallelTurn): Promise<vscode.ChatResul
         return { metadata: { kind: "parallel", lanes: lanes.length, cancelled: true } };
     }
     const write = settings.get<boolean>("parallelAllowWrite", false);
+    const refusedResult = (message: string): vscode.ChatResult => ({
+        metadata: { kind: "parallel", lanes: lanes.length, error: message, notSent: true, prompt: autoLanes ? laneText : request.prompt, laneWrite: write }
+    });
     if (write) {
         response.markdown(
             "> " + mark("warn") + " `parallelAllowWrite` is on. Concurrent editing agents in one checkout can " +
@@ -112,6 +116,27 @@ export async function runParallelTurn(p: ParallelTurn): Promise<vscode.ChatResul
     // opencode.db); `auto` keeps the attachDevToServer opt-out. Raced
     // against Stop: a cold server boot takes tens of seconds.
     const laneUrl = transport === "server" || attachDev ? await untilStop(warmServer(cwd, (text) => response.progress(text)), token) : undefined;
+    // Not OpenCode 1: no lane runs (each is an `opencode run`).
+    const refused = openCode1Refusal(executable);
+    if (refused) {
+        response.markdown(`> ${mark("fail")} ${refused.message}`);
+        return refusedResult(refused.message);
+    }
+    // Every lane awaits the same identity check: confirmed once here, so its
+    // refusal is said once and whole, not cut to a line under every lane.
+    let identityError: unknown;
+    const identity = await untilStop(ensureCliIdentity(executable, cwd).then(() => true, (error: unknown) => {
+        identityError = error;
+        return false;
+    }), token);
+    if (identity === false) {
+        const message = identityError instanceof Error ? identityError.message : String(identityError);
+        response.markdown(`> ${mark("fail")} ${message}`);
+        return refusedResult(message);
+    }
+    if (token.isCancellationRequested) {
+        return { metadata: { kind: "parallel", lanes: lanes.length, cancelled: true } };
+    }
     // Read-only lanes run as `planAgent` too, checked once for all.
     const lanePlan = write ? undefined : await untilStop(resolvePlanAgent(cwd, laneUrl), token);
     // `a:<agent>` per lane: confirmed against OpenCode's own list first.
@@ -129,11 +154,35 @@ export async function runParallelTurn(p: ParallelTurn): Promise<vscode.ChatResul
     if (token.isCancellationRequested) {
         return { metadata: { kind: "parallel", lanes: lanes.length, cancelled: true } };
     }
+    if (!write) {
+        const defaultAgent = lanePlan?.agent ?? "plan";
+        for (const agent of [...new Set(lanes.filter((l) => !l.error).map((l) => l.agent || defaultAgent))]) {
+            const evidence = await untilStop(readOnlyEvidence(laneUrl, cwd, agent), token);
+            if (token.isCancellationRequested) {
+                return { metadata: { kind: "parallel", lanes: lanes.length, cancelled: true } };
+            }
+            try {
+                assertReadOnly(evidence);
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                response.markdown(`> ${mark("fail")} ${message}`);
+                return refusedResult(message);
+            }
+        }
+    }
     // Attachments go to every lane, as to a plan or dev turn.
-    const laneCtx = buildChatContext(request, cwd, { inline: p.inline });
+    const laneCtx = buildChatContext(request, cwd, { inline: p.inline, readOnly: !write });
     emitReferences(response, laneCtx.uris);
     if (laneCtx.uris.length) {
         logChannel.appendLine(`[${stamp()}] context for ${lanes.length} lanes: ${laneCtx.uris.map((u) => relTo(cwd, u)).join(", ")}`);
+    }
+    const laneReferences = referenceLogLine(laneCtx.notes);
+    if (laneReferences) {
+        logChannel.appendLine(`[${stamp()}] ${laneReferences}`);
+    }
+    const laneContextNote = contextNotice(laneCtx.notes, !write);
+    if (laneContextNote) {
+        response.markdown(`> ${mark("warn")} ${laneContextNote}\n\n`);
     }
     const laneNote = planAgentNotice(lanePlan, cwd);
     if (laneNote) {

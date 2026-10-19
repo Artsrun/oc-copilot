@@ -26,17 +26,22 @@ async function runOpenCodeServer(options) {
     const base = options.serverUrl ?? (await (0, net_1.ensureServer)(options.cwd));
     const scoped = (path) => (0, net_1.withDirectory)(`${base}${path}`, options.cwd);
     const readOnly = Boolean(options.readOnly);
+    if (readOnly) {
+        metrics.readOnlyEnforcement = await (0, server_session_1.serverEnforcement)(base, options.cwd, options.agent ?? "plan");
+        (0, server_session_1.assertReadOnly)(metrics.readOnlyEnforcement);
+    }
     let sessionId = options.sessionId;
     if (!sessionId) {
+        const permission = await (0, server_session_1.sessionRules)(base, options.cwd, readOnly);
         const created = await (0, net_1.httpRequestJson)("POST", scoped("/session"), {
             title: (0, core_1.truncate)(options.task, 60),
-            permission: (0, server_session_1.turnPermission)(readOnly)
+            permission
         });
         sessionId = created.id;
-        (0, server_session_1.noteTurnPermission)(base, sessionId, readOnly);
+        (0, server_session_1.noteTurnPermission)(base, sessionId, permission, options.cwd);
     }
     else {
-        await (0, server_session_1.applyTurnPermission)(base, options.cwd, sessionId, readOnly);
+        await (0, server_session_1.applyTurnPermission)(base, options.cwd, sessionId, readOnly, options.agent);
     }
     metrics.sessionId = sessionId;
     const mine = sessionId;
@@ -188,9 +193,6 @@ async function runOpenCodeServer(options) {
         (resp.parts ?? []).forEach((part, i) => {
             (0, run_steps_1.applyServerPart)(part, metrics, options, started, emitted, tools, cursor, i + 1);
         });
-        if (metrics.firstByteMs === undefined && (metrics.hadOutput || metrics.reasoning || metrics.steps.length)) {
-            metrics.firstByteMs = Date.now() - started;
-        }
         metrics.totalMs = Date.now() - started;
         return metrics;
     }

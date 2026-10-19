@@ -12,17 +12,37 @@
 //     later is missing from `GET /agent` until the server restarts.
 // So a name OpenCode has not confirmed is never sent: the turn runs as the
 // built-in `plan` and says why. A server confirms for itself only — when it
-// fails mid-turn, the CLI that takes over runs as `plan` too (chat.ts).
+// fails mid-turn, the CLI that takes over runs as `plan` too (chat-turn.ts).
 
+import { createHash } from "node:crypto";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { config, logChannel, stamp } from "./core";
-import { httpGetJson, withDirectory } from "./net";
+import { enforcedConfigContent } from "./enforce";
+import { currentServerGeneration, httpGetJson, withDirectory } from "./net";
 import { killTree, spawnOpenCode } from "./proc";
+
+/** One permission rule, as OpenCode lists and stores them (1.19.0). */
+export interface PermissionRule {
+    permission: string;
+    pattern: string;
+    action: string;
+}
 
 export interface AgentInfo {
     name: string;
     mode?: string;
     hidden?: boolean;
+    /** The agent's own rules, from a server's `GET /agent` (1.19.0); the CLI listing has none. */
+    permission?: PermissionRule[];
 }
+
+export const isPermissionRule = (r: unknown): r is PermissionRule => {
+    const x = r as Partial<PermissionRule> | undefined;
+    return typeof x?.permission === "string" && typeof x.pattern === "string" &&
+        (x.action === "allow" || x.action === "deny" || x.action === "ask");
+};
 
 export type AgentFallback = "missing" | "subagent" | "hidden" | "unverified";
 
@@ -53,16 +73,38 @@ const listed = new Map<string, { at: number; agents: AgentInfo[] | undefined }>(
 const noticed = new Set<string>();
 
 // `opencode agent list` (1.18.32): one `name (mode)` line per agent, each
-// followed by its permission rules as indented JSON. A nested file
+// followed by its permission rules as indented JSON — the effective, merged
+// rules (1.18.35, 1.19.0: the same list `GET /agent` gives). A nested file
 // (`agents/team/look.md`) is named `team/look`.
 export function parseAgentList(raw: string): AgentInfo[] {
     const out: AgentInfo[] = [];
+    let json: string[] = [];
+    const closeRules = (): void => {
+        const last = out[out.length - 1];
+        const text = json.join("\n").trim();
+        json = [];
+        if (!last || !text) {
+            return;
+        }
+        try {
+            const rules = JSON.parse(text) as unknown;
+            if (Array.isArray(rules) && rules.length && rules.every(isPermissionRule)) {
+                last.permission = rules;
+            }
+        } catch {
+            // not the rules block this version prints: names and modes still count
+        }
+    };
     for (const line of raw.split(/\r?\n/)) {
         const m = line.match(/^([^\s[\]{}"][^\r\n]*?) \((primary|subagent|all)\)\s*$/);
         if (m) {
+            closeRules();
             out.push({ name: m[1], mode: m[2] });
+        } else if (out.length) {
+            json.push(line);
         }
     }
+    closeRules();
     return out;
 }
 
@@ -73,7 +115,12 @@ async function agentsFromServer(base: string, cwd: string): Promise<AgentInfo[]>
     }
     return raw
         .filter((a): a is Record<string, unknown> => Boolean(a) && typeof (a as { name?: unknown }).name === "string")
-        .map((a) => ({ name: a.name as string, mode: a.mode as string | undefined, hidden: a.hidden === true }));
+        .map((a) => ({
+            name: a.name as string,
+            mode: a.mode as string | undefined,
+            hidden: a.hidden === true,
+            ...(Array.isArray(a.permission) && a.permission.every(isPermissionRule) ? { permission: a.permission } : {})
+        }));
 }
 
 // No server on this path (transport cli, or a server that would not start):
@@ -115,22 +162,88 @@ function agentsFromCli(cwd: string): Promise<AgentInfo[]> {
     });
 }
 
+const inFlight = new Map<string, Promise<AgentInfo[] | undefined>>();
+
+const digest = (text: string): string => createHash("sha256").update(text).digest("hex").slice(0, 16);
+
+/** The config files a cold `opencode run` in `cwd` reads (1.x: opencode.json[c]
+ * up the tree, `.opencode/` and the global config dir with their agent files,
+ * OPENCODE_CONFIG), as paths and mtimes. Stats only; nothing is read or written. */
+export function configStamp(cwd: string): string {
+    const parts: string[] = [];
+    const stat = (file: string): void => {
+        try {
+            parts.push(`${file}:${fs.statSync(file).mtimeMs}`);
+        } catch {
+            // absent: nothing to stamp
+        }
+    };
+    const configDir = (dir: string): void => {
+        for (const name of ["opencode.json", "opencode.jsonc", "config.json", "config.jsonc"]) {
+            stat(path.join(dir, name));
+        }
+        for (const sub of ["agent", "agents"]) {
+            try {
+                for (const name of fs.readdirSync(path.join(dir, sub), { recursive: true }) as string[]) {
+                    stat(path.join(dir, sub, name));
+                }
+            } catch {
+                // no agent folder here
+            }
+        }
+    };
+    for (let dir = path.resolve(cwd); ; dir = path.dirname(dir)) {
+        stat(path.join(dir, "opencode.json"));
+        stat(path.join(dir, "opencode.jsonc"));
+        configDir(path.join(dir, ".opencode"));
+        if (path.dirname(dir) === dir) {
+            break;
+        }
+    }
+    if (process.env.OPENCODE_CONFIG_DIR) {
+        configDir(process.env.OPENCODE_CONFIG_DIR);
+    }
+    configDir(path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"), "opencode"));
+    if (process.platform === "win32" && process.env.APPDATA) {
+        configDir(path.join(process.env.APPDATA, "opencode"));
+    }
+    if (process.env.OPENCODE_CONFIG) {
+        stat(process.env.OPENCODE_CONFIG);
+    }
+    return digest(parts.join("\n"));
+}
+
 export async function listAgents(cwd: string, base?: string, want?: string): Promise<AgentInfo[] | undefined> {
-    const key = `${base ?? `cli\0${config().get<string>("executable", "opencode")}`}\0${cwd}`;
+    // A cold listing is what `opencode run` would load now: keyed by the injected
+    // config and the config files' stamps, so an edit — or a checkout that adds
+    // an opencode.json — is listed afresh, not served from the minute's cache.
+    const key = base
+        ? `${base}\0${currentServerGeneration()}\0${cwd}`
+        : `cli\0${config().get<string>("executable", "opencode")}\0${digest(enforcedConfigContent() ?? "")}\0${configStamp(cwd)}\0${cwd}`;
     const hit = listed.get(key);
     const complete = hit?.agents && (!want || hit.agents.some((a) => a.name === want));
     const ttl = complete ? LISTED_TTL_MS : RETRY_MS;
     if (hit && Date.now() - hit.at < ttl) {
         return hit.agents;
     }
-    let agents: AgentInfo[] | undefined;
-    try {
-        agents = base ? await agentsFromServer(base, cwd) : await agentsFromCli(cwd);
-    } catch (error) {
-        logChannel.appendLine(`[${stamp()}] could not list OpenCode's agents: ${error}`);
+    const pending = inFlight.get(key);
+    if (pending) {
+        return pending;
     }
-    listed.set(key, { at: Date.now(), agents });
-    return agents;
+    const fetchPromise = (async (): Promise<AgentInfo[] | undefined> => {
+        let agents: AgentInfo[] | undefined;
+        try {
+            agents = base ? await agentsFromServer(base, cwd) : await agentsFromCli(cwd);
+        } catch (error) {
+            logChannel.appendLine(`[${stamp()}] could not list OpenCode's agents: ${error}`);
+        }
+        listed.set(key, { at: Date.now(), agents });
+        return agents;
+    })().finally(() => {
+        inFlight.delete(key);
+    });
+    inFlight.set(key, fetchPromise);
+    return fetchPromise;
 }
 
 /** `planAgent` as set — `plan` when blank. */

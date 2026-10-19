@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.followupsProblems = exports.badgeMarks = exports.createBadger = exports.badge = exports.naturalText = exports.chipOf = exports.chipLabel = exports.mergeRunId = exports.LANE_RUN_PROMPTS = exports.fillPrompt = exports.prompt = exports.mark = exports.NATURAL_MAX_LABEL = exports.CASES = exports.MARKS = exports.PROMPTS = exports.TAIL = exports.CHIP_COMMANDS = void 0;
+exports.followupsProblems = exports.createBadger = exports.badge = exports.naturalText = exports.chipOf = exports.chipLabel = exports.mergeRunId = exports.LANE_RUN_PROMPTS = exports.fillPrompt = exports.prompt = exports.mark = exports.NATURAL_MAX_LABEL = exports.CASES = exports.MARKS = exports.PROMPTS = exports.TAIL = exports.CHIP_COMMANDS = void 0;
 const data = __importStar(require("./followups.json"));
 exports.CHIP_COMMANDS = ["dev", "plan", "new", "ping", "parallel", "compact", "model"];
 exports.TAIL = data.tail;
@@ -187,8 +187,6 @@ const createBadger = () => {
     };
 };
 exports.createBadger = createBadger;
-const badgeMarks = (markdown) => (0, exports.createBadger)()(markdown);
-exports.badgeMarks = badgeMarks;
 const followupsProblems = (d = data) => {
     const problems = [];
     const prompts = d.prompts;

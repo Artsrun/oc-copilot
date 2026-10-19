@@ -11,7 +11,6 @@ const prompt_1 = require("./prompt");
 const context_1 = require("./context");
 const models_1 = require("./models");
 const session_1 = require("./session");
-const commands_1 = require("./commands");
 const chat_boot_1 = require("./chat-boot");
 const chat_sessions_1 = require("./chat-sessions");
 async function handleControlCommand(p) {
@@ -25,14 +24,17 @@ async function handleControlCommand(p) {
                 return { metadata: { kind: "stop" } };
             }
             let base;
+            let why;
             try {
                 base = await (0, net_1.ensureServer)(p.cwd, (text) => p.response.progress(text));
             }
-            catch {
-                base = undefined;
+            catch (error) {
+                why = error;
             }
             if (!base) {
-                p.response.markdown("The OpenCode server is not reachable, so there is no server-side run to stop.");
+                p.response.markdown((0, net_1.isNotOpenCode1)(why)
+                    ? `${(0, followups_1.mark)("fail")} ${why.message}`
+                    : "The OpenCode server is not reachable, so there is no server-side run to stop.");
                 return { metadata: { kind: "stop" } };
             }
             const busy = await (0, runs_1.sessionBusy)(base, p.state.id, p.cwd);
@@ -119,10 +121,11 @@ async function handleControlCommand(p) {
                 rows.push(`| executable | ${(0, followups_1.mark)("fail")} \`${exe}\` not found on PATH |`);
             }
             if (resolvedTarget) {
-                const version = (await (0, commands_1.runCapture)(exe, ["--version"], p.cwd, 6000)).trim();
-                const ok = version && !/^error|timed out/i.test(version);
+                const version = (await (0, proc_1.runCapture)(exe, ["--version"], p.cwd, 6000)).trim();
+                const major = (0, net_1.majorVersionNote)(exe, version);
+                const ok = version && !/^error|timed out/i.test(version) && !major;
                 healthy = healthy && Boolean(ok);
-                rows.push(`| version | ${ok ? (0, followups_1.mark)("ok") : (0, followups_1.mark)("fail")} \`${(0, core_1.truncate)(version || "no output", 60)}\` |`);
+                rows.push(`| version | ${ok ? (0, followups_1.mark)("ok") : (0, followups_1.mark)("fail")} \`${(0, core_1.truncate)(version || "no output", 60)}\`${major ? ` — ${major}` : ""} |`);
             }
             const serverBase = (0, net_1.knownServerBase)();
             try {
@@ -163,6 +166,9 @@ async function handleControlCommand(p) {
         case "env": {
             const items = (0, env_1.discoverOpenCodeEnv)(p.cwd);
             p.response.markdown(`**OpenCode environment for \`${p.folder.name}\`**\n\n${(0, env_1.summariseEnv)(items)}`);
+            if ((0, core_1.config)().get("gitScan", true) && !items.some((item) => item.kind === "mcp" && item.name === "git-scan")) {
+                p.response.markdown("\n\ngitScan is configured separately for OpenCode. Run **OpenCode: gitScan config for opencode.json**, merge the snippet, then restart OpenCode. CLI runs with `pure` hide external MCP servers; the server transport does not apply `--pure`.");
+            }
             p.response.button({ command: "opencodeCopilotBridge.diagnose", title: "Full diagnostics" });
             return { metadata: { kind: "env", items: items.length } };
         }

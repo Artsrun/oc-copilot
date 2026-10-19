@@ -33,13 +33,16 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.PREWARM_DELAY_MS = exports.TESTED_OPENCODE = void 0;
+exports.PREWARM_DELAY_MS = exports.currentServerGeneration = exports.isNotOpenCode1 = exports.openCode1Refusal = exports.isIdentityUnknown = exports.TESTED_OPENCODE = void 0;
 exports.withDirectory = withDirectory;
 exports.httpRequestJson = httpRequestJson;
 exports.httpGetJson = httpGetJson;
 exports.httpPostJson = httpPostJson;
 exports.setStartupDeadline = setStartupDeadline;
 exports.versionNotice = versionNotice;
+exports.ensureCliIdentity = ensureCliIdentity;
+exports.markNotOpenCode1 = markNotOpenCode1;
+exports.majorVersionNote = majorVersionNote;
 exports.knownServerBase = knownServerBase;
 exports.stopServer = stopServer;
 exports.ensureServer = ensureServer;
@@ -124,7 +127,7 @@ function httpGetJson(url, timeoutMs = 5000) {
                     resolve(JSON.parse(data));
                 }
                 catch (error) {
-                    reject(error);
+                    reject(Object.assign(error, { code: "ENOTJSON", status: res.statusCode }));
                 }
             });
         });
@@ -182,7 +185,7 @@ function setStartupDeadline(ms) {
     startupDeadlineMs = ms ?? STARTUP_DEADLINE_MS;
 }
 const SLOW_START_MS = 1500;
-exports.TESTED_OPENCODE = { min: "1.18.27", max: "1.18.35" };
+exports.TESTED_OPENCODE = { min: "1.18.27", max: "1.19.0" };
 const serverVersions = new Map();
 const versionsNoted = new Set();
 const semver = (v) => {
@@ -205,6 +208,90 @@ function versionNotice(base) {
     core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] OpenCode ${version} on ${base} is outside the tested ${exports.TESTED_OPENCODE.min}–${exports.TESTED_OPENCODE.max}`);
     return `OpenCode ${version} is outside the versions this bridge was tested with (${exports.TESTED_OPENCODE.min}–${exports.TESTED_OPENCODE.max}). It runs; if something misbehaves, the debug log and REFS.md name what each version was measured on.`;
 }
+const notOpenCode1 = new Map();
+const cliIdentity = new Map();
+const IDENTITY_TIMEOUT_MS = 6000;
+const isIdentityUnknown = (error) => error?.code === "EOPENCODEIDENTITY";
+exports.isIdentityUnknown = isIdentityUnknown;
+const identityUnknown = (executable, why) => Object.assign(new Error(`Nothing was run: \`${executable}\` is not confirmed as OpenCode 1 — its \`--version\` ${why}. ` +
+    "`/ping` shows what it prints; the next message checks again."), { code: "EOPENCODEIDENTITY" });
+const fileOf = (executable, forget = false) => {
+    try {
+        return (0, proc_1.executableStamp)(executable, forget);
+    }
+    catch {
+        return "";
+    }
+};
+function ensureCliIdentity(executable, cwd) {
+    const refusal = (0, exports.openCode1Refusal)(executable);
+    if (refusal) {
+        return Promise.reject(refusal);
+    }
+    const hit = cliIdentity.get(executable);
+    let file = fileOf(executable);
+    if (hit && hit.file === file) {
+        return hit.check;
+    }
+    if (hit) {
+        file = fileOf(executable, true);
+        core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] ${executable} changed on disk since its identity check — checking it again`);
+    }
+    const started = Date.now();
+    const check = (0, proc_1.runCapture)(executable, ["--version"], cwd, IDENTITY_TIMEOUT_MS, true).then((output) => {
+        majorVersionNote(executable, output);
+        const unsupported = (0, exports.openCode1Refusal)(executable);
+        if (unsupported) {
+            throw unsupported;
+        }
+        if (!/(?:^|\s)v?1\.\d+\.\d+(?:\s|$|[-+])/.test(output.trim())) {
+            throw identityUnknown(executable, `printed no 1.x version (\`${(0, core_1.truncate)(output.trim().replace(/\s+/g, " ").replace(/`/g, "'"), 40)}\`)`);
+        }
+        core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] CLI identity verified in ${Date.now() - started}ms`);
+    }).catch((error) => {
+        if (cliIdentity.get(executable)?.check === check) {
+            cliIdentity.delete(executable);
+        }
+        const code = error?.code;
+        if ((0, exports.isNotOpenCode1)(error) || (0, exports.isIdentityUnknown)(error) || code === "ENOENT") {
+            throw error;
+        }
+        const message = error instanceof Error ? error.message : String(error);
+        throw identityUnknown(executable, /timed out/.test(message) ? `did not answer within ${IDENTITY_TIMEOUT_MS / 1000} s` : `failed (${(0, core_1.truncate)(message.replace(/\s+/g, " ").replace(/`/g, "'"), 80)})`);
+    });
+    cliIdentity.set(executable, { file, check });
+    return check;
+}
+function markNotOpenCode1(executable, evidence) {
+    const error = Object.assign(new Error(`\`opencode\` here is not OpenCode 1: ${evidence}. The bridge drives OpenCode 1 only so far (its server API and permission rules), so nothing was run. ` +
+        "To keep OpenCode 2 and use @opencode, give the bridge its own 1.x: `npm i --prefix ~/.opencode1 opencode-ai@1`, set " +
+        "`opencodeCopilotBridge.executable` to `~/.opencode1/node_modules/.bin/opencode` (`opencode.cmd` on Windows), then run `/ping`. " +
+        "The README's *OpenCode 2* section says what the two share."), { code: "ENOTOPENCODE1" });
+    if (!notOpenCode1.has(executable)) {
+        core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] ${executable}: ${error.message}`);
+    }
+    notOpenCode1.set(executable, error);
+    return error;
+}
+const openCode1Refusal = (executable) => notOpenCode1.get(executable);
+exports.openCode1Refusal = openCode1Refusal;
+const isNotOpenCode1 = (error) => error?.code === "ENOTOPENCODE1";
+exports.isNotOpenCode1 = isNotOpenCode1;
+function majorVersionNote(executable, output) {
+    const found = output.match(/(?:^|\s)v?(\d+)\.\d+\.\d+/);
+    const major = found ? Number(found[1]) : undefined;
+    if (major === 1) {
+        if (notOpenCode1.has(executable)) {
+            cliIdentity.delete(executable);
+        }
+        notOpenCode1.delete(executable);
+    }
+    else if (major !== undefined && major >= 2) {
+        markNotOpenCode1(executable, `\`--version\` prints \`${(0, core_1.truncate)(output.trim(), 40)}\``);
+        return `OpenCode ${major}: the bridge drives 1.x only so far — README, *OpenCode 2*`;
+    }
+    return undefined;
+}
 async function freePort(host) {
     return new Promise((resolve, reject) => {
         const probe = http.createServer();
@@ -224,6 +311,9 @@ function knownServerBase() {
     }
     return managedPort && serveProcess && serveProcess.exitCode === null ? `http://${host}:${managedPort}` : undefined;
 }
+let serverGeneration = 0;
+const currentServerGeneration = () => serverGeneration;
+exports.currentServerGeneration = currentServerGeneration;
 function stopServer() {
     if (serveProcess && serveProcess.exitCode === null) {
         (0, proc_1.killTree)(serveProcess);
@@ -232,6 +322,8 @@ function stopServer() {
     managedPort = undefined;
     fallbackPort = undefined;
     servePort = undefined;
+    serverGeneration += 1;
+    startInFlight = undefined;
 }
 let startInFlight;
 const SLOW_START_TEXT = "Starting the OpenCode server — a first start loads its config, plugins and MCP servers…";
@@ -293,8 +385,9 @@ async function ensureServerOnce(cwd, onSlowStart) {
             }
             return { healthy: health.healthy === true, version };
         }
-        catch {
-            return { healthy: false };
+        catch (error) {
+            const { code, status } = error;
+            return { healthy: false, page: code === "ENOTJSON" && typeof status === "number" && status >= 200 && status < 300 };
         }
     };
     const healthy = async (timeoutMs) => (await probe(timeoutMs)).healthy;
@@ -306,6 +399,7 @@ async function ensureServerOnce(cwd, onSlowStart) {
             serveSpawnError = undefined;
             if (!startedHere && !adoptedServers.has(base)) {
                 adoptedServers.add(base);
+                serverGeneration += 1;
                 core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] adopted an OpenCode server already listening on ${base}. ` +
                     `Requests are scoped to ${cwd ?? "this workspace"} via ?directory=.`);
             }
@@ -329,19 +423,53 @@ async function ensureServerOnce(cwd, onSlowStart) {
         base = `http://${host}:${port}`;
     }
     if (!serveAlive()) {
+        const refused = (0, exports.openCode1Refusal)(executable);
+        if (refused) {
+            throw refused;
+        }
         const serveCwd = cwd ?? (0, core_1.resolveFolder)()?.folder.uri.fsPath;
         serveSpawnError = undefined;
         serveTail = "";
         servePort = port;
+        serverGeneration += 1;
         serveProcess = (0, proc_1.spawnOpenCode)(executable, ["serve", "--port", String(port), "--hostname", host], serveCwd);
         serveProcess.stdout?.setEncoding("utf8");
         serveProcess.stderr?.setEncoding("utf8");
         const keep = (d) => {
-            core_1.logChannel.appendLine(`[serve] ${d.trim()}`);
-            serveTail = (serveTail + d).slice(-600);
+            const said = d.replace(/\b(password)(\s*[:=]\s*|\s+)\S+/gi, "$1$2[redacted]");
+            core_1.logChannel.appendLine(`[serve] ${said.trim()}`);
+            serveTail = (serveTail + said).slice(-600);
         };
-        serveProcess.stdout?.on("data", keep);
-        serveProcess.stderr?.on("data", keep);
+        for (const stream of [serveProcess.stdout, serveProcess.stderr]) {
+            let line = "";
+            let oversized = false;
+            stream?.on("data", (chunk) => {
+                for (const part of chunk.split(/(?<=\n)/)) {
+                    if (!oversized) {
+                        if (line.length + part.length > 8192) {
+                            line = "";
+                            oversized = true;
+                            keep("server diagnostic line exceeded 8 KiB; discarded\n");
+                        }
+                        else {
+                            line += part;
+                        }
+                    }
+                    if (part.endsWith("\n")) {
+                        if (!oversized) {
+                            keep(line);
+                        }
+                        line = "";
+                        oversized = false;
+                    }
+                }
+            });
+            stream?.on("end", () => {
+                if (line && !oversized) {
+                    keep(line);
+                }
+            });
+        }
         serveProcess.on("error", (error) => {
             serveSpawnError = error.message;
             core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] serve failed to start: ${error.message}`);
@@ -353,7 +481,11 @@ async function ensureServerOnce(cwd, onSlowStart) {
     const waitStarted = Date.now();
     const deadline = waitStarted + startupDeadlineMs;
     let told = false;
+    const mine = serveProcess;
     const exited = () => {
+        if (serveProcess !== mine) {
+            return new Error("OpenCode server was stopped while it was starting.");
+        }
         if (!serveProcess || serveProcess.exitCode === null) {
             return undefined;
         }
@@ -370,9 +502,14 @@ async function ensureServerOnce(cwd, onSlowStart) {
         if (dead) {
             throw dead;
         }
-        if (await healthy(POLL_HEALTH_MS)) {
+        const health = await probe(POLL_HEALTH_MS);
+        if (health.healthy) {
             core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] serve on ${base} answered after ${((Date.now() - waitStarted) / 1000).toFixed(1)}s`);
             return base;
+        }
+        if (health.page && serveProcess === mine && serveAlive()) {
+            stopServer();
+            throw markNotOpenCode1(executable, "its server answers `/global/health` with a web page, as OpenCode 2 does");
         }
         if (!told && onSlowStart && Date.now() - waitStarted >= SLOW_START_MS) {
             told = true;
@@ -390,7 +527,7 @@ async function warmServer(cwd, onSlowStart) {
         return await ensureServer(cwd, onSlowStart);
     }
     catch (error) {
-        core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] server unavailable, dev runs cold: ${error}`);
+        core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] ${(0, exports.isNotOpenCode1)(error) ? "server not started: not OpenCode 1 (logged above)" : `server unavailable, dev runs cold: ${error}`}`);
         return undefined;
     }
 }
@@ -398,11 +535,16 @@ exports.PREWARM_DELAY_MS = 3000;
 function prewarmServer() {
     const settings = (0, core_1.config)();
     const trusted = vscode.workspace.isTrusted === true;
-    if (!settings.get("prewarmServer", true) || settings.get("transport", "auto") === "cli" || !trusted) {
+    if (!settings.get("prewarmServer", true) || !trusted) {
         return undefined;
     }
     const cwd = (0, core_1.resolveFolder)()?.folder.uri.fsPath;
     if (!cwd) {
+        return undefined;
+    }
+    if (settings.get("transport", "auto") === "cli") {
+        const executable = settings.get("executable", "opencode");
+        void ensureCliIdentity(executable, cwd).catch((error) => core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] CLI prewarm identity check failed: ${error}`));
         return undefined;
     }
     core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] prewarming the OpenCode server for ${cwd}`);

@@ -17,6 +17,25 @@ async function handleWorktree(p) {
         return { metadata: { kind: "worktree" } };
     }
     const settings = (0, core_1.config)();
+    const executable = settings.get("executable", "opencode");
+    const refused = (0, net_1.openCode1Refusal)(executable);
+    if (refused) {
+        response.markdown(`> ${(0, followups_1.mark)("fail")} ${refused.message}`);
+        return { metadata: { kind: "worktree", error: refused.message } };
+    }
+    let identityError;
+    const identity = await (0, core_1.untilStop)((0, net_1.ensureCliIdentity)(executable, cwd).then(() => true).catch((error) => {
+        identityError = error;
+        return false;
+    }), token);
+    if (token.isCancellationRequested) {
+        return { metadata: { kind: "worktree", cancelled: true } };
+    }
+    if (!identity) {
+        const message = identityError instanceof Error ? identityError.message : String(identityError);
+        response.markdown(`> ${(0, followups_1.mark)("fail")} ${message}`);
+        return { metadata: { kind: "worktree", error: message } };
+    }
     const created = await (0, worktree_1.createWorktree)(cwd, task);
     if (!created.ok) {
         response.markdown(`Could not create a worktree: ${created.reason}\n\nPlain \`/dev\` works in your current checkout.`);
@@ -32,12 +51,18 @@ async function handleWorktree(p) {
     const transport = settings.get("transport", "auto");
     let attachUrl;
     let sessionId;
+    const args = [{ root: wt.root, path: wt.path, branch: wt.branch, baseSha: wt.baseSha }];
     if (transport === "auto" && settings.get("attachDevToServer", true)) {
         try {
-            attachUrl = await (0, net_1.ensureServer)(cwd);
+            attachUrl = await (0, net_1.ensureServer)(cwd, (text) => response.progress(text));
             sessionId = await (0, runs_1.createServerSession)(attachUrl, wt.path, task);
         }
         catch (error) {
+            if ((0, net_1.isNotOpenCode1)(error)) {
+                response.markdown(`> ${(0, followups_1.mark)("fail")} ${error.message}`);
+                response.button({ command: "opencodeCopilotBridge.worktreeRemove", title: "Remove worktree", arguments: args });
+                return { metadata: { kind: "worktree", worktree: wt.path, branch: wt.branch, error: error.message } };
+            }
             attachUrl = undefined;
             sessionId = undefined;
             core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] worktree run goes cold: ${error}`);
@@ -46,7 +71,7 @@ async function handleWorktree(p) {
     const beat = (0, chat_boot_1.startHeartbeat)(response, `Working in ${wt.branch}`, tPlan.timeoutMs, wt.path);
     let answer = "";
     const metrics = await (0, runs_1.runOpenCode)({
-        executable: settings.get("executable", "opencode"),
+        executable,
         task,
         cwd: wt.path,
         agent: devAgent,
@@ -90,7 +115,6 @@ async function handleWorktree(p) {
     response.markdown(stat
         ? `\n\n**Changes in \`${wt.branch}\`** (uncommitted, against \`${wt.baseSha.slice(0, 7)}\`):\n\n\`\`\`\n${stat}\n\`\`\``
         : `\n\n**No file changes** in \`${wt.branch}\`.`);
-    const args = [{ root: wt.root, path: wt.path, branch: wt.branch, baseSha: wt.baseSha }];
     if (stat) {
         response.button({ command: "opencodeCopilotBridge.worktreeDiff", title: "Show full diff", arguments: args });
     }

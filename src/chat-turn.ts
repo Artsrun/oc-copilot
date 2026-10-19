@@ -3,13 +3,15 @@
 // model stall), then the answer, the session's books, autocompact and the
 // chips. The router decides what to run and hands it over as a Turn.
 import * as vscode from "vscode";
-import { delay, logChannel, own, secs, setStatus, stamp, truncate, untilStop } from "./core";
+import { logChannel, own, secs, setStatus, stamp, truncate, untilStop } from "./core";
 import { mark, prompt as promptText } from "./followups";
 import { ChatKind, RunMetrics, RunOptions, StepRecord, finalizeStepStatuses, toolOutputBytes } from "./metrics";
 import { composeVisibleAnswer, createEchoGate, createLeakGate, isPromptEcho, metricsLogLine, scrubLeakedContext } from "./format";
 import { createFileLinker, emitAnswerParts, emitReferences, stepUris } from "./context";
-import { versionNotice, warmServer } from "./net";
+import { isIdentityUnknown, isNotOpenCode1, openCode1Refusal, versionNotice, warmServer } from "./net";
+import { isTurnPermissionError } from "./server-session";
 import { planAgentNotice, planAgentSetting, resolvePlanAgent } from "./agents";
+import { enforcedReadOnlyNotice } from "./enforce";
 import { SessionState, notifyIfSlow, refreshStatus, rememberHandoffReturn, setActiveSession } from "./session";
 import {
     abortServerRun,
@@ -104,6 +106,10 @@ const SUMMARY_WAIT_MS = 60000;
 // The turn-count autocompact needs this much context: summarising a small
 // session costs a model pass and loses detail for nothing.
 const COMPACT_MIN_TOKENS = 20000;
+// Size triggers a summarize too, not only the turn count (9.6k → 199k seen in 8 turns):
+// 60k of context, or 70% of the model's window when the catalog knows it.
+const COMPACT_CONTEXT_TOKENS = 60000;
+const COMPACT_CONTEXT_SHARE = 0.7;
 
 export async function runTurn(t: Turn): Promise<vscode.ChatResult> {
     const live = await openTurn(t);
@@ -149,10 +155,16 @@ async function openTurn(t: Turn): Promise<Live> {
 // Before the first attempt: the session, the server, the agent, and a busy
 // session. Stop coming first ends the turn there.
 async function prepareRun(t: Turn, live: Live): Promise<Ready | Stopped> {
-    const { response, token, settings, state, cwd, kind, agentLabel, isBuild, devAgent, task, useServer } = t;
+    const { response, token, settings, state, cwd, kind, agentLabel, isBuild, devAgent, task, useServer, executable } = t;
     const { beat, preRun, timed, attachUrl } = live;
     const busyPolicy = settings.get<string>("busySessionPolicy", "abort");
     let sessionId: string | undefined = state.id;
+    // Not OpenCode 1: nothing runs through it. A CLI or attached turn always
+    // would; a server turn only when no OpenCode 1 server answered (below).
+    const refused = openCode1Refusal(executable);
+    if (refused && !useServer) {
+        throw refused;
+    }
 
     // An attached run needs its session id first, for the SSE liveness feed.
     if (attachUrl && !sessionId && !token.isCancellationRequested) {
@@ -165,6 +177,11 @@ async function prepareRun(t: Turn, live: Live): Promise<Ready | Stopped> {
 
     // Never queue silently behind a run nobody watches (busySessionPolicy).
     const guardBase = attachUrl ?? (useServer ? await untilStop(timed("server", () => warmServer(cwd, (text) => response.progress(text))), token) : undefined);
+    // The start may just have found it out (a web page for a health answer).
+    const refusedNow = guardBase ? undefined : openCode1Refusal(executable);
+    if (refusedNow) {
+        throw refusedNow;
+    }
     const versionNote = guardBase ? versionNotice(guardBase) : undefined;
     if (versionNote) {
         response.markdown(`> ${mark("warn")} ${versionNote}\n\n`);
@@ -187,9 +204,13 @@ async function prepareRun(t: Turn, live: Live): Promise<Ready | Stopped> {
     if (summary && !token.isCancellationRequested) {
         beat.phase("Finishing this session's summary first");
         const began = Date.now();
+        // Cleared when the race ends: a pending 60 s timer outlives the turn otherwise.
+        let cap: NodeJS.Timeout | undefined;
+        const capped = new Promise<false>((resolve) => (cap = setTimeout(() => resolve(false), SUMMARY_WAIT_MS)));
         const finished = await timed("summary", () =>
-            untilStop(Promise.race([summary.then(() => true), delay(SUMMARY_WAIT_MS).then(() => false)]), token)
+            untilStop(Promise.race([summary.then(() => true), capped]), token)
         );
+        clearTimeout(cap);
         summaryStillRunning = finished === false;
         logChannel.appendLine(`[${stamp()}] waited ${secs(Date.now() - began)} for the session summary${summaryStillRunning ? " — still running" : ""}`);
     }
@@ -366,7 +387,9 @@ async function runAttempts(t: Turn, live: Live, ready: Ready): Promise<Outcome> 
             metrics = await (serverTransport ? runOpenCodeServer : runOpenCode)(runOpts);
         } catch (error) {
             // A stale session id is fatal on both transports.
-            if (isMissingSessionError(error) && runOpts.sessionId && !token.isCancellationRequested) {
+            if (isTurnPermissionError(error)) {
+                throw error;
+            } else if (isMissingSessionError(error) && runOpts.sessionId && !token.isCancellationRequested) {
                 metrics = await restartAfterMissingSession(
                     runOpts,
                     serverTransport,
@@ -376,7 +399,8 @@ async function runAttempts(t: Turn, live: Live, ready: Ready): Promise<Outcome> 
                 );
                 sessionRestarted = true;
                 rerun(true);
-            } else if (!serverTransport || token.isCancellationRequested) {
+            } else if (!serverTransport || token.isCancellationRequested || isNotOpenCode1(error)) {
+                // Not OpenCode 1: no CLI fallback without the bridge's rules.
                 throw error;
             } else {
                 // The managed server failed: the CLI takes this and later attempts.
@@ -443,15 +467,15 @@ async function runAttempts(t: Turn, live: Live, ready: Ready): Promise<Outcome> 
 // After the attempts: what chat shows, the session's books, autocompact, the
 // chips, and the metadata a later turn (and the chips) read.
 async function finishTurn(t: Turn, live: Live, outcome: Outcome): Promise<vscode.ChatResult> {
-    const { response, token, settings, state, cwd, kind, agentLabel, task, settingPin, agentKey, chain, variantFor, continuing } = t;
+    const { response, token, settings, state, cwd, kind, agentLabel, task, settingPin, agentKey, chain, variantFor, continuing, executable } = t;
     const { beat, linker } = live;
     const { metrics, answer, streamed, sessionId, sessionRestarted, lastAttempt, firstModel } = outcome;
-    const autoCompact = settings.get<boolean>("autoCompact", true);
-    // Size triggers a summarize too, not only the turn count (9.6k → 199k seen in 8 turns):
-    // 60k of context, or 70% of the model's window when the catalog knows it.
-    const COMPACT_CONTEXT_TOKENS = 60000;
-    const COMPACT_CONTEXT_SHARE = 0.7;
+    // The CLI found out mid-turn that `opencode` is not OpenCode 1 (run-cli exitProblem).
+    const refusal = Boolean(metrics?.error) && openCode1Refusal(executable)?.message === metrics?.error;
     const compactEvery = settings.get<number>("autoCompactEveryTurns", 8);
+    // `autoCompactEveryTurns: 0` is "OpenCode's own only" (as documented): the
+    // bridge summarizes nothing then, not even at the size triggers.
+    const bridgeCompacts = settings.get<boolean>("autoCompact", true) && compactEvery > 0;
 
     emitAnswerParts(response, linker.flush());
     await beat.stop(token.isCancellationRequested);
@@ -473,7 +497,7 @@ async function finishTurn(t: Turn, live: Live, outcome: Outcome): Promise<vscode
         if (finalAnswer) {
             const whole = createFileLinker(cwd);
             emitAnswerParts(response, [...whole.push(finalAnswer), ...whole.flush()]);
-        } else {
+        } else if (!refusal) {
             response.markdown("_OpenCode returned no output._");
         }
     }
@@ -483,7 +507,7 @@ async function finishTurn(t: Turn, live: Live, outcome: Outcome): Promise<vscode
         logChannel.appendLine(`[${stamp()}] ${mark("stop")} stopped by the user after ${secs(metrics.totalMs)}; the session is kept`);
     }
     if (metrics?.error) {
-        response.markdown(`\n\n> ${mark("fail")} OpenCode reported an error: \`${metrics.error}\``);
+        response.markdown(refusal ? `\n\n> ${mark("fail")} ${metrics.error}` : `\n\n> ${mark("fail")} OpenCode reported an error: \`${metrics.error}\``);
     }
     // The last step stopped at the model's output limit: the answer is cut.
     const cutOff = Boolean(metrics && !metrics.error && !metrics.timedOut && !metrics.cancelled && metrics.finishReason === "length");
@@ -495,6 +519,12 @@ async function finishTurn(t: Turn, live: Live, outcome: Outcome): Promise<vscode
             `\n\n> ${mark("quiet")} Stopped while \`${metrics.stuckTool}\` was still running on the server; the run was aborted there too. ` +
             "Raise `toolQuietMs` if that tool is legitimately slow."
         );
+    }
+
+    // Evidence follows the final attempt, including agent/transport fallback.
+    const enforcedNote = !t.isBuild && metrics && !metrics.error && !metrics.cancelled ? enforcedReadOnlyNotice(metrics.readOnlyEnforcement) : undefined;
+    if (enforcedNote) {
+        response.markdown(`\n\n> ${mark("step")} ${enforcedNote}`);
     }
 
     // Files the agent read or wrote: the "Used N references" list.
@@ -552,7 +582,7 @@ async function finishTurn(t: Turn, live: Live, outcome: Outcome): Promise<vscode
     const sizedBy = answeredBy ?? state.lastModel;
     const contextLimit = sizedBy ? own(cachedModelInfo(), sizedBy)?.context : undefined;
     if (
-        autoCompact &&
+        bridgeCompacts &&
         sessionId &&
         turns > 0 &&
         // The turn count alone fires only with context to spare (or unmeasured).
@@ -565,9 +595,9 @@ async function finishTurn(t: Turn, live: Live, outcome: Outcome): Promise<vscode
         );
         void compactSession(sessionId, cwd, answeredBy);
     }
-    // Autocompact off: offer it once the context is where it would have fired.
+    // The bridge not compacting: offer it once the context is where it would have fired.
     const compactOffer =
-        !autoCompact && sessionId && (contextTokens > COMPACT_CONTEXT_TOKENS || (contextLimit !== undefined && contextTokens >= contextLimit * COMPACT_CONTEXT_SHARE))
+        !bridgeCompacts && sessionId && (contextTokens > COMPACT_CONTEXT_TOKENS || (contextLimit !== undefined && contextTokens >= contextLimit * COMPACT_CONTEXT_SHARE))
             ? contextLimit
                 ? `${Math.round((100 * contextTokens) / contextLimit)}%`
                 : `${Math.round(contextTokens / 1000)}k`
@@ -616,6 +646,10 @@ async function finishTurn(t: Turn, live: Live, outcome: Outcome): Promise<vscode
     };
 }
 
+// Refused before anything reached OpenCode: not OpenCode 1, an identity its
+// `--version` could not confirm, or this turn's permission rules not set.
+const notSent = (error: unknown): boolean => isNotOpenCode1(error) || isIdentityUnknown(error) || isTurnPermissionError(error);
+
 // A throw out of the turn: Stop is not a failure; a launch that failed says why.
 async function failTurn(t: Turn, live: Live, error: unknown): Promise<vscode.ChatResult> {
     const { response, token, state, cwd, kind, agentLabel, executable, replay } = t;
@@ -636,10 +670,16 @@ async function failTurn(t: Turn, live: Live, error: unknown): Promise<vscode.Cha
             "or set an absolute path in the `opencodeCopilotBridge.executable` setting."
         );
         response.button({ command: "opencodeCopilotBridge.diagnose", title: "Run diagnostics" });
+    } else if (notSent(error)) {
+        // Each says what happened and what to do: nothing reached OpenCode.
+        response.markdown(`\n\n> ${mark("fail")} ${err.message}`);
+        response.button({ command: "opencodeCopilotBridge.showLog", title: "Show debug log" });
     } else {
         const message = err instanceof Error ? err.message : String(error);
         response.markdown(`\n\nOpenCode failed to start: ${message}`);
         response.button({ command: "opencodeCopilotBridge.showLog", title: "Show debug log" });
     }
-    return { metadata: { kind, agent: agentLabel, error: String(err?.message ?? error), prompt: replay } };
+    // Nothing was sent: Continue would send "continue" to a session that never
+    // got the task — Retry resends the words (chips outcomeOf).
+    return { metadata: { kind, agent: agentLabel, error: String(err?.message ?? error), prompt: replay, ...(notSent(error) ? { notSent: true } : {}) } };
 }
