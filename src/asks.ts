@@ -20,8 +20,8 @@
 //     only the server's own `permission.replied` says a reply landed.
 import { logChannel, stamp, truncate } from "./core";
 import { mark, prompt as promptText } from "./followups";
-import { connectSse, httpRequestJson, sessionIdFromEvent, withDirectory } from "./net";
-import { safeSessionId, sessionPath } from "./server-session";
+import { connectSse, sessionIdFromEvent } from "./net";
+import { api } from "./oc-api";
 import { stepDetail } from "./run-steps";
 import { SubagentStep, toolFilePath } from "./metrics";
 
@@ -58,31 +58,30 @@ export function answerAsk(
     if (!id || props.sessionID !== sessionId) {
         return;
     }
-    let url: string;
-    let body: Record<string, unknown>;
+    let send: () => Promise<unknown>;
     let said: string;
     let permission = false;
     if ((type === "permission.asked" || type === "permission.updated") && opts.permissions) {
         // Pre-1.1: no message to feed back, a bare `reject`.
         const legacy = type === "permission.updated";
-        url = legacy ? sessionPath(sessionId, `permissions/${safeSessionId(id)}`) : `/permission/${safeSessionId(id)}/reply`;
-        body = legacy
+        const reply = legacy
             ? { response: opts.autoApprove ? "once" : "reject" }
             : opts.autoApprove ? { reply: "once" } : { reply: "reject", message: promptText("READ_ONLY") };
+        send = () => api(base).permissionReply(cwd, sessionId, id, legacy, reply, 5000);
         const patterns = [props.patterns, props.pattern].flat().filter((p): p is string => typeof p === "string").join(", ");
         said = `permission ${String(props.permission ?? props.type ?? "?")} (${truncate(patterns, 120)}) → ${opts.autoApprove ? "approved once" : "rejected: read-only turn"}${legacy ? " [pre-1.1 event]" : ""}`;
         permission = true;
     } else if (type === "question.asked") {
         const questions = Array.isArray(props.questions) ? props.questions : [];
-        url = `/question/${safeSessionId(id)}/reply`;
-        body = { answers: (questions.length ? questions : [undefined]).map(() => [promptText("NO_QUESTIONS")]) };
+        const reply = { answers: (questions.length ? questions : [undefined]).map(() => [promptText("NO_QUESTIONS")]) };
+        send = () => api(base).questionReply(cwd, id, reply, 5000);
         said = `question → answered "ask in your reply" (${questions.length} asked)`;
     } else {
         return;
     }
     logChannel.appendLine(`[${stamp()}] ${mark("warn")} ${said}`);
     const post = (): void =>
-        void httpRequestJson("POST", withDirectory(`${base}${url}`, cwd), body, 5000).catch((error) =>
+        void send().catch((error) =>
             logChannel.appendLine(`[${stamp()}] could not answer ${type} ${id}: ${error}`)
         );
     post();

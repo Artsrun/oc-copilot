@@ -38,6 +38,7 @@ const ALLOWED = [
     "extension/out/proc.js",
     "extension/out/prompt.js",
     "extension/out/net.js",
+    "extension/out/oc-api.js",
     "extension/out/context.js",
     "extension/out/session.js",
     "extension/out/models.js",

@@ -5,6 +5,68 @@ actually measured, so nobody re-derives it.
 
 ---
 
+## OpenCode 2's server API, measured (2026-10-19)
+
+Linux, Node 22.22.0. `opencode-ai@1.19.0` and `@opencode/cli@2.0.29` (2.0.32
+spot-checked: same rows), each with an isolated HOME, a fresh git repo and the
+scripted model (`scripts/probe-model.js`). The capture scripts were scratch
+code, not committed.
+
+**v2 serves an API; earlier probes saw only its web app.** `serve` prints
+`server password <secret>`; `/api/*` answers 401 `UnauthorizedError` without
+auth and accepts **Basic `opencode:<password>`** (Bearer and a bare password:
+401). `GET /openapi.json` lists 165 operations (OpenAPI 3.1). Every other path,
+`/global/health` included, is the web app (HTML 200). Health is
+`GET /api/info` → `{version, pid, urls, paths, capabilities}`. Boot 0.25 s
+(1.19.0: 2.3 s).
+
+- **Scope:** `location: {directory}` in a body; as a query it must be the
+  deep object `location[directory]=` (flat `location=` is 400 InvalidRequestError).
+- **Events** (`GET /api/event`, `: heartbeat` comments): `{id, created, type,
+  location, data, durable: {aggregateID, seq}}`, every session event carrying
+  `data.sessionID`. Text `session.text.delta` (`assistantMessageID`,
+  `ordinal`); steps `session.step.{started,ended,failed}`; tools
+  `session.tool.{called,progress,success}`; spend `session.usage.updated`;
+  the end `session.execution.{succeeded,interrupted}`; compaction
+  `session.compaction.{started,delta,failed}`; a subagent is a
+  `session.created` with `parentID`, then its own session's events.
+  1.19.0's `/global/event` wraps `{directory, project, payload: {type,
+  properties}}`, plus `sync` events carrying the same durable aggregate/seq.
+- **Prompt** `POST /api/session/:id/prompt {text}` returns the queued inbox item at
+  once (`delivery: steer|queue`); the run ends on `session.execution.*`.
+  Stop is `POST …/interrupt` → `{interrupted: true}`.
+- **Rules** are `{action, resource, effect}` (1.x `{permission, pattern,
+  action}`); a session takes `permissions` at `POST /api/session`. An ask is
+  `permission.asked {id, action, resources, save, source}`, answered at
+  `POST /api/session/:sid/permission/:id/reply {decision: once|always|reject}`
+  (204), confirmed by `permission.replied`. Shell is `shell`, delegation
+  `subagent`.
+- **Agents load lazily per location:** `GET /api/agent/plan` 400 ms after boot
+  was 404 `AgentNotFoundError` and `GET /api/agent` `[]`; polled, both answer
+  within about 350 ms (7 agents).
+
+**Read-only on v2.** Stock 2.0.29 and 2.0.32, plan turns over the API, no ask
+answered: plan `echo > file`, plan → explore `echo > file`, plan → general
+write: CREATED ×3. 1.x's `OPENCODE_CONFIG_CONTENT` shape (`agent.plan.permission`)
+is ignored. v2's config is `agents.<name>.permissions: [{action, resource,
+effect}]`: given that way, the rules are APPENDED after the agent's own (and
+after a project `opencode.json`'s `shell * allow`, measured), `GET
+/api/agent/plan` lists them with the marker, and all three rows are absent; a
+top-level `permissions` lands on every agent. Session `permissions` alone also
+kept plan → explore `echo > file` absent.
+
+**CLI.** 2.x `run` rejects `--attach --dir --variant --pure`, takes
+`--server`, `--standalone`, `-m provider/model#variant`; `models` rejects
+`--verbose`; `agent list` is `debug agents`. Without `--standalone`, `run` and
+`debug agents` start a background `serve --service` that outlives the call
+(seen running after the probe exited): a later `run` uses it, so config handed
+to that later process cannot reach it. `run --standalone --format json` prints
+1.x's line shapes (`step_start`, `text`, `tool_use` with `shell`,
+`step_finish`; a text-only turn ends without `step_finish`) in about 0.9 s and
+leaves nothing running. Its `$PWD` decides the folder, as on 1.x.
+
+---
+
 ## 0.0.220 gitScan: filter drivers and submodules (2026-10-19)
 
 Review of the 0.0.219 import. Linux, git 2.43.0. A probe repo with

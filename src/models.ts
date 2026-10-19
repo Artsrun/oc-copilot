@@ -3,7 +3,8 @@ import { config, extensionContext, logChannel, own, resolveFolder, stamp } from 
 import { mark } from "./followups";
 import { killTree, spawnOpenCode } from "./proc";
 import { uniqueModels } from "./context";
-import { httpGetJson, knownServerBase, withDirectory } from "./net";
+import { knownServerBase } from "./net";
+import { api } from "./oc-api";
 import { openCodeConfigModel } from "./env";
 
 // ---------------------------------------------------------------------------
@@ -236,7 +237,7 @@ async function catalogFromServer(cwd: string, base?: string): Promise<Record<str
         return undefined;
     }
     try {
-        const info = parseProviders(await httpGetJson<unknown>(withDirectory(`${url}/config/providers`, cwd), PROVIDERS_TIMEOUT_MS));
+        const info = parseProviders(await api(url).providers(cwd, PROVIDERS_TIMEOUT_MS));
         return Object.keys(info).length ? info : undefined;
     } catch {
         return undefined;

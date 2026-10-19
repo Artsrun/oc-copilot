@@ -227,6 +227,8 @@ const SLOW_START_MS = 1500;
 // them it still runs, and says so once per window and version.
 export const TESTED_OPENCODE = { min: "1.18.27", max: "1.19.0" } as const;
 const serverVersions = new Map<string, string>();
+/** The version `base` named at `/global/health`, if it named one. */
+export const serverVersion = (base: string): string | undefined => serverVersions.get(base);
 const versionsNoted = new Set<string>();
 
 const semver = (v: string): number[] | undefined => {

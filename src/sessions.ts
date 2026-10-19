@@ -2,8 +2,8 @@
 // server/routes/instance/httpapi/groups/session.ts): list (most recently
 // updated first, archived excluded), messages, fork, archive, delete. Every
 // call is scoped with ?directory= and bounded.
-import { httpGetJson, httpRequestJson, withDirectory } from "./net";
-import { HEADLESS_PERMISSION, abortServerRun, sessionBusy, sessionPath, sessionRoot } from "./runs";
+import { api } from "./oc-api";
+import { HEADLESS_PERMISSION, abortServerRun, sessionBusy } from "./runs";
 
 export interface ServerSession {
     id: string;
@@ -22,7 +22,7 @@ const TIMEOUT_MS = 5000;
 /** Ids with a run going now (`GET /session/status`); empty when it cannot tell. */
 export const busySessions = async (base: string, cwd: string): Promise<Set<string>> => {
     try {
-        const all = await httpGetJson<Record<string, { type?: string }>>(withDirectory(`${base}/session/status`, cwd), 3000);
+        const all = await api(base).sessionStatus(cwd, 3000);
         return new Set(Object.entries(all ?? {}).filter(([, v]) => v?.type && v.type !== "idle").map(([k]) => k));
     } catch {
         return new Set();
@@ -31,8 +31,8 @@ export const busySessions = async (base: string, cwd: string): Promise<Set<strin
 
 /** This folder's top-level sessions (no subagent children), newest first. */
 export const listSessions = async (base: string, cwd: string, limit = 50): Promise<ServerSession[]> => {
-    // httpRequestJson rejects a non-2xx: an error body is not "no sessions".
-    const all = await httpRequestJson<ServerSession[]>("GET", withDirectory(`${base}/session?roots=true&limit=${limit}`, cwd), undefined, TIMEOUT_MS);
+    // The strict list rejects a non-2xx: an error body is not "no sessions".
+    const all = (await api(base).sessions(cwd, { roots: true, limit }, TIMEOUT_MS)) as ServerSession[];
     return (Array.isArray(all) ? all : []).filter((s) => s && typeof s.id === "string" && !s.time?.archived);
 };
 
@@ -42,7 +42,7 @@ const textOf = (m: WithParts): string =>
 
 /** The last ask and the last answer of a session, for "what was this?". */
 export const sessionExcerpt = async (base: string, cwd: string, id: string): Promise<SessionExcerpt> => {
-    const msgs = await httpGetJson<WithParts[]>(withDirectory(`${base}${sessionPath(id, "message")}?limit=20`, cwd), TIMEOUT_MS);
+    const msgs = (await api(base).sessionMessages(cwd, id, 20, TIMEOUT_MS)) as WithParts[];
     const list = Array.isArray(msgs) ? msgs : [];
     const last = (role: string): string | undefined =>
         [...list].reverse().map((m) => (m.info?.role === role ? textOf(m) : "")).find(Boolean);
@@ -55,13 +55,13 @@ export const sessionExcerpt = async (base: string, cwd: string, id: string): Pro
  * back on the copy (no question tool, no plan switches).
  */
 export const forkSession = async (base: string, cwd: string, id: string): Promise<ServerSession> => {
-    const fork = await httpRequestJson<ServerSession>("POST", withDirectory(`${base}${sessionPath(id, "fork")}`, cwd), undefined, TIMEOUT_MS);
+    const fork: ServerSession = await api(base).sessionFork(cwd, id, TIMEOUT_MS);
     try {
-        await httpRequestJson("PATCH", withDirectory(`${base}${sessionRoot(fork.id)}`, cwd), { permission: HEADLESS_PERMISSION }, TIMEOUT_MS);
+        await api(base).sessionPatch(cwd, fork.id, { permission: HEADLESS_PERMISSION }, TIMEOUT_MS);
     } catch (error) {
         // A copy without the headless rules would offer the question tool to a
         // chat that cannot answer it: it must not outlive a failed fork.
-        await httpRequestJson("DELETE", withDirectory(`${base}${sessionRoot(fork.id)}`, cwd), undefined, TIMEOUT_MS).catch(() => undefined);
+        await api(base).sessionDelete(cwd, fork.id, TIMEOUT_MS).catch(() => undefined);
         throw error;
     }
     return fork;
@@ -77,11 +77,11 @@ const stopRun = async (base: string, cwd: string, id: string, why: string): Prom
 /** OpenCode's archive: hidden from the list, messages kept. */
 export const archiveSession = async (base: string, cwd: string, id: string): Promise<void> => {
     await stopRun(base, cwd, id, "closed from /sessions");
-    await httpRequestJson("PATCH", withDirectory(`${base}${sessionRoot(id)}`, cwd), { time: { archived: Date.now() } }, TIMEOUT_MS);
+    await api(base).sessionPatch(cwd, id, { time: { archived: Date.now() } }, TIMEOUT_MS);
 };
 
 /** Gone for good, with its messages. */
 export const deleteSession = async (base: string, cwd: string, id: string): Promise<void> => {
     await stopRun(base, cwd, id, "deleted from /sessions");
-    await httpRequestJson("DELETE", withDirectory(`${base}${sessionRoot(id)}`, cwd), undefined, TIMEOUT_MS);
+    await api(base).sessionDelete(cwd, id, TIMEOUT_MS);
 };

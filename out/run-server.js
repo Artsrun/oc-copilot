@@ -4,6 +4,7 @@ exports.runOpenCodeServer = runOpenCodeServer;
 const core_1 = require("./core");
 const followups_1 = require("./followups");
 const net_1 = require("./net");
+const oc_api_1 = require("./oc-api");
 const metrics_1 = require("./metrics");
 const asks_1 = require("./asks");
 const run_steps_1 = require("./run-steps");
@@ -24,7 +25,6 @@ async function runOpenCodeServer(options) {
     let lastRetry = -1;
     let aborting = false;
     const base = options.serverUrl ?? (await (0, net_1.ensureServer)(options.cwd));
-    const scoped = (path) => (0, net_1.withDirectory)(`${base}${path}`, options.cwd);
     const readOnly = Boolean(options.readOnly);
     if (readOnly) {
         metrics.readOnlyEnforcement = await (0, server_session_1.serverEnforcement)(base, options.cwd, options.agent ?? "plan");
@@ -33,10 +33,7 @@ async function runOpenCodeServer(options) {
     let sessionId = options.sessionId;
     if (!sessionId) {
         const permission = await (0, server_session_1.sessionRules)(base, options.cwd, readOnly);
-        const created = await (0, net_1.httpRequestJson)("POST", scoped("/session"), {
-            title: (0, core_1.truncate)(options.task, 60),
-            permission
-        });
+        const created = await (0, oc_api_1.api)(base).sessionCreate(options.cwd, { title: (0, core_1.truncate)(options.task, 60), permission });
         sessionId = created.id;
         (0, server_session_1.noteTurnPermission)(base, sessionId, permission, options.cwd);
     }
@@ -120,7 +117,7 @@ async function runOpenCodeServer(options) {
     let idleTimer;
     let idleFired = false;
     try {
-        const pending = (0, net_1.httpRequestJson)("POST", scoped((0, server_session_1.sessionPath)(sessionId, "message")), body, options.timeoutMs, options.token);
+        const pending = (0, oc_api_1.api)(base).sessionPrompt(options.cwd, sessionId, body, options.timeoutMs, options.token);
         if (idleMs > 0) {
             const toolQuietMs = Math.max(0, options.toolQuietMs ?? 0);
             const watchdog = new Promise((_, reject) => {
@@ -155,7 +152,7 @@ async function runOpenCodeServer(options) {
                 core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] ${(0, followups_1.mark)("quiet")} ${error.message} — aborting the server run`);
             }
             aborting = true;
-            const abort = (0, net_1.httpRequestJson)("POST", scoped((0, server_session_1.sessionPath)(sessionId, "abort")), undefined, 5000).catch(() => undefined);
+            const abort = (0, oc_api_1.api)(base).sessionAbort(options.cwd, sessionId, 5000).catch(() => undefined);
             void (0, server_session_1.abortChildren)(base, sessionId, options.cwd, family.children());
             if (code !== "ECANCELLED_BRIDGE") {
                 await abort;

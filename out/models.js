@@ -54,6 +54,7 @@ const followups_1 = require("./followups");
 const proc_1 = require("./proc");
 const context_1 = require("./context");
 const net_1 = require("./net");
+const oc_api_1 = require("./oc-api");
 const env_1 = require("./env");
 const MODEL_CACHE_KEY = "opencode.models.v2";
 const MODEL_CACHE_KEY_V1 = "opencode.models.v1";
@@ -198,7 +199,7 @@ async function catalogFromServer(cwd, base) {
         return undefined;
     }
     try {
-        const info = parseProviders(await (0, net_1.httpGetJson)((0, net_1.withDirectory)(`${url}/config/providers`, cwd), PROVIDERS_TIMEOUT_MS));
+        const info = parseProviders(await (0, oc_api_1.api)(url).providers(cwd, PROVIDERS_TIMEOUT_MS));
         return Object.keys(info).length ? info : undefined;
     }
     catch {

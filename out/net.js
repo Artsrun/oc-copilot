@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.PREWARM_DELAY_MS = exports.currentServerGeneration = exports.isNotOpenCode1 = exports.openCode1Refusal = exports.isIdentityUnknown = exports.TESTED_OPENCODE = void 0;
+exports.PREWARM_DELAY_MS = exports.currentServerGeneration = exports.isNotOpenCode1 = exports.openCode1Refusal = exports.isIdentityUnknown = exports.serverVersion = exports.TESTED_OPENCODE = void 0;
 exports.withDirectory = withDirectory;
 exports.httpRequestJson = httpRequestJson;
 exports.httpGetJson = httpGetJson;
@@ -187,6 +187,8 @@ function setStartupDeadline(ms) {
 const SLOW_START_MS = 1500;
 exports.TESTED_OPENCODE = { min: "1.18.27", max: "1.19.0" };
 const serverVersions = new Map();
+const serverVersion = (base) => serverVersions.get(base);
+exports.serverVersion = serverVersion;
 const versionsNoted = new Set();
 const semver = (v) => {
     const m = v.match(/^v?(\d+)\.(\d+)\.(\d+)/);

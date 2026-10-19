@@ -40,6 +40,7 @@ const vscode = __importStar(require("vscode"));
 const core_1 = require("./core");
 const proc_1 = require("./proc");
 const net_1 = require("./net");
+const oc_api_1 = require("./oc-api");
 const metrics_1 = require("./metrics");
 const env_1 = require("./env");
 const prompt_1 = require("./prompt");
@@ -102,6 +103,8 @@ exports.__test = {
     resolveFolder: core_1.resolveFolder,
     notifyIfSlow: session_1.notifyIfSlow,
     safeSessionId: runs_1.safeSessionId,
+    api: oc_api_1.api,
+    serverMajor: oc_api_1.serverMajor,
     readShimTarget: proc_1.readShimTarget,
     tokenizeCmdLine: proc_1.tokenizeCmdLine,
     expandShimVar: proc_1.expandShimVar,

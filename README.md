@@ -485,6 +485,15 @@ All under `opencodeCopilotBridge.`.
 
 The last five releases; the full history is `CHANGELOG.md` in the repository.
 
+### 0.0.221
+
+- Every request to an OpenCode server now goes through one module
+  (`src/oc-api.ts`): one route set per OpenCode major, chosen by the version
+  the server names. Only 1.x's set exists, and it sends the same URLs and
+  bodies as before; OpenCode 2's server, another API under `/api`, becomes a
+  second set instead of a version check at every call site. No behaviour
+  change. Checks `OA`.
+
 ### 0.0.220
 
 - **gitScan no longer runs commands from a repository's Git config.** `git status`
@@ -530,9 +539,3 @@ The last five releases; the full history is `CHANGELOG.md` in the repository.
 - **Attached dirty buffers, line ranges, untitled editors & `#problems`:** unsaved editor buffers, line-range file attachments, open untitled documents, and `#problems` diagnostics are now folded into bounded context sections (`Attached text excerpts:` and `Attached problems:`) and scrubbed by the leak gate.
 - **Custom `planAgent` (`look`) & `/parallel` enforcement:** custom read-only agents whose rules deny writing tools are recognized without requiring the bridge's `ocb-enforced` marker; `readOnlySubagents` verifies `task * deny` and excludes primary/dev agents (`build`, `general`); read-only `/parallel` turns surface enforcement notices and deduplicate concurrent `GET /agent` lookups.
 - **Server agent cache & release ledger:** `listAgents` cache keys include the server generation; the release gate verifies every delivered VSIX in `dist/` against `docs/released.txt`.
-
-### 0.0.216
-
-- Withhold shell on enforced read-only agents: Git inspection helpers could write.
-- Validate literal subagent names and effective server rules; notices follow the actual run.
-- Remove accidental docs artifacts and redundant test wrappers.
