@@ -4,7 +4,8 @@ import { platform } from "node:process";
 import { config, resolveFolder, truncate } from "./core";
 import { mark } from "./followups";
 import { resolveExecutable, runCapture } from "./proc";
-import { httpGetJson, knownServerBase, majorVersionNote } from "./net";
+import { knownServerBase, majorVersionNote } from "./net";
+import { api } from "./oc-api";
 import { getActiveSession } from "./session";
 import { catalogAge, getModelCatalog } from "./models";
 import { discoverOpenCodeEnv, summariseEnv } from "./env";
@@ -37,7 +38,7 @@ export async function diagnose(): Promise<void> {
     const serverBase = knownServerBase();
     if (serverBase) {
         try {
-            const health = await httpGetJson<{ healthy?: boolean; version?: unknown }>(`${serverBase}/global/health`);
+            const health = await api(serverBase).health();
             serverState = health.healthy === true
                 ? `${mark("ok")} healthy on ${serverBase}${typeof health.version === "string" ? ` · OpenCode ${truncate(health.version, 24)}` : ""}`
                 : `${mark("warn")} responded, unhealthy`;

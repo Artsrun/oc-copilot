@@ -1,7 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.isTurnPermissionError = exports.serverEnforcement = exports.HEADLESS_PERMISSION = exports.sessionRoot = exports.sessionPath = void 0;
-exports.safeSessionId = safeSessionId;
+exports.isTurnPermissionError = exports.serverEnforcement = exports.HEADLESS_PERMISSION = exports.sessionRoot = exports.sessionPath = exports.safeSessionId = void 0;
 exports.turnPermission = turnPermission;
 exports.readOnlyReach = readOnlyReach;
 exports.readOnlyEvidence = readOnlyEvidence;
@@ -20,22 +19,12 @@ exports.compactionInFlight = compactionInFlight;
 exports.compactSession = compactSession;
 const core_1 = require("./core");
 const net_1 = require("./net");
+const oc_api_1 = require("./oc-api");
+Object.defineProperty(exports, "safeSessionId", { enumerable: true, get: function () { return oc_api_1.safeSessionId; } });
+Object.defineProperty(exports, "sessionPath", { enumerable: true, get: function () { return oc_api_1.sessionPath; } });
+Object.defineProperty(exports, "sessionRoot", { enumerable: true, get: function () { return oc_api_1.sessionRoot; } });
 const agents_1 = require("./agents");
 const enforce_1 = require("./enforce");
-const SAFE_ID = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$/;
-function safeSessionId(sessionId) {
-    if (SAFE_ID.test(sessionId)) {
-        return sessionId;
-    }
-    const cleaned = sessionId.replace(/[^A-Za-z0-9._-]/g, "_").replace(/^[.-]+/, "_").slice(0, 128);
-    const safe = cleaned || "session";
-    core_1.logChannel?.appendLine(`[${(0, core_1.stamp)()}] unsafe session id ${JSON.stringify(sessionId)} → ${safe}`);
-    return safe;
-}
-const sessionPath = (sessionId, tail) => `/session/${safeSessionId(sessionId)}/${tail}`;
-exports.sessionPath = sessionPath;
-const sessionRoot = (sessionId) => `/session/${safeSessionId(sessionId)}`;
-exports.sessionRoot = sessionRoot;
 exports.HEADLESS_PERMISSION = [
     { permission: "question", action: "deny", pattern: "*" },
     { permission: "plan_enter", action: "deny", pattern: "*" },
@@ -135,7 +124,7 @@ async function devTaskRules(base, cwd, agent) {
 }
 async function carriesTaskRules(base, cwd, sessionId) {
     try {
-        const session = await (0, net_1.httpGetJson)((0, net_1.withDirectory)(`${base}${(0, exports.sessionRoot)(sessionId)}`, cwd), 2000);
+        const session = await (0, oc_api_1.api)(base).sessionGet(cwd, sessionId, 2000);
         return Array.isArray(session?.permission) && session.permission.some((r) => (0, agents_1.isPermissionRule)(r) && r.permission === "task");
     }
     catch (error) {
@@ -160,7 +149,7 @@ async function applyTurnPermission(base, cwd, sessionId, readOnly, agent = "buil
             (had !== undefined && had.rules !== want) ||
             await carriesTaskRules(base, cwd, sessionId));
         const sent = restore ? [...rules, ...(await devTaskRules(base, cwd, agent))] : rules;
-        await (0, net_1.httpRequestJson)("PATCH", (0, net_1.withDirectory)(`${base}${(0, exports.sessionRoot)(sessionId)}`, cwd), { permission: sent }, 3000);
+        await (0, oc_api_1.api)(base).sessionPatch(cwd, sessionId, { permission: sent }, 3000);
         appliedRules.set(key, { rules: want, restoredAgent: restore ? agent : undefined });
         const none = readOnly && !rules.some((r) => r.permission === "task" && r.action === "allow");
         core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] ${sessionId}: ${readOnly ? (none ? "no subagents" : "read-only subagents only") : restore ? `headless rules; subagents as \`${agent}\` allows them` : "headless rules"}`);
@@ -196,7 +185,7 @@ function isAttachFailure(metrics) {
 }
 async function sessionBusy(base, sessionId, cwd) {
     try {
-        const all = await (0, net_1.httpGetJson)((0, net_1.withDirectory)(`${base}/session/status`, cwd), 3000);
+        const all = await (0, oc_api_1.api)(base).sessionStatus(cwd, 3000);
         const st = all?.[sessionId]?.type;
         return Boolean(st && st !== "idle");
     }
@@ -213,7 +202,7 @@ async function abortChildren(base, sessionId, cwd, known = []) {
         const next = [];
         for (const id of level) {
             try {
-                const kids = await (0, net_1.httpGetJson)((0, net_1.withDirectory)(`${base}${(0, exports.sessionPath)(id, "children")}`, cwd), 3000);
+                const kids = (await (0, oc_api_1.api)(base).sessionChildren(cwd, id, 3000));
                 for (const k of Array.isArray(kids) ? kids : []) {
                     if (typeof k?.id === "string" && !seen.has(k.id) && seen.size < TREE_MAX) {
                         seen.add(k.id);
@@ -227,7 +216,7 @@ async function abortChildren(base, sessionId, cwd, known = []) {
         level = next;
     }
     const ids = [...seen];
-    await Promise.all(ids.map((id) => (0, net_1.httpRequestJson)("POST", (0, net_1.withDirectory)(`${base}${(0, exports.sessionPath)(id, "abort")}`, cwd), undefined, 3000).catch(() => undefined)));
+    await Promise.all(ids.map((id) => (0, oc_api_1.api)(base).sessionAbort(cwd, id, 3000).catch(() => undefined)));
     if (ids.length) {
         core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] aborted ${ids.length} subagent session(s) under ${sessionId}`);
     }
@@ -235,7 +224,7 @@ async function abortChildren(base, sessionId, cwd, known = []) {
 }
 async function abortServerRun(base, sessionId, cwd, why) {
     try {
-        await (0, net_1.httpRequestJson)("POST", (0, net_1.withDirectory)(`${base}${(0, exports.sessionPath)(sessionId, "abort")}`, cwd), undefined, 5000);
+        await (0, oc_api_1.api)(base).sessionAbort(cwd, sessionId, 5000);
     }
     catch (error) {
         core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] abort ${sessionId} failed (${why}): ${error}`);
@@ -254,16 +243,13 @@ async function abortServerRun(base, sessionId, cwd, why) {
 }
 async function createServerSession(base, cwd, title, readOnly = false) {
     const permission = await sessionRules(base, cwd, readOnly);
-    const created = await (0, net_1.httpRequestJson)("POST", (0, net_1.withDirectory)(`${base}/session`, cwd), {
-        title: (0, core_1.truncate)(title, 60),
-        permission
-    }, 5000);
+    const created = await (0, oc_api_1.api)(base).sessionCreate(cwd, { title: (0, core_1.truncate)(title, 60), permission }, 5000);
     noteTurnPermission(base, created.id, permission, cwd);
     return created.id;
 }
 async function sessionModel(base, cwd, sessionId) {
     try {
-        const messages = await (0, net_1.httpGetJson)((0, net_1.withDirectory)(`${base}${(0, exports.sessionPath)(sessionId, "message")}?limit=6`, cwd), 5000);
+        const messages = (await (0, oc_api_1.api)(base).sessionMessages(cwd, sessionId, 6, 5000));
         for (const message of [...(Array.isArray(messages) ? messages : [])].reverse()) {
             const info = message?.info ?? {};
             if (info.role === "assistant" && typeof info.providerID === "string" && typeof info.modelID === "string") {
@@ -328,7 +314,7 @@ async function summarize(sessionId, cwd, model, asked) {
             return false;
         }
         const parts = { providerID: spec.slice(0, index), modelID: spec.slice(index + 1) };
-        const status = await (0, net_1.httpPostJson)((0, net_1.withDirectory)(`${base}${(0, exports.sessionPath)(sessionId, "summarize")}`, cwd), { providerID: parts.providerID, modelID: parts.modelID, auto: false }, COMPACT_TIMEOUT_MS);
+        const status = await (0, oc_api_1.api)(base).sessionSummarize(cwd, sessionId, { providerID: parts.providerID, modelID: parts.modelID, auto: false }, COMPACT_TIMEOUT_MS);
         core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] summarize ${sessionId} with ${parts.providerID}/${parts.modelID} → HTTP ${status}`);
         return status >= 200 && status < 300;
     }

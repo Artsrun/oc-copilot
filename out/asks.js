@@ -7,7 +7,7 @@ exports.watchFamily = watchFamily;
 const core_1 = require("./core");
 const followups_1 = require("./followups");
 const net_1 = require("./net");
-const server_session_1 = require("./server-session");
+const oc_api_1 = require("./oc-api");
 const run_steps_1 = require("./run-steps");
 const metrics_1 = require("./metrics");
 const AGENT_IN_TITLE = /\(@([\w./-]+) subagent\)\s*$/;
@@ -18,31 +18,30 @@ function answerAsk(base, cwd, sessionId, ev, opts, sent) {
     if (!id || props.sessionID !== sessionId) {
         return;
     }
-    let url;
-    let body;
+    let send;
     let said;
     let permission = false;
     if ((type === "permission.asked" || type === "permission.updated") && opts.permissions) {
         const legacy = type === "permission.updated";
-        url = legacy ? (0, server_session_1.sessionPath)(sessionId, `permissions/${(0, server_session_1.safeSessionId)(id)}`) : `/permission/${(0, server_session_1.safeSessionId)(id)}/reply`;
-        body = legacy
+        const reply = legacy
             ? { response: opts.autoApprove ? "once" : "reject" }
             : opts.autoApprove ? { reply: "once" } : { reply: "reject", message: (0, followups_1.prompt)("READ_ONLY") };
+        send = () => (0, oc_api_1.api)(base).permissionReply(cwd, sessionId, id, legacy, reply, 5000);
         const patterns = [props.patterns, props.pattern].flat().filter((p) => typeof p === "string").join(", ");
         said = `permission ${String(props.permission ?? props.type ?? "?")} (${(0, core_1.truncate)(patterns, 120)}) → ${opts.autoApprove ? "approved once" : "rejected: read-only turn"}${legacy ? " [pre-1.1 event]" : ""}`;
         permission = true;
     }
     else if (type === "question.asked") {
         const questions = Array.isArray(props.questions) ? props.questions : [];
-        url = `/question/${(0, server_session_1.safeSessionId)(id)}/reply`;
-        body = { answers: (questions.length ? questions : [undefined]).map(() => [(0, followups_1.prompt)("NO_QUESTIONS")]) };
+        const reply = { answers: (questions.length ? questions : [undefined]).map(() => [(0, followups_1.prompt)("NO_QUESTIONS")]) };
+        send = () => (0, oc_api_1.api)(base).questionReply(cwd, id, reply, 5000);
         said = `question → answered "ask in your reply" (${questions.length} asked)`;
     }
     else {
         return;
     }
     core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] ${(0, followups_1.mark)("warn")} ${said}`);
-    const post = () => void (0, net_1.httpRequestJson)("POST", (0, net_1.withDirectory)(`${base}${url}`, cwd), body, 5000).catch((error) => core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] could not answer ${type} ${id}: ${error}`));
+    const post = () => void send().catch((error) => core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] could not answer ${type} ${id}: ${error}`));
     post();
     if (permission) {
         sent?.(id, post);

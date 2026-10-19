@@ -48,6 +48,7 @@ const path = __importStar(require("node:path"));
 const core_1 = require("./core");
 const enforce_1 = require("./enforce");
 const net_1 = require("./net");
+const oc_api_1 = require("./oc-api");
 const proc_1 = require("./proc");
 const isPermissionRule = (r) => {
     const x = r;
@@ -95,7 +96,7 @@ function parseAgentList(raw) {
     return out;
 }
 async function agentsFromServer(base, cwd) {
-    const raw = await (0, net_1.httpGetJson)((0, net_1.withDirectory)(`${base}/agent`, cwd), SERVER_LIST_TIMEOUT_MS);
+    const raw = await (0, oc_api_1.api)(base).agents(cwd, SERVER_LIST_TIMEOUT_MS);
     if (!Array.isArray(raw)) {
         throw new Error("GET /agent did not return a list");
     }

@@ -3,6 +3,15 @@
 Full release history, newest first; releases before the last one are condensed
 to their summary and headlines. The README ships the last five.
 
+### 0.0.221
+
+- Every request to an OpenCode server now goes through one module
+  (`src/oc-api.ts`): one route set per OpenCode major, chosen by the version
+  the server names. Only 1.x's set exists, and it sends the same URLs and
+  bodies as before; OpenCode 2's server, another API under `/api`, becomes a
+  second set instead of a version check at every call site. No behaviour
+  change. Checks `OA`.
+
 ### 0.0.220
 
 - **gitScan no longer runs commands from a repository's Git config.** `git status`

@@ -5,6 +5,7 @@ const core_1 = require("./core");
 const followups_1 = require("./followups");
 const proc_1 = require("./proc");
 const net_1 = require("./net");
+const oc_api_1 = require("./oc-api");
 const runs_1 = require("./runs");
 const env_1 = require("./env");
 const prompt_1 = require("./prompt");
@@ -132,11 +133,11 @@ async function handleControlCommand(p) {
                 if (!serverBase) {
                     throw new Error("no server of this window yet");
                 }
-                const health = await (0, net_1.httpGetJson)(`${serverBase}/global/health`, 2000);
+                const health = await (0, oc_api_1.api)(serverBase).health(2000);
                 const reported = typeof health.version === "string" ? ` · OpenCode ${(0, core_1.truncate)(health.version, 24)}` : "";
                 let scope = "";
                 try {
-                    const mine = await (0, net_1.httpGetJson)((0, net_1.withDirectory)(`${serverBase}/session`, p.cwd), 2500);
+                    const mine = await (0, oc_api_1.api)(serverBase).sessionsRaw(p.cwd, 2500);
                     scope = ` · ${Array.isArray(mine) ? mine.length : 0} session(s) scoped to \`${p.folder.name}\``;
                 }
                 catch {

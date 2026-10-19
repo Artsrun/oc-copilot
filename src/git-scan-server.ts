@@ -109,7 +109,7 @@ async function frame(line: string): Promise<void> {
         case "initialize": {
             const supported = ["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"];
             const asked = request.params?.protocolVersion;
-            reply(request.id, { protocolVersion: typeof asked === "string" && supported.includes(asked) ? asked : "2025-11-25", capabilities: { tools: {} }, serverInfo: { name: "git-scan", version: "0.0.220" } });
+            reply(request.id, { protocolVersion: typeof asked === "string" && supported.includes(asked) ? asked : "2025-11-25", capabilities: { tools: {} }, serverInfo: { name: "git-scan", version: "0.0.221" } });
             break;
         }
         case "ping": reply(request.id, {}); break;

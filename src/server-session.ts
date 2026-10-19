@@ -3,29 +3,14 @@
 // subagent sessions under it), creation, its model, and compaction. Below the
 // two runners; imports no runner.
 import { config, delay, logChannel, stamp, truncate } from "./core";
-import { ensureServer, httpGetJson, httpPostJson, httpRequestJson, withDirectory } from "./net";
+import { ensureServer } from "./net";
+import { api, safeSessionId, sessionPath, sessionRoot } from "./oc-api";
 import { ReadOnlyEnforcement, RunMetrics } from "./metrics";
 import { PermissionRule, isPermissionRule, listAgents } from "./agents";
 import { coldEnforcement, enforcedConfigContent, judgeReadOnly, readOnlySubagents } from "./enforce";
 
-// A session id is untrusted (stdout, server, replayed metadata). In a URL path
-// `..` walks to another endpoint; in argv a leading `-` is a flag. Every site
-// uses sessionPath or safeSessionId (tripwire: MA); anything else is replaced.
-const SAFE_ID = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$/;
-
-export function safeSessionId(sessionId: string): string {
-    if (SAFE_ID.test(sessionId)) {
-        return sessionId;
-    }
-    const cleaned = sessionId.replace(/[^A-Za-z0-9._-]/g, "_").replace(/^[.-]+/, "_").slice(0, 128);
-    const safe = cleaned || "session";
-    logChannel?.appendLine(`[${stamp()}] unsafe session id ${JSON.stringify(sessionId)} → ${safe}`);
-    return safe;
-}
-
-export const sessionPath = (sessionId: string, tail: string): string => `/session/${safeSessionId(sessionId)}/${tail}`;
-/** The session itself: GET, PATCH or DELETE `/session/<id>`. */
-export const sessionRoot = (sessionId: string): string => `/session/${safeSessionId(sessionId)}`;
+// Session ids are made safe where every route is built (./oc-api).
+export { safeSessionId, sessionPath, sessionRoot };
 
 // ---------------------------------------------------------------------------
 // permission rules
@@ -193,7 +178,7 @@ async function devTaskRules(base: string, cwd: string, agent: string): Promise<P
 // not seen is read first (2 s). Unread, the agent's own rules go back anyway.
 async function carriesTaskRules(base: string, cwd: string, sessionId: string): Promise<boolean> {
     try {
-        const session = await httpGetJson<{ permission?: unknown }>(withDirectory(`${base}${sessionRoot(sessionId)}`, cwd), 2000);
+        const session = await api(base).sessionGet(cwd, sessionId, 2000);
         return Array.isArray(session?.permission) && session.permission.some((r) => isPermissionRule(r) && r.permission === "task");
     } catch (error) {
         if (isMissingSessionError(error)) {
@@ -222,7 +207,7 @@ export async function applyTurnPermission(base: string, cwd: string, sessionId: 
             await carriesTaskRules(base, cwd, sessionId)
         );
         const sent = restore ? [...rules, ...(await devTaskRules(base, cwd, agent))] : rules;
-        await httpRequestJson("PATCH", withDirectory(`${base}${sessionRoot(sessionId)}`, cwd), { permission: sent }, 3000);
+        await api(base).sessionPatch(cwd, sessionId, { permission: sent }, 3000);
         appliedRules.set(key, { rules: want, restoredAgent: restore ? agent : undefined });
         const none = readOnly && !rules.some((r) => r.permission === "task" && r.action === "allow");
         logChannel.appendLine(
@@ -295,7 +280,7 @@ export function isAttachFailure(metrics: RunMetrics): boolean {
 
 export async function sessionBusy(base: string, sessionId: string, cwd: string): Promise<boolean | undefined> {
     try {
-        const all = await httpGetJson<Record<string, { type?: string }>>(withDirectory(`${base}/session/status`, cwd), 3000);
+        const all = await api(base).sessionStatus(cwd, 3000);
         const st = all?.[sessionId]?.type;
         return Boolean(st && st !== "idle");
     } catch {
@@ -316,7 +301,7 @@ export async function abortChildren(base: string, sessionId: string, cwd: string
         const next: string[] = [];
         for (const id of level) {
             try {
-                const kids = await httpGetJson<Array<{ id?: unknown }>>(withDirectory(`${base}${sessionPath(id, "children")}`, cwd), 3000);
+                const kids = (await api(base).sessionChildren(cwd, id, 3000)) as Array<{ id?: unknown }>;
                 for (const k of Array.isArray(kids) ? kids : []) {
                     if (typeof k?.id === "string" && !seen.has(k.id) && seen.size < TREE_MAX) {
                         seen.add(k.id);
@@ -331,7 +316,7 @@ export async function abortChildren(base: string, sessionId: string, cwd: string
     }
     const ids = [...seen];
     await Promise.all(
-        ids.map((id) => httpRequestJson("POST", withDirectory(`${base}${sessionPath(id, "abort")}`, cwd), undefined, 3000).catch(() => undefined))
+        ids.map((id) => api(base).sessionAbort(cwd, id, 3000).catch(() => undefined))
     );
     if (ids.length) {
         logChannel.appendLine(`[${stamp()}] aborted ${ids.length} subagent session(s) under ${sessionId}`);
@@ -341,7 +326,7 @@ export async function abortChildren(base: string, sessionId: string, cwd: string
 
 export async function abortServerRun(base: string, sessionId: string, cwd: string, why: string): Promise<boolean> {
     try {
-        await httpRequestJson("POST", withDirectory(`${base}${sessionPath(sessionId, "abort")}`, cwd), undefined, 5000);
+        await api(base).sessionAbort(cwd, sessionId, 5000);
     } catch (error) {
         logChannel.appendLine(`[${stamp()}] abort ${sessionId} failed (${why}): ${error}`);
         return false;
@@ -362,10 +347,7 @@ export async function createServerSession(base: string, cwd: string, title: stri
     // Bounded: a server that accepts the socket and never answers must not
     // hold the turn (every caller falls back to letting the run create one).
     const permission = await sessionRules(base, cwd, readOnly);
-    const created = await httpRequestJson<{ id: string }>("POST", withDirectory(`${base}/session`, cwd), {
-        title: truncate(title, 60),
-        permission
-    }, 5000);
+    const created = await api(base).sessionCreate(cwd, { title: truncate(title, 60), permission }, 5000);
     noteTurnPermission(base, created.id, permission, cwd);
     return created.id;
 }
@@ -375,10 +357,7 @@ export async function createServerSession(base: string, cwd: string, title: stri
 // (1.18.32: info.providerID/modelID; info.model on a user message).
 async function sessionModel(base: string, cwd: string, sessionId: string): Promise<string | undefined> {
     try {
-        const messages = await httpGetJson<Array<{ info?: Record<string, unknown> }>>(
-            withDirectory(`${base}${sessionPath(sessionId, "message")}?limit=6`, cwd),
-            5000
-        );
+        const messages = (await api(base).sessionMessages(cwd, sessionId, 6, 5000)) as Array<{ info?: Record<string, unknown> }>;
         for (const message of [...(Array.isArray(messages) ? messages : [])].reverse()) {
             const info = message?.info ?? {};
             if (info.role === "assistant" && typeof info.providerID === "string" && typeof info.modelID === "string") {
@@ -465,11 +444,7 @@ async function summarize(sessionId: string, cwd: string, model: string | undefin
         // (1.18.32 compaction.ts) ends by adding a synthetic "Continue if you have
         // next steps" message, and the loop runs one more agent turn that no chat
         // shows — keeping the session busy into the user's next message.
-        const status = await httpPostJson(
-            withDirectory(`${base}${sessionPath(sessionId, "summarize")}`, cwd),
-            { providerID: parts.providerID, modelID: parts.modelID, auto: false },
-            COMPACT_TIMEOUT_MS
-        );
+        const status = await api(base).sessionSummarize(cwd, sessionId, { providerID: parts.providerID, modelID: parts.modelID, auto: false }, COMPACT_TIMEOUT_MS);
         logChannel.appendLine(
             `[${stamp()}] summarize ${sessionId} with ${parts.providerID}/${parts.modelID} → HTTP ${status}`
         );

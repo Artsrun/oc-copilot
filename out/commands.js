@@ -42,6 +42,7 @@ const core_1 = require("./core");
 const followups_1 = require("./followups");
 const proc_1 = require("./proc");
 const net_1 = require("./net");
+const oc_api_1 = require("./oc-api");
 const session_1 = require("./session");
 const models_1 = require("./models");
 const env_1 = require("./env");
@@ -71,7 +72,7 @@ async function diagnose() {
     const serverBase = (0, net_1.knownServerBase)();
     if (serverBase) {
         try {
-            const health = await (0, net_1.httpGetJson)(`${serverBase}/global/health`);
+            const health = await (0, oc_api_1.api)(serverBase).health();
             serverState = health.healthy === true
                 ? `${(0, followups_1.mark)("ok")} healthy on ${serverBase}${typeof health.version === "string" ? ` · OpenCode ${(0, core_1.truncate)(health.version, 24)}` : ""}`
                 : `${(0, followups_1.mark)("warn")} responded, unhealthy`;

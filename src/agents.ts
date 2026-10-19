@@ -20,7 +20,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { config, logChannel, stamp } from "./core";
 import { enforcedConfigContent } from "./enforce";
-import { currentServerGeneration, httpGetJson, withDirectory } from "./net";
+import { currentServerGeneration } from "./net";
+import { api } from "./oc-api";
 import { killTree, spawnOpenCode } from "./proc";
 
 /** One permission rule, as OpenCode lists and stores them (1.19.0). */
@@ -109,7 +110,7 @@ export function parseAgentList(raw: string): AgentInfo[] {
 }
 
 async function agentsFromServer(base: string, cwd: string): Promise<AgentInfo[]> {
-    const raw = await httpGetJson<unknown>(withDirectory(`${base}/agent`, cwd), SERVER_LIST_TIMEOUT_MS);
+    const raw = await api(base).agents(cwd, SERVER_LIST_TIMEOUT_MS);
     if (!Array.isArray(raw)) {
         throw new Error("GET /agent did not return a list");
     }

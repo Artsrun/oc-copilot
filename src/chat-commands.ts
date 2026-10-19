@@ -2,7 +2,8 @@ import * as vscode from "vscode";
 import { config, formatBytes, logChannel, own, stamp, truncate, untilStop } from "./core";
 import { mark } from "./followups";
 import { resolveExecutable, runCapture } from "./proc";
-import { ensureServer, httpGetJson, isNotOpenCode1, knownServerBase, majorVersionNote, withDirectory } from "./net";
+import { ensureServer, isNotOpenCode1, knownServerBase, majorVersionNote } from "./net";
+import { api } from "./oc-api";
 import { abortServerRun, compactSession, sessionBusy } from "./runs";
 import { discoverOpenCodeEnv, openCodeConfigModel, summariseEnv } from "./env";
 import { planTimeout } from "./prompt";
@@ -176,16 +177,13 @@ export async function handleControlCommand(p: ControlProps): Promise<vscode.Chat
                 if (!serverBase) {
                     throw new Error("no server of this window yet");
                 }
-                const health = await httpGetJson<{ healthy?: boolean; version?: unknown }>(`${serverBase}/global/health`, 2000);
+                const health = await api(serverBase).health(2000);
                 const reported = typeof health.version === "string" ? ` · OpenCode ${truncate(health.version, 24)}` : "";
                 // One server serves many workspaces. The count for THIS directory
                 // is live proof that `?directory=` scoping reaches the server.
                 let scope = "";
                 try {
-                    const mine = await httpGetJson<unknown[]>(
-                        withDirectory(`${serverBase}/session`, p.cwd),
-                        2500
-                    );
+                    const mine = await api(serverBase).sessionsRaw(p.cwd, 2500);
                     scope = ` · ${Array.isArray(mine) ? mine.length : 0} session(s) scoped to \`${p.folder.name}\``;
                 } catch {
                     // The list endpoint is advisory here; health already passed.

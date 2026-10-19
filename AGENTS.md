@@ -32,6 +32,7 @@ no bundler, no test runner: plain TypeScript → `out/`, plain Node for the suit
 | `src/asks.ts` | **Headless asks** for a session and its subagents (`watchFamily`), and what the subagents cost. |
 | `src/server-session.ts` | Session ids (`safeSessionId`, `sessionPath`), **permission rules** (`HEADLESS_PERMISSION`, `turnPermission`, `sessionRules`, `readOnlyReach`, `readOnlyEvidence`/`serverEnforcement` + `assertReadOnly`: effective rules judged per endpoint or cold folder, reopened refuses; a `/dev` turn re-applies the dev agent's own `task` rules after read-only ones), busy/abort (+ children), create, model, compaction. |
 | `src/enforce.ts` | **Read-only by permission**: the `OPENCODE_CONFIG_CONTENT` every spawn gets (`enforcedConfigContent`: `plan` and `readOnlySubagents` overridden, `readOnlyTools`, the `ENFORCED_MARKER` rule), the one-time notice. Leaf: imports only core. |
+| `src/oc-api.ts` | **Every server request**: `api(base)` is the route set of the major `base` named (1.x only so far; 2.x is another API under `/api`), `safeSessionId`, `sessionPath`, `sessionRoot`. Callers speak 1.x's shapes. |
 | `src/net.ts` | Bounded HTTP, the managed `opencode serve`, shared SSE demux by session id, the not-OpenCode-1 refusal (`markNotOpenCode1`, `openCode1Refusal`) and the CLI identity check (`ensureCliIdentity`: one `--version` per executable file). |
 | `src/session.ts` | Session state per chat thread (`threadSession`), handoff chain and the way back after one, completion toasts, status bar. |
 | `src/proc.ts` | Spawning: shim resolution (`~/` paths too), `cmd.exe` quoting, `killTree`, `PWD = cwd`, `runCapture` (a short command's output), `executableStamp` (the files a name runs, as they are on disk). §2 rule 3. |
@@ -57,16 +58,17 @@ extension.ts  →  chat · chat-boot · commands-registry · git-scan-mcp · ses
      chat     →  agents · chat-boot · chat-commands · chat-parallel · chat-turn · chat-worktree · context · models · natural · prompt · session · core
 chat-parallel →  agents · chat-boot · compose · context · models · net · runs · core
   chat-turn   →  agents · chat-boot · context · enforce · format · metrics · models · net · runs · session · core
- chat-commands →  chat-boot · chat-sessions · context · env · models · net · prompt · proc · runs · session · core
- chat-sessions →  net · sessions (→ net · runs) · session · core
+ chat-commands →  chat-boot · chat-sessions · context · env · models · net · oc-api · prompt · proc · runs · session · core
+ chat-sessions →  net · sessions (→ oc-api · runs) · session · core
  chat-worktree →  chat-boot · format · net · prompt · runs · worktree · core
     compose   →  chat-boot · models · core   (used by chat-parallel and commands-registry)
   chat-boot   →  heartbeat · lanes · chips (re-exported) · core · metrics
     lanes     →  runs · format · metrics · models · core      chips → lanes · natural
       runs    →  run-cli · run-server · run-steps · asks (re-exported) · server-session · session
  run-cli, run-server →  asks · run-steps · server-session · net · proc (cli) · metrics
-      asks    →  server-session · net · run-steps · metrics      server-session → agents · enforce · net · metrics
-     agents   →  net · proc      net → enforce · proc      proc → enforce · core      enforce → core
+      asks    →  oc-api · net · run-steps · metrics      server-session → agents · enforce · oc-api · net · metrics
+    oc-api    →  net · core   (every server request: agents, models, sessions, chat-commands, commands, run-server)
+     agents   →  oc-api · net · proc      net → enforce · proc      proc → enforce · core      enforce → core
      all      →  core.ts · followups.ts (JSON only) · natural.ts (→ followups)
 ```
 

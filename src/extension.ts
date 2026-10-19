@@ -3,6 +3,7 @@ import * as vscode from "vscode";
 import { logChannel, resolveFolder, setExtensionContext, setLogChannel, stamp } from "./core";
 import { expandShimVar, readShimTarget, resolveExecutable, tokenizeCmdLine } from "./proc";
 import { PREWARM_DELAY_MS, httpGetJson, httpPostJson, lastServeLine, prewarmServer, setStartupDeadline, stopServer, withDirectory } from "./net";
+import { api, serverMajor } from "./oc-api";
 import { toolFilePath } from "./metrics";
 import { discoverOpenCodeEnv, openCodeConfigModel, readJsonc, summariseEnv } from "./env";
 import { isVaguePrompt, planTimeout } from "./prompt";
@@ -99,6 +100,8 @@ export const __test = {
     resolveFolder,
     notifyIfSlow,
     safeSessionId,
+    api,
+    serverMajor,
     readShimTarget,
     tokenizeCmdLine,
     expandShimVar,

@@ -1761,6 +1761,14 @@ function collectConfigProperties(configuration) {
     const lyLeaves = ["core", "env", "metrics", "context-markers", "git-scan-server", "followups"];
     const lyBusy = lyLeaves.filter((m) => !lyImports[m] || lyImports[m].length);
     add(`LY the leaves AGENTS names import nothing local${lyBusy.length ? ` (${lyBusy.join(", ")})` : ""}`, lyBusy.length === 0);
+    // OA (0.0.221): every server request goes through ./oc-api, one route set
+    // per OpenCode major, so v2 (another API under /api, REFS) is one new set
+    // and no call site branches on the version. Read from the source.
+    const oaCallers = fs.readdirSync(srcDir).filter((f) => f.endsWith(".ts") && f !== "net.ts" && f !== "oc-api.ts")
+        .filter((f) => /\b(httpGetJson|httpRequestJson|httpPostJson|withDirectory)\s*[<(]/.test(fs.readFileSync(path.join(srcDir, f), "utf8")));
+    add(`OA no module but net and oc-api sends a server request itself${oaCallers.length ? ` (${oaCallers.join(", ")})` : ""}`, oaCallers.length === 0);
+    add("OA a server that named no version gets the 1.x routes", ext.__test.serverMajor("http://127.0.0.1:1") === 1 && typeof ext.__test.api("http://127.0.0.1:1").sessionPrompt === "function");
+    add("OA session routes still go through sessionPath", /at\(sessionPath\(id, "message"\), cwd\)/.test(fs.readFileSync(path.join(srcDir, "oc-api.ts"), "utf8")));
     add("LY natural.ts and env.ts import no vscode", ["natural.ts", "env.ts"].every((f) => !/from "vscode"/.test(fs.readFileSync(path.join(srcDir, f), "utf8"))));
 
     // BF (v172): three crash-safety guards that no behavioural check can reach

@@ -3,7 +3,8 @@
 // subagents, abort on silence or Stop.
 import { delay, logChannel, stamp, truncate } from "./core";
 import { mark } from "./followups";
-import { connectSse, ensureServer, httpRequestJson, sessionIdFromEvent, withDirectory } from "./net";
+import { connectSse, ensureServer, sessionIdFromEvent } from "./net";
+import { api } from "./oc-api";
 import { RunMetrics, RunOptions, StepRecord, TokenUsage, contextOf } from "./metrics";
 import { watchFamily } from "./asks";
 import { EmitCursor, addSubagents, applyPartDelta, applyServerPart, blankMetrics, noteModel, notePartKind, partDeltaOf, providerRetryOf } from "./run-steps";
@@ -47,10 +48,6 @@ export async function runOpenCodeServer(options: RunOptions): Promise<RunMetrics
 
     const base = options.serverUrl ?? (await ensureServer(options.cwd));
 
-    // Every session call is scoped to THIS workspace, so a server started by
-    // another VS Code window cannot silently root the run in its own checkout.
-    const scoped = (path: string): string => withDirectory(`${base}${path}`, options.cwd);
-
     const readOnly = Boolean(options.readOnly);
     if (readOnly) {
         metrics.readOnlyEnforcement = await serverEnforcement(base, options.cwd, options.agent ?? "plan");
@@ -59,10 +56,9 @@ export async function runOpenCodeServer(options: RunOptions): Promise<RunMetrics
     let sessionId = options.sessionId;
     if (!sessionId) {
         const permission = await sessionRules(base, options.cwd, readOnly);
-        const created = await httpRequestJson<{ id: string }>("POST", scoped("/session"), {
-            title: truncate(options.task, 60),
-            permission
-        });
+        // Scoped to THIS workspace (./oc-api), so a server started by another VS
+        // Code window cannot silently root the run in its own checkout.
+        const created = await api(base).sessionCreate(options.cwd, { title: truncate(options.task, 60), permission });
         sessionId = created.id;
         noteTurnPermission(base, sessionId, permission, options.cwd);
     } else {
@@ -183,13 +179,7 @@ export async function runOpenCodeServer(options: RunOptions): Promise<RunMetrics
     let idleTimer: NodeJS.Timeout | undefined;
     let idleFired = false;
     try {
-        const pending = httpRequestJson<ServerMessageResponse>(
-            "POST",
-            scoped(sessionPath(sessionId, "message")),
-            body,
-            options.timeoutMs,
-            options.token
-        );
+        const pending = api(base).sessionPrompt<ServerMessageResponse>(options.cwd, sessionId, body, options.timeoutMs, options.token);
         if (idleMs > 0) {
             // A tool the server reports running earns toolQuietMs, as on the CLI.
             const toolQuietMs = Math.max(0, options.toolQuietMs ?? 0);
@@ -226,7 +216,7 @@ export async function runOpenCodeServer(options: RunOptions): Promise<RunMetrics
             }
             // Bounded, and not awaited after Stop (the host allows one second).
             aborting = true;
-            const abort = httpRequestJson("POST", scoped(sessionPath(sessionId, "abort")), undefined, 5000).catch(() => undefined);
+            const abort = api(base).sessionAbort(options.cwd, sessionId, 5000).catch(() => undefined);
             // Its subagents too, never awaited: the ids the stream showed, and
             // whatever /children adds.
             void abortChildren(base, sessionId, options.cwd, family.children());
