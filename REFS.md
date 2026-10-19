@@ -5,6 +5,45 @@ actually measured, so nobody re-derives it.
 
 ---
 
+## 0.0.222: OpenCode 2 through its API, end to end (2026-10-19)
+
+Linux, Node 22.22.0, `@opencode/cli` 2.0.29 and 2.0.32, each in a temp git
+repo with an isolated HOME and the scripted model.
+
+**One override cannot serve both majors.** An `OPENCODE_CONFIG_CONTENT` with 1.x's
+`agent.plan.permission` and 2.x's `agents.plan.permissions`: 1.19.0's `GET
+/agent` answered 400 `ConfigInvalidError` "V2 permissions are not supported by
+OpenCode V1"; 2.0.29 listed plan's stock 7 rules (neither applied). So the
+spawn takes the shape of the major `--version` named (`executableMajor`), and
+with `opencode2` on the identity check runs before `serve`.
+
+**The bridge, through `out/`** (`node scripts/probe-opencode2.js <2.x>`):
+`ALL 9 ROWS AS EXPECTED` on both versions — a text turn answers with model and
+tokens; plan `echo > file`, plan → explore `echo > file`, plan → general write:
+absent (evidence `enforced`); control `/dev` `echo > file`: CREATED; plan →
+explore `git status` runs (1 subagent counted); Stop returns 1 ms after the
+cancel; `/sessions` lists them with the last ask and answer; control
+`enforceReadOnly: false` plan `echo > file`: CREATED. No server left running.
+1.x on the same build (`opencode2` off), `node scripts/probe-readonly.js` against
+1.19.0: `ALL 48 ROWS AS EXPECTED`, as before.
+
+**Fixtures** (`node scripts/record-wire-fixtures.js --v1 … --v2 …`): 1.19.0 text
+turn 42 frames plus its POST reply; 2.0.29 text 15, permission ask 27,
+subagent 37, interrupt 14 frames. Folder and session ids are placeholders; no
+temp path survives (grep). Event names a recording did not exercise
+(`session.tool.failed`, `session.reasoning.*`, `session.execution.failed`,
+`session.compaction.ended`) are the ones the 2.0.29 binary declares (`strings`).
+
+**The fake's own bug, found by the suite:** its SSE client was dropped on the
+request's `close`, which Node ≥ 16 emits once an (empty) request body is read;
+`res.on("close")` is the connection. The bridge read nothing until then (0×).
+
+Red first: the same text turn through 0.0.221's committed `out/` (opencode2 set,
+the TW fake) failed in 30 ms: "`opencode` here is not OpenCode 1: `--version`
+prints `opencode v2.0.29`" — nothing ran.
+
+---
+
 ## OpenCode 2's server API, measured (2026-10-19)
 
 Linux, Node 22.22.0. `opencode-ai@1.19.0` and `@opencode/cli@2.0.29` (2.0.32

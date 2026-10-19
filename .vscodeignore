@@ -50,6 +50,9 @@ scripts/probe-subtask-lanes.js
 scripts/probe-readonly.js
 scripts/probe-acp.js
 scripts/probe-model.js
+scripts/probe-opencode2.js
+scripts/record-wire-fixtures.js
+scripts/fixtures/**
 scripts/update.js
 scripts/verify-chat-output.js
 # macOS helper for repo users (install/doctor); not needed inside the .vsix

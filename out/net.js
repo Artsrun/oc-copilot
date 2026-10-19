@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.PREWARM_DELAY_MS = exports.currentServerGeneration = exports.isNotOpenCode1 = exports.openCode1Refusal = exports.isIdentityUnknown = exports.serverVersion = exports.TESTED_OPENCODE = void 0;
+exports.PREWARM_DELAY_MS = exports.currentServerGeneration = exports.isNotOpenCode1 = exports.openCode1Refusal = exports.isIdentityUnknown = exports.serverVersion = exports.TESTED_OPENCODE2 = exports.TESTED_OPENCODE = exports.openCode2Allowed = exports.serverAuth = void 0;
 exports.withDirectory = withDirectory;
 exports.httpRequestJson = httpRequestJson;
 exports.httpGetJson = httpGetJson;
@@ -55,7 +55,9 @@ const vscode = __importStar(require("vscode"));
 const http = __importStar(require("node:http"));
 const net = __importStar(require("node:net"));
 const core_1 = require("./core");
+const enforce_1 = require("./enforce");
 const proc_1 = require("./proc");
+const v2_events_1 = require("./v2-events");
 function withDirectory(url, cwd) {
     if (!cwd) {
         return url;
@@ -63,10 +65,10 @@ function withDirectory(url, cwd) {
     const sep = url.includes("?") ? "&" : "?";
     return `${url}${sep}directory=${encodeURIComponent(cwd)}`;
 }
-function httpRequestJson(method, url, body, timeoutMs, token) {
+function httpRequestJson(method, url, body, timeoutMs, token, auth) {
     return new Promise((resolve, reject) => {
         const data = body !== undefined ? Buffer.from(JSON.stringify(body), "utf8") : undefined;
-        const headers = data ? { "content-type": "application/json", "content-length": data.length } : {};
+        const headers = { ...(data ? { "content-type": "application/json", "content-length": data.length } : {}), ...auth };
         const req = http.request(url, { method, headers }, (res) => {
             let raw = "";
             res.setEncoding("utf8");
@@ -115,9 +117,9 @@ function httpRequestJson(method, url, body, timeoutMs, token) {
         req.end();
     });
 }
-function httpGetJson(url, timeoutMs = 5000) {
+function httpGetJson(url, timeoutMs = 5000, auth) {
     return new Promise((resolve, reject) => {
-        const request = http.get(url, (res) => {
+        const request = http.get(url, { headers: auth ?? {} }, (res) => {
             let data = "";
             res.setEncoding("utf8");
             res.on("data", (chunk) => (data += chunk));
@@ -137,12 +139,12 @@ function httpGetJson(url, timeoutMs = 5000) {
         request.on("error", reject);
     });
 }
-function httpPostJson(url, body, timeoutMs = 30000) {
+function httpPostJson(url, body, timeoutMs = 30000, auth) {
     return new Promise((resolve, reject) => {
         const data = Buffer.from(JSON.stringify(body ?? {}), "utf8");
         const request = http.request(url, {
             method: "POST",
-            headers: { "content-type": "application/json", "content-length": data.length }
+            headers: { "content-type": "application/json", "content-length": data.length, ...auth }
         }, (res) => {
             res.on("data", () => undefined);
             res.on("error", reject);
@@ -164,6 +166,12 @@ const adoptedServers = new Set();
 let managedPort;
 let fallbackPort;
 let serveTail = "";
+let servePassword;
+const serverAuths = new Map();
+const serverAuth = (base) => serverAuths.get(base);
+exports.serverAuth = serverAuth;
+const openCode2Allowed = () => (0, core_1.config)().get("opencode2", false) === true;
+exports.openCode2Allowed = openCode2Allowed;
 let servePort;
 const serveAlive = () => Boolean(serveProcess && serveProcess.exitCode === null);
 function portTaken(host, port, timeoutMs = 1000) {
@@ -186,6 +194,7 @@ function setStartupDeadline(ms) {
 }
 const SLOW_START_MS = 1500;
 exports.TESTED_OPENCODE = { min: "1.18.27", max: "1.19.0" };
+exports.TESTED_OPENCODE2 = { min: "2.0.29", max: "2.0.32" };
 const serverVersions = new Map();
 const serverVersion = (base) => serverVersions.get(base);
 exports.serverVersion = serverVersion;
@@ -201,14 +210,15 @@ function versionNotice(base) {
     if (!version || !v || versionsNoted.has(version)) {
         return undefined;
     }
-    const lo = semver(exports.TESTED_OPENCODE.min);
-    const hi = semver(exports.TESTED_OPENCODE.max);
+    const range = v[0] === 2 ? exports.TESTED_OPENCODE2 : exports.TESTED_OPENCODE;
+    const lo = semver(range.min);
+    const hi = semver(range.max);
     if (!below(v, lo) && !below(hi, v)) {
         return undefined;
     }
     versionsNoted.add(version);
-    core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] OpenCode ${version} on ${base} is outside the tested ${exports.TESTED_OPENCODE.min}–${exports.TESTED_OPENCODE.max}`);
-    return `OpenCode ${version} is outside the versions this bridge was tested with (${exports.TESTED_OPENCODE.min}–${exports.TESTED_OPENCODE.max}). It runs; if something misbehaves, the debug log and REFS.md name what each version was measured on.`;
+    core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] OpenCode ${version} on ${base} is outside the tested ${range.min}–${range.max}`);
+    return `OpenCode ${version} is outside the versions this bridge was tested with (${range.min}–${range.max}). It runs; if something misbehaves, the debug log and REFS.md name what each version was measured on.`;
 }
 const notOpenCode1 = new Map();
 const cliIdentity = new Map();
@@ -226,13 +236,14 @@ const fileOf = (executable, forget = false) => {
     }
 };
 function ensureCliIdentity(executable, cwd) {
+    const v2 = (0, exports.openCode2Allowed)();
     const refusal = (0, exports.openCode1Refusal)(executable);
-    if (refusal) {
+    if (refusal && !v2) {
         return Promise.reject(refusal);
     }
     const hit = cliIdentity.get(executable);
     let file = fileOf(executable);
-    if (hit && hit.file === file) {
+    if (hit && hit.file === file && hit.v2 === v2 && !refusal) {
         return hit.check;
     }
     if (hit) {
@@ -246,7 +257,7 @@ function ensureCliIdentity(executable, cwd) {
         if (unsupported) {
             throw unsupported;
         }
-        if (!/(?:^|\s)v?1\.\d+\.\d+(?:\s|$|[-+])/.test(output.trim())) {
+        if (!new RegExp(`(?:^|\\s)v?${v2 ? "[12]" : "1"}\\.\\d+\\.\\d+(?:\\s|$|[-+])`).test(output.trim())) {
             throw identityUnknown(executable, `printed no 1.x version (\`${(0, core_1.truncate)(output.trim().replace(/\s+/g, " ").replace(/`/g, "'"), 40)}\`)`);
         }
         core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] CLI identity verified in ${Date.now() - started}ms`);
@@ -261,14 +272,14 @@ function ensureCliIdentity(executable, cwd) {
         const message = error instanceof Error ? error.message : String(error);
         throw identityUnknown(executable, /timed out/.test(message) ? `did not answer within ${IDENTITY_TIMEOUT_MS / 1000} s` : `failed (${(0, core_1.truncate)(message.replace(/\s+/g, " ").replace(/`/g, "'"), 80)})`);
     });
-    cliIdentity.set(executable, { file, check });
+    cliIdentity.set(executable, { file, v2, check });
     return check;
 }
 function markNotOpenCode1(executable, evidence) {
     const error = Object.assign(new Error(`\`opencode\` here is not OpenCode 1: ${evidence}. The bridge drives OpenCode 1 only so far (its server API and permission rules), so nothing was run. ` +
         "To keep OpenCode 2 and use @opencode, give the bridge its own 1.x: `npm i --prefix ~/.opencode1 opencode-ai@1`, set " +
         "`opencodeCopilotBridge.executable` to `~/.opencode1/node_modules/.bin/opencode` (`opencode.cmd` on Windows), then run `/ping`. " +
-        "The README's *OpenCode 2* section says what the two share."), { code: "ENOTOPENCODE1" });
+        "Or try `opencodeCopilotBridge.opencode2` (experimental): OpenCode 2 through its API. The README's *OpenCode 2* section says what the two share."), { code: "ENOTOPENCODE1" });
     if (!notOpenCode1.has(executable)) {
         core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] ${executable}: ${error.message}`);
     }
@@ -282,11 +293,13 @@ exports.isNotOpenCode1 = isNotOpenCode1;
 function majorVersionNote(executable, output) {
     const found = output.match(/(?:^|\s)v?(\d+)\.\d+\.\d+/);
     const major = found ? Number(found[1]) : undefined;
-    if (major === 1) {
+    if (major === 1 || (major === 2 && (0, exports.openCode2Allowed)())) {
         if (notOpenCode1.has(executable)) {
             cliIdentity.delete(executable);
         }
         notOpenCode1.delete(executable);
+        (0, enforce_1.noteExecutableMajor)(executable, major);
+        return undefined;
     }
     else if (major !== undefined && major >= 2) {
         markNotOpenCode1(executable, `\`--version\` prints \`${(0, core_1.truncate)(output.trim(), 40)}\``);
@@ -324,6 +337,8 @@ function stopServer() {
     managedPort = undefined;
     fallbackPort = undefined;
     servePort = undefined;
+    servePassword = undefined;
+    serverAuths.clear();
     serverGeneration += 1;
     startInFlight = undefined;
 }
@@ -389,7 +404,22 @@ async function ensureServerOnce(cwd, onSlowStart) {
         }
         catch (error) {
             const { code, status } = error;
-            return { healthy: false, page: code === "ENOTJSON" && typeof status === "number" && status >= 200 && status < 300 };
+            const page = code === "ENOTJSON" && typeof status === "number" && status >= 200 && status < 300;
+            if (page && servePassword && serveAlive() && base === `http://${host}:${servePort}` && (0, exports.openCode2Allowed)() && (0, enforce_1.executableMajor)(executable) === 2) {
+                const auth = { authorization: "Basic " + Buffer.from(`opencode:${servePassword}`).toString("base64") };
+                try {
+                    const info = await httpGetJson(`${base}/api/info`, timeoutMs, auth);
+                    const version = typeof info.version === "string" ? info.version.trim() : "";
+                    if (/^v?2\./.test(version)) {
+                        serverVersions.set(base, version);
+                        serverAuths.set(base, auth);
+                        return { healthy: true, version };
+                    }
+                }
+                catch {
+                }
+            }
+            return { healthy: false, page };
         }
     };
     const healthy = async (timeoutMs) => (await probe(timeoutMs)).healthy;
@@ -425,6 +455,9 @@ async function ensureServerOnce(cwd, onSlowStart) {
         base = `http://${host}:${port}`;
     }
     if (!serveAlive()) {
+        if ((0, exports.openCode2Allowed)()) {
+            await ensureCliIdentity(executable, cwd ?? (0, core_1.resolveFolder)()?.folder.uri.fsPath ?? process.cwd());
+        }
         const refused = (0, exports.openCode1Refusal)(executable);
         if (refused) {
             throw refused;
@@ -432,12 +465,17 @@ async function ensureServerOnce(cwd, onSlowStart) {
         const serveCwd = cwd ?? (0, core_1.resolveFolder)()?.folder.uri.fsPath;
         serveSpawnError = undefined;
         serveTail = "";
+        servePassword = undefined;
         servePort = port;
         serverGeneration += 1;
         serveProcess = (0, proc_1.spawnOpenCode)(executable, ["serve", "--port", String(port), "--hostname", host], serveCwd);
         serveProcess.stdout?.setEncoding("utf8");
         serveProcess.stderr?.setEncoding("utf8");
         const keep = (d) => {
+            const secret = d.match(/\bserver password\s+(\S+)/i)?.[1];
+            if (secret) {
+                servePassword = secret;
+            }
             const said = d.replace(/\b(password)(\s*[:=]\s*|\s+)\S+/gi, "$1$2[redacted]");
             core_1.logChannel.appendLine(`[serve] ${said.trim()}`);
             serveTail = (serveTail + said).slice(-600);
@@ -509,7 +547,7 @@ async function ensureServerOnce(cwd, onSlowStart) {
             core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] serve on ${base} answered after ${((Date.now() - waitStarted) / 1000).toFixed(1)}s`);
             return base;
         }
-        if (health.page && serveProcess === mine && serveAlive()) {
+        if (health.page && serveProcess === mine && serveAlive() && !((0, exports.openCode2Allowed)() && (0, enforce_1.executableMajor)(executable) === 2)) {
             stopServer();
             throw markNotOpenCode1(executable, "its server answers `/global/health` with a web page, as OpenCode 2 does");
         }
@@ -627,7 +665,9 @@ function openSharedSse(base) {
         backoffMs = Math.min(backoffMs * 2, 10000);
     };
     const connect = () => {
-        request = http.get(`${base}/global/event`, (res) => {
+        const auth = (0, exports.serverAuth)(base);
+        const translate = auth ? (0, v2_events_1.v2Translator)() : undefined;
+        request = http.get(`${base}${auth ? "/api/event" : "/global/event"}`, { headers: auth ?? {} }, (res) => {
             if (res.statusCode !== 200) {
                 status(`SSE HTTP ${res.statusCode}`);
                 res.resume();
@@ -652,7 +692,12 @@ function openSharedSse(base) {
                     if (data) {
                         try {
                             const parsed = JSON.parse(data);
-                            dispatch(parsed.payload ?? parsed);
+                            if (translate) {
+                                translate(parsed).forEach(dispatch);
+                            }
+                            else {
+                                dispatch(parsed.payload ?? parsed);
+                            }
                         }
                         catch {
                         }

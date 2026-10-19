@@ -3,6 +3,24 @@
 Full release history, newest first; releases before the last one are condensed
 to their summary and headlines. The README ships the last five.
 
+### 0.0.222
+
+- **OpenCode 2, experimental** (`opencode2`, off by default). `oc-api` gains 2.x's
+  route set: Basic auth with the password `serve` prints (captured before the log
+  redacts it), `location` scoping, an async prompt that waits for its own run's
+  end (`session.inbox.delivered` then `session.execution.*`), agent and model set
+  per turn. `src/v2-events.ts` reads 2.x's event stream as 1.x events (text and
+  reasoning deltas, tools with `shell`→`bash` and `subagent`→`task`, steps and
+  spend, asks and replies, errors, idle), so run-steps, asks and the demux are
+  unchanged. A 2.x executable's every turn goes through the server runner
+  (`run-cli`). Read-only: overrides in 2.x's format (`agents.<n>.permissions`; 1.x
+  rejects that key and 2.x given both applied neither, measured), judged on
+  `GET /api/agent`; on a 2.x server an unverified plan turn is refused, not
+  warned. Only this window's own server is used. Checks `TW` (a fake 2.x
+  replaying `scripts/fixtures/wire-v2.json`, and 1.19.0's recorded text turn).
+  `scripts/record-wire-fixtures.js` records the fixtures; `scripts/probe-opencode2.js`
+  drives `out/` against a real 2.x: `ALL 9 ROWS AS EXPECTED` on 2.0.29 and 2.0.32.
+
 ### 0.0.221
 
 - Every request to an OpenCode server now goes through one module

@@ -32,7 +32,8 @@ no bundler, no test runner: plain TypeScript → `out/`, plain Node for the suit
 | `src/asks.ts` | **Headless asks** for a session and its subagents (`watchFamily`), and what the subagents cost. |
 | `src/server-session.ts` | Session ids (`safeSessionId`, `sessionPath`), **permission rules** (`HEADLESS_PERMISSION`, `turnPermission`, `sessionRules`, `readOnlyReach`, `readOnlyEvidence`/`serverEnforcement` + `assertReadOnly`: effective rules judged per endpoint or cold folder, reopened refuses; a `/dev` turn re-applies the dev agent's own `task` rules after read-only ones), busy/abort (+ children), create, model, compaction. |
 | `src/enforce.ts` | **Read-only by permission**: the `OPENCODE_CONFIG_CONTENT` every spawn gets (`enforcedConfigContent`: `plan` and `readOnlySubagents` overridden, `readOnlyTools`, the `ENFORCED_MARKER` rule), the one-time notice. Leaf: imports only core. |
-| `src/oc-api.ts` | **Every server request**: `api(base)` is the route set of the major `base` named (1.x only so far; 2.x is another API under `/api`), `safeSessionId`, `sessionPath`, `sessionRoot`. Callers speak 1.x's shapes. |
+| `src/oc-api.ts` | **Every server request**: `api(base)` is the route set of the major `base` named — 1.x, or 2.x's `/api` with `opencode2` (Basic auth, `location`, the async prompt awaited on its own run's events) — `safeSessionId`, `sessionPath`, `sessionRoot`. Callers speak 1.x's shapes. |
+| `src/v2-events.ts` | **OpenCode 2's event stream read as 1.x events** (`v2Translator`, stateful per stream; `shell`→`bash`, `subagent`→`task`), plus `v2.delivered` / `v2.compaction`, which only `oc-api` reads. Leaf. |
 | `src/net.ts` | Bounded HTTP, the managed `opencode serve`, shared SSE demux by session id, the not-OpenCode-1 refusal (`markNotOpenCode1`, `openCode1Refusal`) and the CLI identity check (`ensureCliIdentity`: one `--version` per executable file). |
 | `src/session.ts` | Session state per chat thread (`threadSession`), handoff chain and the way back after one, completion toasts, status bar. |
 | `src/proc.ts` | Spawning: shim resolution (`~/` paths too), `cmd.exe` quoting, `killTree`, `PWD = cwd`, `runCapture` (a short command's output), `executableStamp` (the files a name runs, as they are on disk). §2 rule 3. |
@@ -65,10 +66,10 @@ chat-parallel →  agents · chat-boot · compose · context · models · net ·
   chat-boot   →  heartbeat · lanes · chips (re-exported) · core · metrics
     lanes     →  runs · format · metrics · models · core      chips → lanes · natural
       runs    →  run-cli · run-server · run-steps · asks (re-exported) · server-session · session
- run-cli, run-server →  asks · run-steps · server-session · net · proc (cli) · metrics
+ run-cli, run-server →  asks · run-steps · server-session · net · proc (cli) · metrics      run-cli → enforce · run-server (2.x)
       asks    →  oc-api · net · run-steps · metrics      server-session → agents · enforce · oc-api · net · metrics
-    oc-api    →  net · core   (every server request: agents, models, sessions, chat-commands, commands, run-server)
-     agents   →  oc-api · net · proc      net → enforce · proc      proc → enforce · core      enforce → core
+    oc-api    →  enforce · net · core   (every server request: agents, models, sessions, chat-commands, commands, run-server)
+     agents   →  oc-api · net · proc      net → enforce · proc · v2-events      proc → enforce · core      enforce → core
      all      →  core.ts · followups.ts (JSON only) · natural.ts (→ followups)
 ```
 
@@ -170,6 +171,8 @@ A probe measures one thing on this machine and prints it. Paste its output.
 | `scripts/probe-subtask-lanes.js` | Against a real server: whether a `subtask` part runs a project-local subagent (#21659), before lanes move to server-side delegation. |
 | `scripts/probe-readonly.js` | Against a real binary, through `out/` (`runOpenCode`, `ensureServer`, `createServerSession`): can a read-only turn write — cold run, managed serve, an adopted one, another window's; 2.x over ACP. One line per row; control rows must be `CREATED`. `npm run compile` first. |
 | `scripts/probe-acp.js` | `opencode acp` over JSON-RPC: handshake, prompt, cancel, load; the transcript as JSONL. Also the ACP client `probe-readonly.js` uses. |
+| `scripts/probe-opencode2.js` | With `opencode2`, against a real 2.x through `out/`: text turn, plan writes (absent ×3), `/dev` and enforcement-off controls (`CREATED`), a subagent, Stop, `/sessions`. |
+| `scripts/record-wire-fixtures.js` | Records a real 1.x and 2.x server's frames per scripted turn into `scripts/fixtures/wire-v*.json`, the `TW` fakes' input. |
 | `scripts/probe-model.js` | The scripted OpenAI-compatible model both use (`[[probe:<action>]]`): every tool attempt certain, no provider, no cost. |
 
 *Write to the OS temp dir, never the repo* — the suite sweeps `ocb-*` at
@@ -344,10 +347,13 @@ history belongs in `CHANGELOG.md`, not in the source.
   a `/dev` turn after a read-only one appends the dev agent's own `task` rules
   (`GET /agent` → `permission`), and the fake models the merge (`RO`, `PM`).
 - **OpenCode 2 is another program called `opencode`** (`@opencode/cli`, 2.0.27):
-  its `serve` answers every path with its web app (HTML 200) and prints a
-  password; its `run` rejects `--attach --dir --variant --pure`; new API, new
-  permission format. Detect, refuse, redact — never fall back to a cold run
-  (`OC`). Both majors keep sessions in the same data folder.
+  its `serve` answers every path but `/api` with its web app (HTML 200) and
+  prints a password; its `run` rejects `--attach --dir --variant --pure`; new
+  API, new permission format. `opencode2` off: detect, refuse, redact — never
+  fall back to a cold run (`OC`). On: this window's own server only (`/api/info`
+  with the printed password), every turn through it, overrides in 2.x's shape
+  (1.x rejects that key; given both, 2.x applied neither), an unverified plan
+  turn refused (`TW`). Both majors keep sessions in the same data folder.
 - **`opencode --version` costs ~0.7 s on 1.19 (the Bun binary starting)**:
   CLI first use awaits one shared check; later sends reuse it while the file
   behind the name is unchanged (`executableStamp`, file stats): a 2.x installer
@@ -385,4 +391,4 @@ Current: `worktrees`, `worktree-command`, `inline-participant`, `model-names`,
 `parallel-models`, `command-aliases`, `sessions`, `parallel-composer`,
 `file-links`, `effort`, `auto-parallel`, `lane-agents`, `read-only-subagents`,
 `prewarm-server`, `git-scan`, `chip-backoff`, `opencode-1-only`,
-`enforced-read-only`.
+`enforced-read-only`, `opencode-2-api`.

@@ -8,7 +8,7 @@ import * as path from "node:path";
 import { platform } from "node:process";
 
 import { logChannel, stamp } from "./core";
-import { enforcedConfigContent } from "./enforce";
+import { enforcedConfigContent, executableMajor } from "./enforce";
 
 export interface ResolvedExe {
     command: string;
@@ -238,7 +238,7 @@ export function spawnOpenCode(
     // Measured with scripts/probe-opencode-pwd.js; check PW.
     // Read-only turns are read-only by permission in every process started here
     // (./enforce): one place, so serve, run, agent list and an ACP child agree.
-    const enforced = enforcedConfigContent();
+    const enforced = enforcedConfigContent(process.env.OPENCODE_CONFIG_CONTENT, executableMajor(executable));
     const env = { ...process.env, ...(cwd ? { PWD: cwd } : {}), ...(enforced ? { OPENCODE_CONFIG_CONTENT: enforced } : {}) };
     if (resolved.viaCmd) {
         // Node escapes quotes with backslashes, which cmd.exe does not understand,

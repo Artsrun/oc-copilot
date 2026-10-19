@@ -87,6 +87,11 @@ async function readOnlyEvidence(base, cwd, agent) {
 const serverEnforcement = (base, cwd, agent) => readOnlyEvidence(base, cwd, agent);
 exports.serverEnforcement = serverEnforcement;
 function assertReadOnly(evidence) {
+    if (evidence?.kind === "unverified" && evidence.base && (0, oc_api_1.serverMajor)(evidence.base) === 2) {
+        core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] ${evidence.agent}: no verified read-only rules on the OpenCode 2 server ${evidence.base} — not sent`);
+        throw Object.assign(new Error(`Nothing was sent: the OpenCode 2 server at ${evidence.base} does not list the bridge's read-only rules for \`${evidence.agent}\`, ` +
+            "and OpenCode 2's own plan can write. Retry; if it repeats, `/ping` and the debug log say what the server reported, or ask with `/dev`."), { code: "ETURNPERMISSION" });
+    }
     if (evidence?.kind !== "reopened") {
         return;
     }

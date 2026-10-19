@@ -245,6 +245,7 @@ const settings = {
     planAgent: "plan",
     readOnlySubagents: ["explore"],
     enforceReadOnly: true,
+    opencode2: false,
     readOnlyTools: ["git-scan_gitScan"],
     attachDevToServer: true,
     prewarmServer: true,
@@ -7970,6 +7971,131 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
             settings.attachDevToServer = true;
             Object.assign(settings, { executable: ocSaved.exe, serverPort: ocSaved.port, transport: ocSaved.t, serverStartupPollMs: ocSaved.poll });
             ext.deactivate();
+        }
+
+        // TW (0.0.222): OpenCode 2 driven through its API (`opencode2`), on the
+        // frames a real 2.0.29 sent (scripts/fixtures/wire-v2.json, recorded by
+        // scripts/record-wire-fixtures.js), and 1.x's text turn replayed from
+        // wire-v1.json: both majors' paths on real wire bytes.
+        {
+            const twRecord = path.join(work, "tw-record.jsonl");
+            const twReqs = () => (fs.existsSync(twRecord) ? fs.readFileSync(twRecord, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)) : []);
+            const twFake = writeFake("fake-tw2.js", [], `if (!process.argv.includes('--version') || true) require(${JSON.stringify(path.join(__dirname, "fixtures", "fake-opencode2.js"))})(process.argv);\n`);
+            const twSaved = { exe: settings.executable, port: settings.serverPort, t: settings.transport, poll: settings.serverStartupPollMs, v2: settings.opencode2 };
+            process.env.FAKE_OC2_RECORD = twRecord;
+            fs.rmSync(twRecord, { force: true });
+            const once = (text, needle) => text.split(needle).length - 1;
+            Object.assign(settings, { executable: twFake, serverPort: 0, transport: "server", serverStartupPollMs: 50, opencode2: false });
+            const twOff = stream();
+            await global.__handler({ prompt: "explain the cart for tw off" }, { history: [] }, twOff.response, twOff.token);
+            add("TW opencode2 off: an OpenCode 2 is refused as before", /not OpenCode 1/.test(plain(twOff.chatMarkdown.join(""))) && !twReqs().some((r) => r.path?.startsWith("/api/session")));
+            ext.deactivate();
+
+            settings.opencode2 = true;
+            fs.rmSync(twRecord, { force: true });
+            const twLog = logLines.length;
+            const tw1 = stream();
+            await global.__handler({ prompt: "explain the cart [[probe:text]] hi" }, { history: [] }, tw1.response, tw1.token);
+            const tw1Chat = tw1.chatMarkdown.join("");
+            const tw1Reqs = twReqs();
+            const twBoot = tw1Reqs.find((r) => r.boot);
+            add(`TW a plan turn on OpenCode 2 answers with the recorded text, once (${once(tw1Chat, "Hello from the scripted model.")}×)`, once(tw1Chat, "Hello from the scripted model.") === 1);
+            add("TW …every /api request carried the printed password as Basic auth", tw1Reqs.filter((r) => r.path?.startsWith("/api/")).length > 3 && tw1Reqs.filter((r) => r.path?.startsWith("/api/")).every((r) => r.authed));
+            add("TW …and nothing went to a 1.x route", !tw1Reqs.some((r) => r.path && !r.path.startsWith("/api/") && r.path !== "/global/health"));
+            const twPlanRules = twBoot?.occ?.agents?.plan?.permissions ?? [];
+            add(`TW the server got 2.x-shaped overrides (agents.plan.permissions, ${twPlanRules.length} rules), not 1.x's \`agent\` key`,
+                !twBoot?.occ?.agent && twPlanRules.some((r) => r.action === "ocb-enforced" && r.effect === "deny") && twPlanRules[0]?.action === "*" && twPlanRules[0]?.effect === "deny");
+            const twCreate = tw1Reqs.find((r) => r.method === "POST" && r.path === "/api/session");
+            add("TW …the session was created in this folder with 2.x rules (task also as subagent)",
+                twCreate?.body?.location?.directory === work && Array.isArray(twCreate?.body?.permissions) && twCreate.body.permissions.some((r) => r.action === "subagent") && twCreate.body.permissions.some((r) => r.action === "question" && r.effect === "deny"));
+            add("TW …agent and model were set before the prompt (2.x's prompt takes neither)", (() => {
+                const i = tw1Reqs.findIndex((r) => /\/prompt$/.test(r.path ?? ""));
+                return i > 0 && tw1Reqs.slice(0, i).some((r) => /\/agent$/.test(r.path ?? "") && r.body?.agent === "plan") && tw1Reqs[i].body?.text?.includes("[[probe:text]]");
+            })());
+            add("TW …and its password reached neither the log nor chat", !/fake-oc2-PW0rd/.test(tw1Chat) && !logLines.slice(twLog).some((l) => /fake-oc2-PW0rd/.test(l)));
+
+            fs.rmSync(twRecord, { force: true });
+            const tw2 = stream();
+            await global.__handler({ prompt: "run it [[probe:bash:echo wired]] go", command: "dev" }, { history: [] }, tw2.response, tw2.token);
+            const tw2Reqs = twReqs();
+            const tw2Reply = tw2Reqs.find((r) => /\/permission\/[^/]+\/reply$/.test(r.path ?? ""));
+            add(`TW a /dev turn answers the recorded ask once, at 2.x's reply route (${JSON.stringify(tw2Reply?.body)})`, tw2Reply?.body?.decision === "once");
+            add("TW …the shell call shows as the bash step, and the run's answer follows it", /Done\. The tool said: wired/.test(tw2.chatMarkdown.join("")) && [...tw2.progress, ...tw2.chatMarkdown].some((t) => /echo wired/.test(t)));
+
+            const tw3 = stream();
+            await global.__handler({ prompt: "delegate it [[probe:task@explore:text]]", command: "dev" }, { history: [] }, tw3.response, tw3.token);
+            add("TW a subagent turn: the child's events count as the run's and its answer arrives", /Done\. The tool said:/.test(tw3.chatMarkdown.join("")));
+
+            fs.rmSync(twRecord, { force: true });
+            const tw4 = stream();
+            const tw4T0 = Date.now();
+            let tw4Stopped = 0;
+            const tw4Run = global.__handler({ prompt: "stream it [[probe:slow]] long" }, { history: [] }, tw4.response, tw4.token);
+            await waitFor(() => tw4.chatMarkdown.join("").includes("slow"), 5000);
+            tw4Stopped = Date.now();
+            tw4.token.cancel();
+            await tw4Run;
+            const tw4Ms = Date.now() - tw4Stopped;
+            await waitFor(() => twReqs().some((r) => /\/interrupt$/.test(r.path ?? "")), 2000);
+            add(`TW Stop interrupts the 2.x run on the server and the turn returns within a second (${tw4Ms}ms of ${Date.now() - tw4T0}ms)`, tw4Ms < 1000 && twReqs().some((r) => /\/interrupt$/.test(r.path ?? "")));
+
+            // A 2.x server that does not apply the overrides: plan turns must not run there.
+            ext.deactivate();
+            process.env.FAKE_OC2_DROP = "1";
+            fs.rmSync(twRecord, { force: true });
+            const tw5 = stream();
+            await global.__handler({ prompt: "explain the cart once more [[probe:text]]" }, { history: [] }, tw5.response, tw5.token);
+            const tw5Chat = plain(tw5.chatMarkdown.join(""));
+            add("TW a 2.x server without the bridge's rules refuses the plan turn before sending", /does not list the bridge's read-only rules/.test(tw5Chat) && !twReqs().some((r) => /\/prompt$/.test(r.path ?? "")));
+            delete process.env.FAKE_OC2_DROP;
+            ext.deactivate();
+
+            // transport cli: 2.x's run takes none of the bridge's flags, so the turn goes through the server.
+            settings.transport = "cli";
+            fs.rmSync(twRecord, { force: true });
+            const twCliLog = logLines.length;
+            const tw6 = stream();
+            await global.__handler({ prompt: "explain the cart on the cli [[probe:text]]" }, { history: [] }, tw6.response, tw6.token);
+            add("TW transport cli on OpenCode 2 runs through the server, never `run`",
+                /Hello from the scripted model\./.test(tw6.chatMarkdown.join("")) && twReqs().some((r) => /\/prompt$/.test(r.path ?? "")) && !logLines.slice(twCliLog).some((l) => /fake-tw2\.js run\b/.test(l)));
+            ext.deactivate();
+            delete process.env.FAKE_OC2_RECORD;
+
+            // 1.x on its recorded bytes: SSE deltas, the whole part and the reply say the same text once.
+            const wire1 = require(path.join(__dirname, "fixtures", "wire-v1.json"));
+            const w1Sse = [];
+            const w1Server = http.createServer((req, res) => {
+                const u = new URL(req.url, "http://x");
+                let body = "";
+                req.on("data", (c) => (body += c));
+                req.on("end", () => {
+                    const send = (code, payload) => { res.writeHead(code, { "content-type": "application/json" }); res.end(JSON.stringify(payload)); };
+                    if (u.pathname === "/global/health") return send(200, { healthy: true, version: wire1.version });
+                    if (u.pathname === "/global/event") { res.writeHead(200, { "content-type": "text/event-stream" }); res.write(": hi\n\n"); w1Sse.push(res); return; }
+                    if (req.method === "POST" && u.pathname === "/session") return send(200, { id: "ses_ROOT" });
+                    if (req.method === "POST" && u.pathname === "/session/ses_ROOT/message") {
+                        let i = 0;
+                        const next = () => {
+                            if (i < wire1.turns.text.frames.length) { for (const r of w1Sse) r.write("data: " + wire1.turns.text.frames[i] + "\n\n"); i += 1; setTimeout(next, 2); return; }
+                            res.writeHead(200, { "content-type": "application/json" });
+                            res.end(wire1.turns.text.reply);
+                        };
+                        return next();
+                    }
+                    if (u.pathname === "/session/status") return send(200, {});
+                    return send(200, u.pathname === "/agent" ? [] : {});
+                });
+            });
+            await new Promise((r) => w1Server.listen(0, "127.0.0.1", r));
+            Object.assign(settings, { executable: twSaved.exe, serverPort: w1Server.address().port, transport: "server", opencode2: false });
+            const w1 = stream();
+            await global.__handler({ prompt: "say hello [[probe:text]]", command: "dev" }, { history: [] }, w1.response, w1.token);
+            const w1Chat = w1.chatMarkdown.join("");
+            add(`TW 1.19.0's recorded text turn: deltas, the whole part and the reply give the answer once (${once(w1Chat, "Hello from the scripted model.")}×)`, once(w1Chat, "Hello from the scripted model.") === 1);
+            for (const r of w1Sse) r.end();
+            await new Promise((r) => w1Server.close(r));
+            ext.deactivate();
+            Object.assign(settings, { executable: twSaved.exe, serverPort: twSaved.port, transport: twSaved.t, serverStartupPollMs: twSaved.poll, opencode2: twSaved.v2 });
         }
 
         // ---- v207 ----

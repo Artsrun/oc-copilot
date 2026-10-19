@@ -6,6 +6,8 @@ import { debugLine, logChannel, secs, stamp, truncate } from "./core";
 import { mark } from "./followups";
 import { killTree, spawnOpenCode } from "./proc";
 import { connectSse, ensureCliIdentity, markNotOpenCode1, sessionIdFromEvent } from "./net";
+import { executableMajor } from "./enforce";
+import { runOpenCodeServer } from "./run-server";
 import { ReadOnlyEnforcement, RunMetrics, RunOptions, StepRecord, TokenUsage, contextOf, stepOutput, toolFilePath } from "./metrics";
 import { FamilyWatch, watchFamily } from "./asks";
 import { addSubagents, applyPartDelta, blankMetrics, markFirstByte, noteModel, notePartKind, noteTask, partDeltaOf, providerRetryOf, stepDetail } from "./run-steps";
@@ -40,6 +42,12 @@ export async function runOpenCode(options: RunOptions): Promise<RunMetrics> {
     const ready = await untilStopped(ensureCliIdentity(options.executable, options.cwd).then(() => true), options);
     if (!ready || options.token?.isCancellationRequested) {
         return blankMetrics(options.sessionId);
+    }
+    // OpenCode 2 (opencode2): its `run` takes none of the bridge's flags, and a
+    // cold run's rules cannot be read back (no `agent list`): every turn, cold
+    // or attached, goes through this window's server, whose rules can (REFS).
+    if (executableMajor(options.executable) === 2) {
+        return runOpenCodeServer({ ...options, serverUrl: options.attachUrl });
     }
     if (options.attachUrl && options.sessionId && !options.token?.isCancellationRequested) {
         await applyTurnPermission(options.attachUrl, options.cwd, options.sessionId, Boolean(options.readOnly), options.agent);
