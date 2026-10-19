@@ -78,7 +78,7 @@ connected. Without that entry `/env` shows the guidance (with `gitScan` on).
 - A CLI run that exits with an error → its first stderr error line, the debug
   log button, and chips that fit it.
 
-## This release: 0.0.222 — quick pass (about 20 minutes)
+## This release: 0.0.222–0.0.223 — quick pass (about 20 minutes)
 
 A real VS Code and a real model. Needs a 1.x and a 2.x OpenCode side by side
 (README, *OpenCode 2*: `npm i --prefix ~/.opencode1 opencode-ai@1`; 2.x is
@@ -105,7 +105,12 @@ A real VS Code and a real model. Needs a 1.x and a 2.x OpenCode side by side
 7. **2.x everywhere through the server**: `transport: "cli"` → a turn still
    answers, and the log has no `$ … opencode run`. `/sessions` lists this
    window's sessions; Continue binds one; Close hides it from the list.
-8. **Back off**: `opencode2` off, reload → item 3 again.
+8. **Your old rules on 2.x** (0.0.223): with `opencode2` on, add
+   `"agent": { "build": { "permission": { "bash": "ask" } } }` to the repo's
+   `opencode.json` and reload: the first turn says OpenCode 2 ignores the 1.x
+   permission rules in `opencode.json (build)`; the next turn does not repeat it.
+   Remove the key after.
+9. **Back off**: `opencode2` off, reload → item 3 again.
 
 ## Read-only checks (0.0.215–0.0.219, 1.x)
 

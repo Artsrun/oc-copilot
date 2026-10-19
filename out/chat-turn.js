@@ -8,6 +8,8 @@ const format_1 = require("./format");
 const context_1 = require("./context");
 const net_1 = require("./net");
 const server_session_1 = require("./server-session");
+const oc_api_1 = require("./oc-api");
+const env_1 = require("./env");
 const agents_1 = require("./agents");
 const enforce_1 = require("./enforce");
 const session_1 = require("./session");
@@ -54,6 +56,21 @@ async function openTurn(t) {
     const linker = (0, context_1.createFileLinker)(cwd);
     return { beat, linker, preRun, timed, attachUrl, opening };
 }
+const v1RulesNoted = new Set();
+function v1RulesNotice(base, cwd) {
+    if ((0, oc_api_1.serverMajor)(base) !== 2) {
+        return undefined;
+    }
+    const found = (0, env_1.v1PermissionRules)(cwd);
+    const key = `${cwd}\0${found.join("\0")}`;
+    if (!found.length || v1RulesNoted.has(key)) {
+        return undefined;
+    }
+    v1RulesNoted.add(key);
+    core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] OpenCode 2 ignores 1.x permission rules in ${found.join("; ")}`);
+    return `OpenCode 2 ignores the 1.x permission rules in ${found.map((f) => `\`${f}\``).join(", ")}: those agents run with OpenCode 2's own rules. ` +
+        "Move them to `.opencode/agents/<name>.md` frontmatter (`permission:`), which OpenCode 2 reads.";
+}
 async function prepareRun(t, live) {
     const { response, token, settings, state, cwd, kind, agentLabel, isBuild, devAgent, task, useServer, executable } = t;
     const { beat, preRun, timed, attachUrl } = live;
@@ -79,6 +96,10 @@ async function prepareRun(t, live) {
     const versionNote = guardBase ? (0, net_1.versionNotice)(guardBase) : undefined;
     if (versionNote) {
         response.markdown(`> ${(0, followups_1.mark)("warn")} ${versionNote}\n\n`);
+    }
+    const rulesNote = guardBase ? v1RulesNotice(guardBase, cwd) : undefined;
+    if (rulesNote) {
+        response.markdown(`> ${(0, followups_1.mark)("warn")} ${rulesNote}\n\n`);
     }
     const planChoice = isBuild || (0, agents_1.planAgentSetting)() === "plan"
         ? undefined

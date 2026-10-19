@@ -22,7 +22,7 @@ exports.sessionPath = sessionPath;
 const sessionRoot = (sessionId) => `/session/${safeSessionId(sessionId)}`;
 exports.sessionRoot = sessionRoot;
 function serverMajor(base) {
-    return /^v?2\./.test((0, net_1.serverVersion)(base) ?? "") ? 2 : 1;
+    return Number(((0, net_1.serverVersion)(base) ?? "").match(/^v?(\d+)\./)?.[1] ?? 1) >= 2 ? 2 : 1;
 }
 const v1 = (base) => {
     const at = (path, cwd) => (0, net_1.withDirectory)(`${base}${path}`, cwd);

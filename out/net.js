@@ -210,7 +210,7 @@ function versionNotice(base) {
     if (!version || !v || versionsNoted.has(version)) {
         return undefined;
     }
-    const range = v[0] === 2 ? exports.TESTED_OPENCODE2 : exports.TESTED_OPENCODE;
+    const range = v[0] >= 2 ? exports.TESTED_OPENCODE2 : exports.TESTED_OPENCODE;
     const lo = semver(range.min);
     const hi = semver(range.max);
     if (!below(v, lo) && !below(hi, v)) {
@@ -257,7 +257,7 @@ function ensureCliIdentity(executable, cwd) {
         if (unsupported) {
             throw unsupported;
         }
-        if (!new RegExp(`(?:^|\\s)v?${v2 ? "[12]" : "1"}\\.\\d+\\.\\d+(?:\\s|$|[-+])`).test(output.trim())) {
+        if (!new RegExp(`(?:^|\\s)v?${v2 ? "[1-9]\\d*" : "1"}\\.\\d+\\.\\d+(?:\\s|$|[-+])`).test(output.trim())) {
             throw identityUnknown(executable, `printed no 1.x version (\`${(0, core_1.truncate)(output.trim().replace(/\s+/g, " ").replace(/`/g, "'"), 40)}\`)`);
         }
         core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] CLI identity verified in ${Date.now() - started}ms`);
@@ -293,7 +293,7 @@ exports.isNotOpenCode1 = isNotOpenCode1;
 function majorVersionNote(executable, output) {
     const found = output.match(/(?:^|\s)v?(\d+)\.\d+\.\d+/);
     const major = found ? Number(found[1]) : undefined;
-    if (major === 1 || (major === 2 && (0, exports.openCode2Allowed)())) {
+    if (major === 1 || (major !== undefined && major >= 2 && (0, exports.openCode2Allowed)())) {
         if (notOpenCode1.has(executable)) {
             cliIdentity.delete(executable);
         }
@@ -410,7 +410,7 @@ async function ensureServerOnce(cwd, onSlowStart) {
                 try {
                     const info = await httpGetJson(`${base}/api/info`, timeoutMs, auth);
                     const version = typeof info.version === "string" ? info.version.trim() : "";
-                    if (/^v?2\./.test(version)) {
+                    if (Number(version.match(/^v?(\d+)\./)?.[1] ?? 0) >= 2) {
                         serverVersions.set(base, version);
                         serverAuths.set(base, auth);
                         return { healthy: true, version };

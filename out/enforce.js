@@ -18,7 +18,7 @@ exports.ENFORCED_MARKER = "ocb-enforced";
 const FORBIDDEN_SUBAGENTS = new Set(["plan", "build", "general"]);
 const majors = new Map();
 function noteExecutableMajor(executable, major) {
-    majors.set(executable, major === 2 ? 2 : 1);
+    majors.set(executable, major >= 2 ? 2 : 1);
 }
 const executableMajor = (executable) => majors.get(executable) ?? 1;
 exports.executableMajor = executableMajor;

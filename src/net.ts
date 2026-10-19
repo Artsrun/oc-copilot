@@ -257,7 +257,8 @@ export function versionNotice(base: string): string | undefined {
     if (!version || !v || versionsNoted.has(version)) {
         return undefined;
     }
-    const range = v[0] === 2 ? TESTED_OPENCODE2 : TESTED_OPENCODE;
+    // A later major runs on 2.x's adapter: it is outside 2.x's tested range, and says so.
+    const range = v[0] >= 2 ? TESTED_OPENCODE2 : TESTED_OPENCODE;
     const lo = semver(range.min) as number[];
     const hi = semver(range.max) as number[];
     if (!below(v, lo) && !below(hi, v)) {
@@ -324,7 +325,7 @@ export function ensureCliIdentity(executable: string, cwd: string): Promise<void
         if (unsupported) {
             throw unsupported;
         }
-        if (!new RegExp(`(?:^|\\s)v?${v2 ? "[12]" : "1"}\\.\\d+\\.\\d+(?:\\s|$|[-+])`).test(output.trim())) {
+        if (!new RegExp(`(?:^|\\s)v?${v2 ? "[1-9]\\d*" : "1"}\\.\\d+\\.\\d+(?:\\s|$|[-+])`).test(output.trim())) {
             throw identityUnknown(executable, `printed no 1.x version (\`${truncate(output.trim().replace(/\s+/g, " ").replace(/`/g, "'"), 40)}\`)`);
         }
         logChannel.appendLine(`[${stamp()}] CLI identity verified in ${Date.now() - started}ms`);
@@ -375,7 +376,7 @@ export const isNotOpenCode1 = (error: unknown): boolean => (error as { code?: un
 export function majorVersionNote(executable: string, output: string): string | undefined {
     const found = output.match(/(?:^|\s)v?(\d+)\.\d+\.\d+/);
     const major = found ? Number(found[1]) : undefined;
-    if (major === 1 || (major === 2 && openCode2Allowed())) {
+    if (major === 1 || (major !== undefined && major >= 2 && openCode2Allowed())) {
         if (notOpenCode1.has(executable)) {
             cliIdentity.delete(executable);
         }
@@ -512,7 +513,7 @@ async function ensureServerOnce(cwd?: string, onSlowStart?: (text: string) => vo
                 try {
                     const info = await httpGetJson<{ version?: unknown }>(`${base}/api/info`, timeoutMs, auth);
                     const version = typeof info.version === "string" ? info.version.trim() : "";
-                    if (/^v?2\./.test(version)) {
+                    if (Number(version.match(/^v?(\d+)\./)?.[1] ?? 0) >= 2) {
                         serverVersions.set(base, version);
                         serverAuths.set(base, auth);
                         return { healthy: true, version };

@@ -1,0 +1,46 @@
+# Real OpenCode, nightly and on demand: each version in its own job (its own
+# runner, its own prefix, nothing on PATH), the bridge's out/ driven against it
+# with the scripted model (scripts/probe-model.js: no provider, no cost).
+# Pinned cells must pass; `latest` is the early warning and may fail.
+name: probes
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - cell: opencode 1.19.0 (pinned)
+            package: opencode-ai@1.19.0
+            probe: scripts/probe-readonly.js
+            optional: false
+          - cell: opencode 2.0.29 (pinned)
+            package: "@opencode/cli@2.0.29"
+            probe: scripts/probe-opencode2.js
+            optional: false
+          - cell: opencode 2 latest
+            package: "@opencode/cli@latest"
+            probe: scripts/probe-opencode2.js
+            optional: true
+    name: ${{ matrix.cell }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: ${{ matrix.optional }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci && npm run compile
+      - name: Install ${{ matrix.package }} into its own prefix
+        run: npm i --no-audit --no-fund --prefix "$RUNNER_TEMP/oc" "${{ matrix.package }}"
+      - name: Version
+        run: '"$RUNNER_TEMP/oc/node_modules/.bin/opencode" --version'
+      - name: Probe
+        run: node ${{ matrix.probe }} "$RUNNER_TEMP/oc/node_modules/.bin/opencode"

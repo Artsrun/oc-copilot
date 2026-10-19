@@ -35,6 +35,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.existsQuiet = existsQuiet;
 exports.readJsonc = readJsonc;
+exports.v1PermissionRules = v1PermissionRules;
 exports.openCodeConfigModel = openCodeConfigModel;
 exports.discoverOpenCodeEnv = discoverOpenCodeEnv;
 exports.summariseEnv = summariseEnv;
@@ -114,9 +115,18 @@ function listAgentFiles(dir, prefix = "", depth = 0) {
 function listSkillDirs(dir) {
     return listDirNames(dir).filter((name) => existsQuiet(path.join(dir, name, "SKILL.md")));
 }
-function openCodeConfigModel(cwd) {
+function v1PermissionRules(cwd) {
+    return configFiles(cwd).flatMap(([file, from]) => {
+        const agents = file && existsQuiet(file) ? readJsonc(file)?.agent : undefined;
+        const named = agents && typeof agents === "object"
+            ? Object.entries(agents).filter(([, a]) => a && typeof a === "object" && "permission" in a).map(([n]) => n)
+            : [];
+        return named.length ? [`${from} (${named.join(", ")})`] : [];
+    });
+}
+const configFiles = (cwd) => {
     const global = opencodeGlobalDir();
-    const files = [
+    return [
         [path.join(global, "config.json"), "global config.json"],
         [path.join(global, "opencode.json"), "global opencode.json"],
         [path.join(global, "opencode.jsonc"), "global opencode.jsonc"],
@@ -126,6 +136,9 @@ function openCodeConfigModel(cwd) {
         [path.join(cwd, ".opencode", "opencode.json"), ".opencode/opencode.json"],
         [path.join(cwd, ".opencode", "opencode.jsonc"), ".opencode/opencode.jsonc"]
     ];
+};
+function openCodeConfigModel(cwd) {
+    const files = configFiles(cwd);
     let found;
     for (const [file, from] of files) {
         const model = file && existsQuiet(file) ? readJsonc(file)?.model : undefined;

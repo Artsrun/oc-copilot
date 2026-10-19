@@ -5,6 +5,25 @@ actually measured, so nobody re-derives it.
 
 ---
 
+## 0.0.223: whose permission rules OpenCode 2 reads (2026-10-19)
+
+Linux, `opencode-ai@1.19.0` and `@opencode/cli@2.0.29`, each in a temp git repo
+with an isolated HOME and no `OPENCODE_CONFIG_CONTENT`. The project's
+`opencode.json` set 1.x's `agent.plan.permission: {"*": "deny", read: "allow",
+"v1-marker": "deny"}`, and `.opencode/agents/look.md` the frontmatter
+`permission: {"*": deny, read: allow, v1-look-marker: deny}`.
+
+| Where | 1.19.0 (`GET /agent`) | 2.0.29 (`GET /api/agent/<n>`) |
+| --- | --- | --- |
+| `opencode.json` `agent.plan.permission` | applied (`* * deny`, `v1-marker`) | **not applied**: plan's 7 stock rules, no marker, nothing logged |
+| `.opencode/agents/look.md` `permission:` | applied | applied (`* * deny`, `read * allow`, `v1-look-marker`, then `browser * deny`) |
+
+So a project's own restrictions in `opencode.json` silently fall away on 2.x;
+the bridge's own plan is unaffected (its overrides are 2.x-shaped and verified).
+`npm i --prefix <dir> @opencode/cli@latest` resolved to 2.0.32 on this date.
+
+---
+
 ## 0.0.222: OpenCode 2 through its API, end to end (2026-10-19)
 
 Linux, Node 22.22.0, `@opencode/cli` 2.0.29 and 2.0.32, each in a temp git

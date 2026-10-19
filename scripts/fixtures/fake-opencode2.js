@@ -5,6 +5,7 @@
 // back. Dev only. Run as `node fake-opencode2.js <argv>` through writeFake.
 //
 // Env: FAKE_OC2_RECORD   file that gets one JSON line per request
+//      FAKE_OC2_VERSION  the version it names (default: the recording's)
 //      FAKE_OC2_DROP=1   the server ignores the injected overrides (a 2.x that
 //                        does not apply them: the bridge must refuse plan turns)
 "use strict";
@@ -14,11 +15,12 @@ const http = require("node:http");
 
 const wire = require(path.join(__dirname, "wire-v2.json"));
 const PASSWORD = "fake-oc2-PW0rd";
+const VERSION = process.env.FAKE_OC2_VERSION || wire.version;
 
 module.exports = (argv) => {
     const a = argv.slice(2);
     if (a.includes("--version")) {
-        process.stdout.write(`opencode v${wire.version}\n`);
+        process.stdout.write(`opencode v${VERSION}\n`);
         process.exit(0);
     }
     const portAt = a.indexOf("--port");
@@ -102,7 +104,7 @@ module.exports = (argv) => {
             }
             if (!authed) return send(401, { _tag: "UnauthorizedError", message: "Authentication required" });
             const p = u.pathname.slice(4);
-            if (p === "/info") return send(200, { version: wire.version, pid: process.pid, urls: [`http://127.0.0.1:${port}`], paths: { tmp: "/tmp" } });
+            if (p === "/info") return send(200, { version: VERSION, pid: process.pid, urls: [`http://127.0.0.1:${port}`], paths: { tmp: "/tmp" } });
             if (p === "/event") {
                 res.writeHead(200, { "content-type": "text/event-stream" });
                 res.write(`data: ${JSON.stringify({ id: "evt_fake", type: "server.connected", data: {} })}\n\n`);
