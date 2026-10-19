@@ -6420,7 +6420,8 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
     // write attempts through (`cat a > b`, `>>`, `find -fprint`, `git log > f`,
     // and the task tool's `general` subagent); this shape held all 10.
     {
-        const readme = fs.readFileSync(path.join(repoDir, "README.md"), "utf8");
+        // CRLF on a Windows checkout (`* text=auto` + core.autocrlf): the block is matched on \n.
+        const readme = fs.readFileSync(path.join(repoDir, "README.md"), "utf8").replace(/\r\n/g, "\n");
         const block = (readme.match(/```markdown\n(---\ndescription: Read-only look[\s\S]*?)```/) || [])[1] || "";
         const front = block.split("\n---\n")[0];
         add("LK the README ships the look agent", block.length > 200 && /\nmode: primary\n/.test(front));
@@ -7782,7 +7783,10 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
                 "if (a.includes('serve') && i >= 0) {\n" +
                 "  process.stdout.write('server listening on http://127.0.0.1:' + a[i + 1] + '\\nserver pass');\n" +
                 "  setTimeout(() => process.stdout.write('word s3cret'), 15); setTimeout(() => process.stdout.write('PW0rd\\n'), 30);\n" +
-                "  require('http').createServer((q, s) => { s.setHeader('content-type', 'text/html'); s.end('<!doctype html><html><title>OpenCode</title></html>'); }).listen(Number(a[i + 1]), '127.0.0.1');\n" +
+                // Listening only once the whole password line is out: the bridge stops a
+                // 2.x server at its first web-page answer, and a slow runner (CI macOS)
+                // killed it before the line ended — no redacted line, a red check, no leak.
+                "  setTimeout(() => require('http').createServer((q, s) => { s.setHeader('content-type', 'text/html'); s.end('<!doctype html><html><title>OpenCode</title></html>'); }).listen(Number(a[i + 1]), '127.0.0.1'), 60);\n" +
                 "} else if (a.includes('run')) {\n" +
                 "  const bad = a.find((x) => ['--attach', '--dir', '--variant', '--pure'].includes(x));\n" +
                 "  if (bad) { process.stdout.write('DESCRIPTION\\n  Run OpenCode with a message\\n'); process.stderr.write('ERRORS\\n  Unrecognized flag: ' + bad + ' in command opencode run\\n'); process.exit(1); }\n" +

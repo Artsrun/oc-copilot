@@ -111,7 +111,9 @@ const run = (label, cmd, args, opts = {}) => {
 run("1/4 typecheck", "npx", ["tsc", "-p", ".", "--noEmit"]);
 // v212: fail-fast, as the header says. A red typecheck used to build anyway and
 // then run the whole 2-3 minute suite against code that does not compile.
-stopIfRed("build, verify and package were not run");
+if (stopIfRed("build, verify and package were not run")) {
+    return;
+}
 
 // ---------------------------------------------------------------------------
 // 2 · build
@@ -132,7 +134,9 @@ if (built.ok) {
         failed += 1;
     }
 }
-stopIfRed("verify and package were not run");
+if (stopIfRed("verify and package were not run")) {
+    return;
+}
 
 // ---------------------------------------------------------------------------
 // 3 · verify
@@ -148,7 +152,9 @@ if (verified.ok && !/ALL \d+ CHECKS PASSED/.test(verified.out)) {
     results.push(["3/4 verify printed the pass banner", false]);
     failed += 1;
 }
-stopIfRed("package was not checked");
+if (stopIfRed("package was not checked")) {
+    return;
+}
 
 // ---------------------------------------------------------------------------
 // 4 · package file list
@@ -557,7 +563,8 @@ function recordRelease() {
     const vsix = path.join(root, "dist", `${pkg.name}-${pkg.version}.vsix`);
     if (!fs.existsSync(vsix)) {
         console.log(`--record: no ${path.relative(root, vsix)} — package first (npx vsce package --out dist/).`);
-        process.exit(1);
+        process.exitCode = 1;
+        return;
     }
     if (releasedEntries().some((r) => r.version === pkg.version)) {
         console.log(`--record: ${pkg.version} is already recorded in docs/released.txt.`);
@@ -697,7 +704,8 @@ function committable(dir) {
 // ---------------------------------------------------------------------------
 
 report();
-if (process.argv.includes("--record")) {
+// A red gate records nothing (report sets exitCode instead of exiting).
+if (!process.exitCode && process.argv.includes("--record")) {
     recordRelease();
 }
 
@@ -709,13 +717,20 @@ function report(skipped) {
     }
     if (failed) {
         console.log(`\n\u001b[31m${failed} BLOCKER(S) — DO NOT SHIP\u001b[0m${skipped ? ` (${skipped})` : ""}\n`);
-        process.exit(1);
+        // exitCode, not exit(): on a pipe (CI on macOS, Windows) stdout is
+        // written asynchronously and exit() drops what is queued — the macOS
+        // run lost the suite's FAIL lines and this summary (0.0.224).
+        process.exitCode = 1;
+        return;
     }
     console.log("\n\u001b[32mALL GATES GREEN — safe to package\u001b[0m\n");
 }
 
+/** True when a stage is red: the summary is printed and the caller stops (a top-level return). */
 function stopIfRed(skipped) {
     if (failed) {
         report(skipped);
+        return true;
     }
+    return false;
 }
