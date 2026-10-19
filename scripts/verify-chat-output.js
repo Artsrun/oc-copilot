@@ -6420,7 +6420,8 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
     // write attempts through (`cat a > b`, `>>`, `find -fprint`, `git log > f`,
     // and the task tool's `general` subagent); this shape held all 10.
     {
-        const readme = fs.readFileSync(path.join(repoDir, "README.md"), "utf8");
+        // LF-normalized: a Windows checkout (core.autocrlf) has CRLF, as the gate's codeHash knows.
+        const readme = fs.readFileSync(path.join(repoDir, "README.md"), "utf8").replace(/\r\n/g, "\n");
         const block = (readme.match(/```markdown\n(---\ndescription: Read-only look[\s\S]*?)```/) || [])[1] || "";
         const front = block.split("\n---\n")[0];
         add("LK the README ships the look agent", block.length > 200 && /\nmode: primary\n/.test(front));

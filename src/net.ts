@@ -258,7 +258,7 @@ export function versionNotice(base: string): string | undefined {
         return undefined;
     }
     // A later major runs on 2.x's adapter: it is outside 2.x's tested range, and says so.
-    const range = v[0] >= 2 ? TESTED_OPENCODE2 : TESTED_OPENCODE;
+    const range = v[0] === 2 ? TESTED_OPENCODE2 : TESTED_OPENCODE;
     const lo = semver(range.min) as number[];
     const hi = semver(range.max) as number[];
     if (!below(v, lo) && !below(hi, v)) {
