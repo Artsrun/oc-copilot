@@ -8059,6 +8059,37 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
             add("TW transport cli on OpenCode 2 runs through the server, never `run`",
                 /Hello from the scripted model\./.test(tw6.chatMarkdown.join("")) && twReqs().some((r) => /\/prompt$/.test(r.path ?? "")) && !logLines.slice(twCliLog).some((l) => /fake-tw2\.js run\b/.test(l)));
             ext.deactivate();
+
+            // 0.0.223: a later major is tried on the 2.x adapter and says it is
+            // outside the tested range; with opencode2 off it is refused as before.
+            settings.transport = "server";
+            process.env.FAKE_OC2_VERSION = "3.0.0";
+            const tw7 = stream();
+            await global.__handler({ prompt: "explain the cart on three [[probe:text]]" }, { history: [] }, tw7.response, tw7.token);
+            const tw7Chat = plain(tw7.chatMarkdown.join(""));
+            add("TW a 3.x with opencode2 runs on the 2.x adapter and says it is outside the tested 2.0.29–2.0.32",
+                /Hello from the scripted model\./.test(tw7Chat) && /3\.0\.0 is outside the versions this bridge was tested with \(2\.0\.29/.test(tw7Chat));
+            ext.deactivate();
+            settings.opencode2 = false;
+            const tw8 = stream();
+            await global.__handler({ prompt: "explain the cart on three, off [[probe:text]]" }, { history: [] }, tw8.response, tw8.token);
+            add("TW …and with opencode2 off a 3.x is refused", /not OpenCode 1/.test(plain(tw8.chatMarkdown.join(""))) && !/Hello from the scripted model/.test(tw8.chatMarkdown.join("")));
+            ext.deactivate();
+            delete process.env.FAKE_OC2_VERSION;
+            settings.opencode2 = true;
+
+            // 0.0.223: OpenCode 2 ignores 1.x's agent.<n>.permission in opencode.json (2.0.29, measured): said once.
+            const twCfg = path.join(work, "opencode.json");
+            const twCfgHad = fs.existsSync(twCfg) ? fs.readFileSync(twCfg) : undefined;
+            fs.writeFileSync(twCfg, JSON.stringify({ agent: { plan: { permission: { "*": "deny", read: "allow" } } } }));
+            const tw9 = stream();
+            await global.__handler({ prompt: "explain the cart with old rules [[probe:text]]" }, { history: [] }, tw9.response, tw9.token);
+            const tw10 = stream();
+            await global.__handler({ prompt: "and again with old rules [[probe:text]]" }, { history: [] }, tw10.response, tw10.token);
+            add("TW on OpenCode 2, 1.x agent permission rules in opencode.json are named once",
+                /ignores the 1\.x permission rules in .?opencode\.json \(plan\)/.test(plain(tw9.chatMarkdown.join(""))) && !/ignores the 1\.x permission rules/.test(plain(tw10.chatMarkdown.join(""))));
+            if (twCfgHad === undefined) fs.rmSync(twCfg, { force: true }); else fs.writeFileSync(twCfg, twCfgHad);
+            ext.deactivate();
             delete process.env.FAKE_OC2_RECORD;
 
             // 1.x on its recorded bytes: SSE deltas, the whole part and the reply say the same text once.

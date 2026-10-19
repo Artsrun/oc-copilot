@@ -14,7 +14,8 @@ const FORBIDDEN_SUBAGENTS = new Set(["plan", "build", "general"]);
 // (ConfigInvalidError) and 2.x given both applied neither (0.0.222, measured).
 const majors = new Map<string, 1 | 2>();
 export function noteExecutableMajor(executable: string, major: number): void {
-    majors.set(executable, major === 2 ? 2 : 1);
+    // A later major is tried as 2.x (its API, its overrides); read-only stays verified or refused.
+    majors.set(executable, major >= 2 ? 2 : 1);
 }
 /** 1 until `--version` named another. */
 export const executableMajor = (executable: string): 1 | 2 => majors.get(executable) ?? 1;

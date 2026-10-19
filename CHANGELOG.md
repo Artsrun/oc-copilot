@@ -3,6 +3,22 @@
 Full release history, newest first; releases before the last one are condensed
 to their summary and headlines. The README ships the last five.
 
+### 0.0.223
+
+- **1.x permission rules on OpenCode 2 are named once** (`v1PermissionRules`,
+  `chat-turn`): with a 2.x server, the first turn lists each config file whose
+  `agent.<name>.permission` 2.x ignores (2.0.29 left a project's plan rules
+  unapplied; `.opencode/agents/*.md` frontmatter was read). Keyed by folder and
+  finding, so a file added later is still named.
+- **A later major is tried on the 2.x adapter** with `opencode2` on (`--version`
+  ≥ 2, `/api/info` ≥ 2, `serverMajor`), with the outside-the-tested-range notice;
+  off, it is refused as before. Read-only stays verified or refused.
+- **CI** (`.github/workflows`): `ship.yml` runs `npm run ship` on Linux, Windows
+  and macOS for every push and pull request; `probes.yml` runs, nightly and on
+  demand, `probe-readonly.js` against 1.19.0 and `probe-opencode2.js` against
+  2.0.29 (both must pass) and the latest 2.x (may fail), one job per version.
+  Checks `TW`.
+
 ### 0.0.222
 
 - **OpenCode 2, experimental** (`opencode2`, off by default). `oc-api` gains 2.x's

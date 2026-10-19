@@ -242,6 +242,15 @@ says 2.x is driven through its HTTP API instead (measured on 2.0.29 and 2.0.32):
   **Close** in `/sessions` keeps the session listed in OpenCode's own apps
   (2.x has no archive call; the bridge marks it hidden for itself).
 
+- **Your own permission rules.** OpenCode 2 reads `permission:` in
+  `.opencode/agents/<name>.md` frontmatter, but ignores 1.x's
+  `agent.<name>.permission` in `opencode.json` without a word (2.0.29,
+  measured): those agents run with OpenCode 2's own rules. The first turn on a
+  2.x server names any such file once.
+- **A later major** (3.x) is tried the same way, with a note that it is outside
+  the versions the bridge was tested with; read-only turns stay refused unless
+  the server lists the bridge's rules.
+
 Both majors keep sessions in the same data folder, so turning `opencode2` on
 or off keeps your history.
 
@@ -509,6 +518,17 @@ All under `opencodeCopilotBridge.`.
 
 The last five releases; the full history is `CHANGELOG.md` in the repository.
 
+### 0.0.223
+
+- **OpenCode 2 ignores your `opencode.json` permission rules, and now you are
+  told.** 2.0.29 skips 1.x's `agent.<name>.permission` there without a word
+  (measured) while it reads `.opencode/agents/*.md` frontmatter; the first turn
+  on a 2.x server names each such file once.
+- With `opencode2` on, a later major (3.x) runs on the 2.x adapter and says it
+  is outside the tested versions, instead of being refused.
+- CI: the gate on Linux, Windows and macOS for every push and pull request, and
+  nightly probes against real OpenCode 1.19.0, 2.0.29 and the latest 2.x.
+
 ### 0.0.222
 
 - **OpenCode 2, experimental** (`opencode2`, off by default): a 2.x
@@ -559,9 +579,3 @@ The last five releases; the full history is `CHANGELOG.md` in the repository.
 - `scripts/update.js`: install the newest delivered VSIX into `code` and
   `code-insiders` when it is newer, only if its sha256 matches
   `docs/released.txt` (`--from <folder>`, `--check`).
-
-### 0.0.218
-
-- Enforce UTF-8 byte limits on editor excerpts and bound diagnostic text.
-- Report omitted unsaved editor text and potentially stale disk contents when no excerpt fits.
-- Closed-file ranges remain path-based, avoiding synchronous whole-file reads on the extension host.

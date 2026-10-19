@@ -34,7 +34,7 @@ export type Major = 1 | 2;
 
 /** The major `base` named at `/global/health`; 1 until it named one. */
 export function serverMajor(base: string): Major {
-    return /^v?2\./.test(serverVersion(base) ?? "") ? 2 : 1;
+    return Number((serverVersion(base) ?? "").match(/^v?(\d+)\./)?.[1] ?? 1) >= 2 ? 2 : 1;
 }
 
 /** Every request the bridge makes of a server, `cwd`-scoped where OpenCode scopes it. */

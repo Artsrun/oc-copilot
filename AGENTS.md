@@ -58,7 +58,7 @@ Layering has no cycles:
 extension.ts  →  chat · chat-boot · commands-registry · git-scan-mcp · session · worktree · leaf modules (for __test)
      chat     →  agents · chat-boot · chat-commands · chat-parallel · chat-turn · chat-worktree · context · models · natural · prompt · session · core
 chat-parallel →  agents · chat-boot · compose · context · models · net · runs · core
-  chat-turn   →  agents · chat-boot · context · enforce · format · metrics · models · net · runs · session · core
+  chat-turn   →  agents · chat-boot · context · enforce · env · format · metrics · models · net · oc-api · runs · session · core
  chat-commands →  chat-boot · chat-sessions · context · env · models · net · oc-api · prompt · proc · runs · session · core
  chat-sessions →  net · sessions (→ oc-api · runs) · session · core
  chat-worktree →  chat-boot · format · net · prompt · runs · worktree · core
@@ -142,6 +142,10 @@ npm run verify    # the suite alone
 
 A red check stops the gate there: a red typecheck does not build, a red build
 does not run the suite.
+
+CI runs the same gate (`.github/workflows/ship.yml`: Linux, Windows, macOS, every
+push and pull request) and, nightly, the real-binary probes, one job per
+OpenCode version (`probes.yml`: 1.19.0 and 2.0.29 must pass, the latest 2.x may fail).
 
 - The suite takes well over 30 s; do not judge it by a 30 s timeout.
 - It **aborts on the first exception**: fix crashes first, then red checks.
@@ -353,7 +357,11 @@ history belongs in `CHANGELOG.md`, not in the source.
   fall back to a cold run (`OC`). On: this window's own server only (`/api/info`
   with the printed password), every turn through it, overrides in 2.x's shape
   (1.x rejects that key; given both, 2.x applied neither), an unverified plan
-  turn refused (`TW`). Both majors keep sessions in the same data folder.
+  turn refused (`TW`). 2.x ignores 1.x's `agent.<n>.permission` in `opencode.json`
+  without a word but reads `.opencode/agents/*.md` frontmatter (2.0.29): named
+  once per folder (`v1PermissionRules`). A later major runs on the 2.x adapter
+  with the outside-the-tested-range notice. Both majors keep sessions in the
+  same data folder.
 - **`opencode --version` costs ~0.7 s on 1.19 (the Bun binary starting)**:
   CLI first use awaits one shared check; later sends reuse it while the file
   behind the name is unchanged (`executableStamp`, file stats): a 2.x installer
