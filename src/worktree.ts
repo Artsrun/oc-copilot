@@ -7,9 +7,10 @@
 // echoed in the README under the same claim tag.
 //
 // claim:worktree-command
-// GUARANTEES: a new worktree at <parent>/<repo>.worktrees/<slug> on branch
-//   ai/<slug>, created from your current HEAD; the dev run's cwd and --dir are
-//   that folder, so tracked files in your checkout are not written.
+// GUARANTEES: a worktree at <parent>/<repo>.worktrees/<slug> on branch
+//   ai/<slug>, created from your current HEAD — or, for a follow-up in the same
+//   chat, the one it already made (reopenWorktree); the dev run's cwd and --dir
+//   are that folder, so tracked files in your checkout are not written.
 // DOES NOT: commit; copy untracked files (.env, node_modules); separate ports or
 //   OpenCode's global session store; merge anything back.
 //
@@ -19,6 +20,7 @@
 // pins execFile to this file and forbids enabling a shell.
 
 import { execFile } from "node:child_process";
+import * as fs from "node:fs";
 import * as path from "node:path";
 
 export interface GitResult {
@@ -82,6 +84,26 @@ export const createWorktree = async (cwd: string, task: string): Promise<Worktre
         ok: true,
         worktree: { root, path: wtPath, branch, baseRef: ref.stdout.trim() || "HEAD", baseSha: sha.stdout.trim() }
     };
+};
+
+// A worktree an earlier turn made, named by chat metadata (untrusted): continued
+// only if it is this repo's, at the path createWorktree gives its branch, and
+// still on that branch. Anything else gets a fresh worktree.
+export const reopenWorktree = async (cwd: string, wt: Worktree): Promise<boolean> => {
+    if (!/^ai\/[a-z0-9-]+$/.test(wt.branch)) {
+        return false;
+    }
+    const top = await git(cwd, ["rev-parse", "--show-toplevel"]);
+    const root = top.code === 0 ? path.normalize(top.stdout.trim()) : "";
+    if (!root || root !== path.normalize(wt.root)) {
+        return false;
+    }
+    const expected = path.join(path.dirname(root), `${path.basename(root)}.worktrees`, wt.branch.slice(3));
+    if (path.normalize(wt.path) !== expected || !fs.existsSync(expected)) {
+        return false;
+    }
+    const head = await git(expected, ["rev-parse", "--abbrev-ref", "HEAD"]);
+    return head.code === 0 && head.stdout.trim() === wt.branch;
 };
 
 // Uncommitted edits AND new files, against the commit the worktree started from.

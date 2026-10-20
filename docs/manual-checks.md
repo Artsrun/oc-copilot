@@ -112,6 +112,21 @@ A real VS Code and a real model. Needs a 1.x and a 2.x OpenCode side by side
    Remove the key after.
 9. **Back off**: `opencode2` off, reload → item 3 again.
 
+## 0.0.224–0.0.226 — quick pass (about 10 minutes, 1.x)
+
+1. **Data folder OpenCode 2 created** (start VS Code without `XDG_DATA_HOME`
+   on a machine whose `opencode.db` 2.x made): the first message says OpenCode 1
+   cannot open its data folder and names `XDG_DATA_HOME`; the second is refused
+   at once (the log has no new `$ … serve`/`run`); `/ping` fails the server row;
+   the log has no `[91m`.
+2. **Quiet start**: in a new chat, the first message shows no "New chat" or
+   "text attachment" note; a slow tool call shows no `glob: {}` row.
+3. **`/worktree` continues**: `@opencode /worktree add a hello.txt`, then in the
+   same chat `make it say hi twice` → "Continuing in" the same folder, one
+   folder under `<repo>.worktrees/`, and the log has no second
+   `worktree … from`. **New worktree** opens a new chat with
+   `@opencode /worktree ` typed. Remove the worktree after.
+
 ## Read-only checks (0.0.215–0.0.219, 1.x)
 
 Use a real model; a turn whose model does not try the command is INCONCLUSIVE.

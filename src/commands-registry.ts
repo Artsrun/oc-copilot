@@ -86,7 +86,10 @@ export function registerCommands(context: vscode.ExtensionContext): void {
         // thread has no history for threadSession() to walk, so a fresh session
         // follows for free. Both command ids are tried because the host owns
         // their naming, and failing to open a chat must never throw.
-        vscode.commands.registerCommand("opencodeCopilotBridge.newChat", async () => {
+        // `prefill`: a bare command word only (`/worktree `, from the New worktree
+        // button); anything else is ignored, and nothing is ever sent.
+        vscode.commands.registerCommand("opencodeCopilotBridge.newChat", async (prefill?: unknown) => {
+            const word = typeof prefill === "string" && /^\/[a-z]+ $/.test(prefill) ? prefill : "";
             for (const id of ["workbench.action.chat.newChat", "workbench.action.chat.new"]) {
                 try {
                     await vscode.commands.executeCommand(id);
@@ -94,7 +97,7 @@ export function registerCommands(context: vscode.ExtensionContext): void {
                     // from useful rather than one more thing to remember to type.
                     try {
                         await vscode.commands.executeCommand("workbench.action.chat.open", {
-                            query: "@opencode ",
+                            query: `@opencode ${word}`,
                             isPartialQuery: true
                         });
                     } catch {

@@ -60,7 +60,8 @@ async function handleChat(request, context, rawResponse, token, turn = {}) {
     }
     const typedWorktree = /^\/worktree\b\s*/i.test(prompt);
     if (declared === "worktree" || typedWorktree) {
-        return (0, chat_worktree_1.handleWorktree)({ task: prompt.replace(/^\/worktree\b\s*/i, "").trim(), cwd, response, token });
+        const previous = Array.isArray(context?.history) ? (0, session_1.threadWorktree)(context.history, cwd) : undefined;
+        return (0, chat_worktree_1.handleWorktree)({ task: prompt.replace(/^\/worktree\b\s*/i, "").trim(), cwd, response, token, previous });
     }
     if (!prompt && !(0, chat_boot_1.isKindCommand)(declared)) {
         response.markdown("Describe the task and I'll keep it in one ongoing OpenCode plan session. " +

@@ -57,7 +57,7 @@ says `CANNOT USE these API proposals` — the inline entry left out, not a failu
 | `/dev <task>` | Editing agent — may write files |
 | `/plan <task>` | Read-only agent (the default): `plan`, or your `planAgent` |
 | `/parallel a \| b \| c` | Independent read-only lanes at once, in isolated sessions — `/parallel` alone composes them step by step |
-| `/worktree <task>` | Editing agent in a NEW git worktree + branch; your checkout is untouched <!-- claim:worktree-command --> |
+| `/worktree <task>` | Editing agent in its own git worktree + branch; follow-ups in the same chat continue it; your checkout is untouched <!-- claim:worktree-command --> |
 | `/session` | Session id, turns, tokens and cost |
 | `/sessions` | This folder's sessions: continue, fork, close or delete one |
 | `/stop` | Stop a run still going on the server (closing the chat does not) |
@@ -383,7 +383,13 @@ there the read-only `plan` itself limits `task`. <!-- claim:read-only-subagents 
 Creates `<parent>/<repo>.worktrees/<slug>` on branch `ai/<slug>` from `HEAD`
 and runs the editing agent there. It ends with the changed files and buttons:
 **Show full diff**, **Open in new window**, **Remove worktree** (asks first;
-deletes the branch). The chat's own session stays on your checkout.
+deletes the branch), **New worktree**. The chat's own session stays on your checkout.
+
+A follow-up in the same chat continues that worktree and its OpenCode session —
+Copilot keeps `/worktree` selected, and a worktree per message also meant
+OpenCode set up each new folder from scratch. A fresh worktree: **New worktree**
+(a new chat with `@opencode /worktree ` typed), any new chat, or `/new` first.
+A removed worktree is not continued.
 
 ### `scripts/start-parallel-agents.(sh|ps1) "task"`  <!-- claim:worktrees -->
 
@@ -455,7 +461,7 @@ still decide whether it may call the tool (the sample `look` agent denies MCP).
 | **OpenCode: New Session** — a new chat with `@opencode ` typed; the chat you leave keeps its session | `newSession` |
 | **OpenCode: Sessions** — sends `@opencode /sessions` | `sessions` |
 | **OpenCode: Compose Parallel Lanes** | `composeParallel` |
-| New Chat (hidden from the palette; New Session does it) | `newChat` |
+| New Chat (hidden from the palette; New Session does it, and the **New worktree** button with `/worktree` typed) | `newChat` |
 | **OpenCode: Diagnose** | `diagnose` |
 | **OpenCode: Quick Actions** | `quickActions` |
 | Ask in Chat (hidden from the palette since 0.0.190; kept for keybindings) | `retryLast` |
@@ -523,6 +529,13 @@ All under `opencodeCopilotBridge.`.
 
 The last five releases; the full history is `CHANGELOG.md` in the repository.
 
+### 0.0.226
+
+- **`/worktree` follow-ups continue the same worktree.** Copilot keeps
+  `/worktree` selected, so every message in that chat made a new worktree and
+  branch, and OpenCode set up each new folder from scratch. Now the next
+  message continues the worktree and its OpenCode session; **New worktree**
+  (or any new chat, or `/new`) starts a fresh one.
 ### 0.0.225
 
 - **A data folder OpenCode 2 created now fails at once.** After the first
@@ -565,12 +578,3 @@ The last five releases; the full history is `CHANGELOG.md` in the repository.
   sent only when that server lists the bridge's rules ([OpenCode 2](#opencode-2)).
   Measured end to end on real 2.0.29 and 2.0.32 (`scripts/probe-opencode2.js`:
   9 rows each); the suite replays frames recorded from both majors. Checks `TW`.
-
-### 0.0.221
-
-- Every request to an OpenCode server now goes through one module
-  (`src/oc-api.ts`): one route set per OpenCode major, chosen by the version
-  the server names. Only 1.x's set exists, and it sends the same URLs and
-  bodies as before; OpenCode 2's server, another API under `/api`, becomes a
-  second set instead of a version check at every call site. No behaviour
-  change. Checks `OA`.

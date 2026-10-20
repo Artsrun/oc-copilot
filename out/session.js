@@ -37,6 +37,7 @@ exports.OWN_PARTICIPANTS = exports.INLINE_PARTICIPANT_ID = exports.PARTICIPANT_I
 exports.getActiveSession = getActiveSession;
 exports.setActiveSession = setActiveSession;
 exports.threadSession = threadSession;
+exports.threadWorktree = threadWorktree;
 exports.resolveSessionState = resolveSessionState;
 exports.threadScopeActive = threadScopeActive;
 exports.refreshStatus = refreshStatus;
@@ -85,6 +86,31 @@ function threadSession(history, cwd) {
             lastModel: meta.model,
             context: typeof meta.context === "number" ? meta.context : undefined
         };
+    }
+    return undefined;
+}
+function threadWorktree(history, cwd) {
+    for (let i = history.length - 1; i >= 0; i--) {
+        const turn = history[i];
+        if (!turn || !exports.OWN_PARTICIPANTS.has(turn.participant ?? "") || !turn.result) {
+            continue;
+        }
+        const meta = turn.result.metadata ?? {};
+        if (meta.cwd && meta.cwd !== cwd) {
+            continue;
+        }
+        if (meta.kind === "new") {
+            return undefined;
+        }
+        if (meta.kind !== "worktree") {
+            continue;
+        }
+        const s = (key) => (typeof meta[key] === "string" && meta[key] ? meta[key] : undefined);
+        const [root, wtPath, branch, baseSha] = [s("worktreeRoot"), s("worktree"), s("branch"), s("worktreeBase")];
+        if (!root || !wtPath || !branch || !baseSha) {
+            return undefined;
+        }
+        return { root, path: wtPath, branch, baseRef: s("worktreeBaseRef") ?? "HEAD", baseSha, sessionId: s("worktreeSession") };
     }
     return undefined;
 }

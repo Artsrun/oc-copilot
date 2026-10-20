@@ -3,6 +3,23 @@
 Full release history, newest first; releases before the last one are condensed
 to their summary and headlines. The README ships the last five.
 
+### 0.0.226
+
+- **`/worktree` follow-ups continue the same worktree and session**
+  (`threadWorktree` in `session.ts`, `reopenWorktree` in `worktree.ts`). Copilot
+  keeps `/worktree` sticky, so every message in such a chat made a new
+  `<repo>.worktrees/<slug>` and branch, and OpenCode set up each new folder from
+  scratch (config, agents, instructions: 0.0.225 live). The turn's metadata now
+  names the worktree, its base and its session (never `sessionId` + `turns`,
+  which bind the chat's own session); the next `/worktree` turn continues it if
+  it is still this repo's worktree, at its branch's path, on its branch.
+  Otherwise, after `/new`, or in a new chat: a fresh one. A continued session
+  OpenCode no longer has is replaced once, in the same worktree.
+- **New worktree** button: a new chat with `@opencode /worktree ` typed
+  (`newChat` takes a bare `/word ` prefill; nothing is sent).
+- `/worktree` refuses a known data-folder clash before creating anything.
+- Checks `WT5`–`WT7`.
+
 ### 0.0.225
 
 - **A data folder OpenCode 2 created fails fast** (`noteDataFolderClash`,

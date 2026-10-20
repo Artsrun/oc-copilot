@@ -35,7 +35,7 @@ no bundler, no test runner: plain TypeScript → `out/`, plain Node for the suit
 | `src/oc-api.ts` | **Every server request**: `api(base)` is the route set of the major `base` named — 1.x, or 2.x's `/api` with `opencode2` (Basic auth, `location`, the async prompt awaited on its own run's events) — `safeSessionId`, `sessionPath`, `sessionRoot`. Callers speak 1.x's shapes. |
 | `src/v2-events.ts` | **OpenCode 2's event stream read as 1.x events** (`v2Translator`, stateful per stream; `shell`→`bash`, `subagent`→`task`), plus `v2.delivered` / `v2.compaction`, which only `oc-api` reads. Leaf. |
 | `src/net.ts` | Bounded HTTP, the managed `opencode serve`, shared SSE demux by session id, the not-OpenCode-1 refusal (`markNotOpenCode1`, `openCode1Refusal`), the data-folder refusal (`noteDataFolderClash`, `dataFolderRefusal`: a 1.x on a folder OpenCode 2 created), `plainError` (stderr without colour codes) and the CLI identity check (`ensureCliIdentity`: one `--version` per executable file). |
-| `src/session.ts` | Session state per chat thread (`threadSession`), handoff chain and the way back after one, completion toasts, status bar. |
+| `src/session.ts` | Session state per chat thread (`threadSession`), the chat's last worktree (`threadWorktree`), handoff chain and the way back after one, completion toasts, status bar. |
 | `src/proc.ts` | Spawning: shim resolution (`~/` paths too), `cmd.exe` quoting, `killTree`, `PWD = cwd`, `runCapture` (a short command's output), `executableStamp` (the files a name runs, as they are on disk). §2 rule 3. |
 | `src/models.ts` | Model catalog (server `GET /config/providers`, else `opencode models --verbose`), names, variant names, cache tiers, the picker, `writeModelPin`, short names, `modelResolver` (one forced refetch per turn), `effortFor` / `higherEffort`, `contextNote`. |
 | `src/agents.ts` | Which agent a read-only turn runs as: `planAgent`, only once OpenCode lists it. A server's list carries each agent's own `permission` rules. |
@@ -46,7 +46,7 @@ no bundler, no test runner: plain TypeScript → `out/`, plain Node for the suit
 | `src/core.ts` | **The foundation**: imports nothing local. `config()`, `logChannel`, text helpers, status bar, folder resolution. |
 | `src/extension.ts` | `activate()` (panel + guarded inline participant), the `__test` handle, `deactivate()`. |
 | `src/commands.ts`, `commands-registry.ts` | Palette commands, worktree buttons, config listener. |
-| `src/worktree.ts`, `chat-worktree.ts` | `/worktree`: git via `execFile`, one isolated dev run. |
+| `src/worktree.ts`, `chat-worktree.ts` | `/worktree`: git via `execFile`, an isolated dev run; a follow-up in the same chat continues its worktree and session (`reopenWorktree` checks what the metadata names). |
 | `src/format.ts`, `metrics.ts`, `prompt.ts` | Metrics → markdown; run types; timeouts and vague-prompt detection. |
 | `src/context-markers.ts` | Host-free context vocabulary shared by the producer and leak gate. |
 | `src/git-scan-server.ts` | Standalone newline-delimited JSON-RPC MCP server; one bounded, shell-free Git status call. |
@@ -322,7 +322,10 @@ history belongs in `CHANGELOG.md`, not in the source.
 - **Always pass `--agent`**: without it `opencode run` uses `default_agent`.
 - **Copilot keeps the last participant command sticky**: chips set `command`;
   the text is only the sentence (`LC`). `request.prompt` has a declared
-  `/command` stripped — replays put the kind back.
+  `/command` stripped — replays put the kind back. After one `/worktree`,
+  every message in that chat is `/worktree`, and a sticky one cannot be told
+  from a typed one: so a follow-up continues the chat's worktree, and a fresh
+  one is an explicit action (New worktree, a new chat, `/new`) (`WT5`).
 - **A file-path menu icon is a CSS `background-image`**: `currentColor` is black.
   Use a `$(codicon)` (`HA`).
 - **Session ids are untrusted**: URLs via `sessionPath`, argv via

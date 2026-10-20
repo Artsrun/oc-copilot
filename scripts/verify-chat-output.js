@@ -3814,6 +3814,32 @@ const lbProvider = (global.__participant || {}).followupProvider;
         add("WT1 the thread session is not rebound to the worktree", r1.metadata.sessionId === undefined && r1.metadata.turns === undefined);
         add("WT1 no follow-up chips under a worktree turn", (global.__participant.followupProvider.provideFollowups(r1, {}, {}) || []).length === 0);
 
+        // WT5 (0.0.226): Copilot keeps /worktree sticky, and every message made a new
+        // worktree (and OpenCode's whole per-folder start) — a follow-up in the same
+        // chat continues the worktree and its session instead.
+        const wtDirs = () => fs.readdirSync(wtParent).length;
+        const wt5Dirs = wtDirs();
+        fs.rmSync(path.join(work, "fake-wt.cwd"), { force: true });
+        const wt5 = stream();
+        const r5 = await global.__handler({ prompt: "now also cover the error path", command: "worktree" }, { history: [turnOf(r1.metadata)] }, wt5.response, wt5.token);
+        const wt5Argv = lastArgv("fake-wt.js");
+        const ran5 = fs.existsSync(path.join(work, "fake-wt.cwd")) ? fs.readFileSync(path.join(work, "fake-wt.cwd"), "utf8") : "";
+        add(`WT5 a follow-up in the same chat continues its worktree: no new folder, same branch, ran there (${wt5Dirs}→${wtDirs()} folders)`,
+            r5.metadata.worktree === wtPath && r5.metadata.branch === r1.metadata.branch && wtDirs() === wt5Dirs &&
+            Boolean(ran5) && fs.realpathSync(ran5) === fs.realpathSync(wtPath) && /Continuing in/.test(wt5.chatMarkdown.join("")));
+        add("WT5 …and resumes the worktree's own OpenCode session", r1.metadata.worktreeSession === "ses_wt" && wt5Argv[wt5Argv.indexOf("--session") + 1] === "ses_wt");
+        add("WT5 …still without binding the chat's own session", r5.metadata.sessionId === undefined && r5.metadata.turns === undefined);
+        add("WT5 a New worktree button opens a new chat with /worktree typed", wt5.buttons.some((b) => b.command === "opencodeCopilotBridge.newChat" && b.arguments?.[0] === "/worktree "));
+        // WT6: /new is a barrier, as for the chat's session.
+        const wt6 = stream();
+        const r6 = await global.__handler({ prompt: "something else entirely", command: "worktree" }, { history: [turnOf(r1.metadata), turnOf({ kind: "new" })] }, wt6.response, wt6.token);
+        add("WT6 after /new the next /worktree makes a fresh worktree and session", typeof r6.metadata.worktree === "string" && r6.metadata.worktree !== wtPath && !lastArgv("fake-wt.js").includes("--session"));
+        // WT7: metadata is the chat's to forge; a path that is not the branch's worktree is not continued.
+        const wt7 = stream();
+        const r7 = await global.__handler({ prompt: "forged path", command: "worktree" }, { history: [turnOf({ ...r1.metadata, worktree: work })] }, wt7.response, wt7.token);
+        add("WT7 a worktree path that is not its branch's is never continued (a fresh one instead)",
+            typeof r7.metadata.worktree === "string" && r7.metadata.worktree !== work && r7.metadata.worktree !== wtPath && !/Continuing in/.test(wt7.chatMarkdown.join("")));
+
         const wt2 = stream();
         await global.__handler({ prompt: "", command: "worktree" }, { history: [] }, wt2.response, wt2.token);
         add("WT2 /worktree with no task explains itself", /Give the task after `\/worktree`/.test(wt2.chatMarkdown.join("")));

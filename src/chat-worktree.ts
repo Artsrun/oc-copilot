@@ -1,22 +1,39 @@
 import * as vscode from "vscode";
 import { config, logChannel, stamp, untilStop } from "./core";
 import { mark } from "./followups";
-import { ensureCliIdentity, ensureServer, isNotOpenCode1, openCode1Refusal } from "./net";
-import { abortServerRun, createServerSession, runOpenCode } from "./runs";
+import { dataFolderRefusal, ensureCliIdentity, ensureServer, isDataFolderClash, isNotOpenCode1, openCode1Refusal } from "./net";
+import { abortServerRun, createServerSession, isMissingSessionRun, runOpenCode } from "./runs";
 import { planTimeout } from "./prompt";
 import { metricsLogLine, scrubLeakedContext } from "./format";
 import { startHeartbeat } from "./chat-boot";
-import { createWorktree, worktreeDiff } from "./worktree";
+import { Worktree, createWorktree, reopenWorktree, worktreeDiff } from "./worktree";
 
-// `/worktree <task>`: one isolated dev run (claim:worktree-command, see
+// What the next `/worktree` turn of this chat needs to continue: `threadWorktree`
+// reads it back. Never `sessionId` + `turns`: those bind the chat's own session.
+const worktreeMeta = (cwd: string, wt: Worktree, sessionId: string | undefined): Record<string, unknown> => ({
+    kind: "worktree",
+    cwd,
+    worktree: wt.path,
+    branch: wt.branch,
+    worktreeRoot: wt.root,
+    worktreeBase: wt.baseSha,
+    worktreeBaseRef: wt.baseRef,
+    ...(sessionId ? { worktreeSession: sessionId } : {})
+});
+
+// `/worktree <task>`: an isolated dev run (claim:worktree-command, see
 // ./worktree). Deliberately NOT bound to the chat thread's session: the thread
 // keeps working cooperatively in your checkout; the worktree is a side branch
-// you open, review, keep or remove with the buttons below.
+// you open, review, keep or remove with the buttons below. A follow-up in the
+// same chat continues that worktree and its OpenCode session (`previous`):
+// Copilot keeps `/worktree` sticky, and a worktree per message cost OpenCode's
+// whole per-folder start each time (0.0.225 live). A new chat starts afresh.
 export async function handleWorktree(p: {
     task: string;
     cwd: string;
     response: vscode.ChatResponseStream;
     token: vscode.CancellationToken;
+    previous?: Worktree & { sessionId?: string };
 }): Promise<vscode.ChatResult> {
     const { task, cwd, response, token } = p;
     if (!task) {
@@ -28,8 +45,8 @@ export async function handleWorktree(p: {
     }
     const settings = config();
     const executable = settings.get<string>("executable", "opencode");
-    // Not OpenCode 1: no worktree, no run.
-    const refused = openCode1Refusal(executable);
+    // Not OpenCode 1, or a data folder it cannot open: no worktree, no run.
+    const refused = openCode1Refusal(executable) ?? dataFolderRefusal(executable);
     if (refused) {
         response.markdown(`> ${mark("fail")} ${refused.message}`);
         return { metadata: { kind: "worktree", error: refused.message } };
@@ -47,46 +64,59 @@ export async function handleWorktree(p: {
         response.markdown(`> ${mark("fail")} ${message}`);
         return { metadata: { kind: "worktree", error: message } };
     }
-    const created = await createWorktree(cwd, task);
-    if (!created.ok) {
-        response.markdown(`Could not create a worktree: ${created.reason}\n\nPlain \`/dev\` works in your current checkout.`);
-        logChannel.appendLine(`[${stamp()}] worktree failed: ${created.reason}`);
-        return { metadata: { kind: "worktree", error: created.reason } };
+    const previous = p.previous && (await reopenWorktree(cwd, p.previous)) ? p.previous : undefined;
+    let wt: Worktree;
+    if (previous) {
+        wt = { root: previous.root, path: previous.path, branch: previous.branch, baseRef: previous.baseRef, baseSha: previous.baseSha };
+        logChannel.appendLine(`[${stamp()}] worktree ${wt.path} on ${wt.branch} continued`);
+        response.markdown(
+            `> ${mark("worktree")} Continuing in \`${wt.path}\` on branch \`${wt.branch}\`. ` +
+            "Your checkout is not touched; a new chat starts a fresh worktree.\n\n"
+        );
+    } else {
+        const created = await createWorktree(cwd, task);
+        if (!created.ok) {
+            response.markdown(`Could not create a worktree: ${created.reason}\n\nPlain \`/dev\` works in your current checkout.`);
+            logChannel.appendLine(`[${stamp()}] worktree failed: ${created.reason}`);
+            return { metadata: { kind: "worktree", cwd, error: created.reason } };
+        }
+        wt = created.worktree;
+        logChannel.appendLine(`[${stamp()}] worktree ${wt.path} on ${wt.branch} from ${wt.baseRef}@${wt.baseSha.slice(0, 7)}`);
+        response.markdown(
+            `> ${mark("worktree")} Isolated run in \`${wt.path}\` on branch \`${wt.branch}\` ` +
+            `(from \`${wt.baseRef}\` @ \`${wt.baseSha.slice(0, 7)}\`). Your checkout is not touched.\n\n`
+        );
     }
-    const wt = created.worktree;
-    logChannel.appendLine(`[${stamp()}] worktree ${wt.path} on ${wt.branch} from ${wt.baseRef}@${wt.baseSha.slice(0, 7)}`);
-    response.markdown(
-        `> ${mark("worktree")} Isolated run in \`${wt.path}\` on branch \`${wt.branch}\` ` +
-        `(from \`${wt.baseRef}\` @ \`${wt.baseSha.slice(0, 7)}\`). Your checkout is not touched.\n\n`
-    );
 
     const tPlan = planTimeout();
     const devAgent = settings.get<string>("devAgent", "build").trim() || "build";
     const transport = settings.get<string>("transport", "auto");
     let attachUrl: string | undefined;
-    let sessionId: string | undefined;
+    // A continued worktree resumes its own session (argv and URLs check the id).
+    const resumed = previous?.sessionId;
+    let sessionId: string | undefined = resumed;
     const args = [{ root: wt.root, path: wt.path, branch: wt.branch, baseSha: wt.baseSha }];
     if (transport === "auto" && settings.get<boolean>("attachDevToServer", true)) {
         try {
             attachUrl = await ensureServer(cwd, (text) => response.progress(text));
             // The server is multi-directory: this session is rooted in the worktree.
-            sessionId = await createServerSession(attachUrl, wt.path, task);
+            sessionId = sessionId ?? await createServerSession(attachUrl, wt.path, task);
         } catch (error) {
-            if (isNotOpenCode1(error)) {
-                // Found out just now: nothing runs, and the empty worktree can go.
+            if (isNotOpenCode1(error) || isDataFolderClash(error)) {
+                // Found out just now: nothing runs; a new worktree is empty and can go.
                 response.markdown(`> ${mark("fail")} ${(error as Error).message}`);
                 response.button({ command: "opencodeCopilotBridge.worktreeRemove", title: "Remove worktree", arguments: args });
-                return { metadata: { kind: "worktree", worktree: wt.path, branch: wt.branch, error: (error as Error).message } };
+                return { metadata: { ...worktreeMeta(cwd, wt, resumed), error: (error as Error).message } };
             }
             attachUrl = undefined;
-            sessionId = undefined;
+            sessionId = resumed;
             logChannel.appendLine(`[${stamp()}] worktree run goes cold: ${error}`);
         }
     }
 
     const beat = startHeartbeat(response, `Working in ${wt.branch}`, tPlan.timeoutMs, wt.path);
     let answer = "";
-    const metrics = await runOpenCode({
+    const run = (session: string | undefined) => runOpenCode({
         executable,
         task,
         cwd: wt.path,
@@ -99,7 +129,7 @@ export async function handleWorktree(p: {
         timeoutMs: tPlan.timeoutMs,
         idleTimeoutMs: tPlan.idleTimeoutMs,
         toolQuietMs: Math.max(0, settings.get<number>("toolQuietMs", 600000)),
-        sessionId,
+        sessionId: session,
         attachUrl,
         token,
         onStep: (s) => beat.step(s),
@@ -111,6 +141,14 @@ export async function handleWorktree(p: {
             }
         }
     });
+    let metrics = await run(sessionId);
+    // The continued session is gone (deleted in /sessions, another data folder):
+    // the worktree stays, the run starts a fresh session there, once.
+    if (resumed && sessionId === resumed && !token.isCancellationRequested && isMissingSessionRun(metrics)) {
+        logChannel.appendLine(`[${stamp()}] worktree session ${resumed} is gone; a fresh one in ${wt.path}`);
+        sessionId = attachUrl ? await createServerSession(attachUrl, wt.path, task).catch(() => undefined) : undefined;
+        metrics = await run(sessionId);
+    }
     // Stop and the cap end the server run too: killing the client does not.
     const runSession = metrics.sessionId ?? sessionId;
     if (attachUrl && runSession && (token.isCancellationRequested || metrics.timedOut)) {
@@ -125,7 +163,7 @@ export async function handleWorktree(p: {
     if (token.isCancellationRequested) {
         // Nothing reaches the chat after Stop; the worktree stays for `git worktree list`.
         logChannel.appendLine(`[${stamp()}] ${mark("stop")} worktree run stopped by the user; ${wt.path} is kept`);
-        return { metadata: { kind: "worktree", worktree: wt.path, branch: wt.branch, cancelled: true } };
+        return { metadata: { ...worktreeMeta(cwd, wt, runSession), cancelled: true } };
     }
 
     if (!answer.trim()) {
@@ -142,11 +180,12 @@ export async function handleWorktree(p: {
     }
     response.button({ command: "opencodeCopilotBridge.worktreeOpen", title: "Open in new window", arguments: args });
     response.button({ command: "opencodeCopilotBridge.worktreeRemove", title: "Remove worktree", arguments: args });
+    // Follow-ups here continue this worktree; a fresh one is a new chat, opened
+    // with `@opencode /worktree ` typed and nothing sent.
+    response.button({ command: "opencodeCopilotBridge.newChat", title: "New worktree", arguments: ["/worktree "] });
     return {
         metadata: {
-            kind: "worktree",
-            worktree: wt.path,
-            branch: wt.branch,
+            ...worktreeMeta(cwd, wt, runSession),
             timedOut: Boolean(metrics.timedOut),
             error: metrics.error
         }

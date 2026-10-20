@@ -85,13 +85,14 @@ function registerCommands(context) {
             await vscode.env.clipboard?.writeText?.(query);
             void vscode.window.showInformationMessage("Copied the prompt to the clipboard — paste it into Copilot Chat.");
         }
-    }), vscode.commands.registerCommand("opencodeCopilotBridge.newChat", async () => {
+    }), vscode.commands.registerCommand("opencodeCopilotBridge.newChat", async (prefill) => {
+        const word = typeof prefill === "string" && /^\/[a-z]+ $/.test(prefill) ? prefill : "";
         for (const id of ["workbench.action.chat.newChat", "workbench.action.chat.new"]) {
             try {
                 await vscode.commands.executeCommand(id);
                 try {
                     await vscode.commands.executeCommand("workbench.action.chat.open", {
-                        query: "@opencode ",
+                        query: `@opencode ${word}`,
                         isPartialQuery: true
                     });
                 }

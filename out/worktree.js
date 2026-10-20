@@ -33,8 +33,9 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.removeWorktree = exports.worktreeDiff = exports.createWorktree = exports.slugify = exports.git = void 0;
+exports.removeWorktree = exports.worktreeDiff = exports.reopenWorktree = exports.createWorktree = exports.slugify = exports.git = void 0;
 const node_child_process_1 = require("node:child_process");
+const fs = __importStar(require("node:fs"));
 const path = __importStar(require("node:path"));
 const git = (cwd, args, timeoutMs = 30000, maxBufferMB = 16) => new Promise((resolve) => {
     (0, node_child_process_1.execFile)("git", args, { cwd, timeout: timeoutMs, windowsHide: true, maxBuffer: maxBufferMB * 1024 * 1024 }, (error, stdout, stderr) => {
@@ -79,6 +80,23 @@ const createWorktree = async (cwd, task) => {
     };
 };
 exports.createWorktree = createWorktree;
+const reopenWorktree = async (cwd, wt) => {
+    if (!/^ai\/[a-z0-9-]+$/.test(wt.branch)) {
+        return false;
+    }
+    const top = await (0, exports.git)(cwd, ["rev-parse", "--show-toplevel"]);
+    const root = top.code === 0 ? path.normalize(top.stdout.trim()) : "";
+    if (!root || root !== path.normalize(wt.root)) {
+        return false;
+    }
+    const expected = path.join(path.dirname(root), `${path.basename(root)}.worktrees`, wt.branch.slice(3));
+    if (path.normalize(wt.path) !== expected || !fs.existsSync(expected)) {
+        return false;
+    }
+    const head = await (0, exports.git)(expected, ["rev-parse", "--abbrev-ref", "HEAD"]);
+    return head.code === 0 && head.stdout.trim() === wt.branch;
+};
+exports.reopenWorktree = reopenWorktree;
 const worktreeDiff = async (wt, stat = true, maxBufferMB = 16) => {
     await (0, exports.git)(wt.path, ["add", "-N", "."]);
     const out = await (0, exports.git)(wt.path, ["diff", ...(stat ? ["--stat"] : []), wt.baseSha], 30000, maxBufferMB);

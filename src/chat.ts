@@ -20,7 +20,8 @@ import {
     handoffChain,
     resolveSessionState,
     takeHandoffReturn,
-    threadScopeActive
+    threadScopeActive,
+    threadWorktree
 } from "./session";
 import { effortFor, modelRefProblem, modelResolver } from "./models";
 import { laneItems } from "./natural";
@@ -116,7 +117,8 @@ export async function handleChat(
     // `/worktree <task>`: the opt-in isolated run; everything else shares the checkout.
     const typedWorktree = /^\/worktree\b\s*/i.test(prompt);
     if (declared === "worktree" || typedWorktree) {
-        return handleWorktree({ task: prompt.replace(/^\/worktree\b\s*/i, "").trim(), cwd, response, token });
+        const previous = Array.isArray(context?.history) ? threadWorktree(context.history, cwd) : undefined;
+        return handleWorktree({ task: prompt.replace(/^\/worktree\b\s*/i, "").trim(), cwd, response, token, previous });
     }
 
     if (!prompt && !isKindCommand(declared)) {

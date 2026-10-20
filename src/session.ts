@@ -103,6 +103,50 @@ export function threadSession(history: readonly unknown[], cwd: string): Session
     return undefined;
 }
 
+/** A worktree an earlier `/worktree` turn of this chat ran in, as its metadata names it. */
+export interface ThreadWorktree {
+    root: string;
+    path: string;
+    branch: string;
+    baseRef: string;
+    baseSha: string;
+    sessionId?: string;
+}
+
+/**
+ * The worktree this chat's last `/worktree` turn ran in: a follow-up continues
+ * it. Copilot keeps `/worktree` sticky, so every message made a new worktree, and
+ * OpenCode's whole per-folder start (config, agents, instructions) ran again
+ * (0.0.225 live). `/new` is a barrier; a turn from another folder says nothing;
+ * a failed or older (pre-0.0.226) one names no base, so a fresh one follows.
+ * Untrusted: the caller checks the worktree is still this repo's, on its branch.
+ */
+export function threadWorktree(history: readonly unknown[], cwd: string): ThreadWorktree | undefined {
+    for (let i = history.length - 1; i >= 0; i--) {
+        const turn = history[i] as { participant?: string; result?: { metadata?: Record<string, unknown> } } | undefined;
+        if (!turn || !OWN_PARTICIPANTS.has(turn.participant ?? "") || !turn.result) {
+            continue;
+        }
+        const meta = turn.result.metadata ?? {};
+        if (meta.cwd && meta.cwd !== cwd) {
+            continue;
+        }
+        if (meta.kind === "new") {
+            return undefined;
+        }
+        if (meta.kind !== "worktree") {
+            continue;
+        }
+        const s = (key: string): string | undefined => (typeof meta[key] === "string" && meta[key] ? (meta[key] as string) : undefined);
+        const [root, wtPath, branch, baseSha] = [s("worktreeRoot"), s("worktree"), s("branch"), s("worktreeBase")];
+        if (!root || !wtPath || !branch || !baseSha) {
+            return undefined;
+        }
+        return { root, path: wtPath, branch, baseRef: s("worktreeBaseRef") ?? "HEAD", baseSha, sessionId: s("worktreeSession") };
+    }
+    return undefined;
+}
+
 /**
  * Thread scope is the default; two cases still read the folder-keyed pointer —
  * an explicit `sessionScope: "workspace"`, and a host that supplied no history
