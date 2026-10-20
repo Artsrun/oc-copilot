@@ -251,8 +251,13 @@ says 2.x is driven through its HTTP API instead (measured on 2.0.29 and 2.0.32):
   the versions the bridge was tested with; read-only turns stay refused unless
   the server lists the bridge's rules.
 
-Both majors keep sessions in the same data folder, so turning `opencode2` on
-or off keeps your history.
+Both majors use the same data folder (`~/.local/share/opencode`). A folder
+that 1.x started keeps its history when `opencode2` is turned on or off. One
+that OpenCode 2 created cannot be opened by 1.x at all (1.19.3: "Database is
+not empty and has no session table", measured): give the 1.x its own folder by
+starting VS Code with `XDG_DATA_HOME` set (PowerShell:
+`$env:XDG_DATA_HOME = "$HOME\.opencode1\data"; code .`, with every VS Code
+window closed first).
 
 ## Read-only turns: enforced, `planAgent` and `look`
 
@@ -518,6 +523,18 @@ All under `opencodeCopilotBridge.`.
 
 The last five releases; the full history is `CHANGELOG.md` in the repository.
 
+### 0.0.224
+
+- **Copilot's own customizations index no longer shows as "Not sent to
+  OpenCode: a text attachment".** VS Code adds `vscode.customizations.index`
+  to every turn; it is the host's, like instruction files, and stays in the log.
+- **A failed run says why, readably.** OpenCode colours its errors even when
+  piped, and chat showed the raw codes (`[91m[1mError: [0m`); the generic
+  "Unexpected error" line now carries the cause on the line after it.
+- **OpenCode 1 on a data folder OpenCode 2 created is named**: 1.19.3 refuses
+  an `opencode.db` that 2.x created (no 1.x `session` table, measured), and
+  the turn now says so and how to give 1.x its own folder (`XDG_DATA_HOME`).
+
 ### 0.0.223
 
 - **OpenCode 2 ignores your `opencode.json` permission rules, and now you are
@@ -557,25 +574,3 @@ The last five releases; the full history is `CHANGELOG.md` in the repository.
   for the scan and submodules are compared by commit only
   (`--ignore-submodules=dirty`). A filtered file whose stat changed can show
   as modified. Checks `GS`.
-
-### 0.0.219
-
-- **Read-only turns are checked on the effective rules, and refused if a config
-  file reopened them.** 0.0.217 closed `edit`/`bash`, but any other key in
-  `agent.plan.permission` — an MCP tool, `task` to `general` — still kept its
-  allow after the bridge's `"*": "deny"`: on 1.18.35 and 1.19.0 an MCP tool and
-  `general` wrote on a plan turn, and the bridge said "read-only by permission".
-  Now nothing beyond the read-only reach may be allowed; otherwise nothing is
-  sent and the turn names the rule. Cold runs check `opencode agent list`
-  (cached until a config file changes); servers check `GET /agent`.
-- An unsaved `.env` (or `.env.*`) attached to a read-only turn is no longer
-  inlined: plan's read refuses it, so the excerpt would have handed it over.
-  `/dev` still sends it. An outside file whose excerpt went in is no longer
-  called unreadable.
-- The answer filter holds a whole echoed excerpt + problems block (it let
-  blocks over 64 KB through since 0.0.218).
-- A custom `planAgent` that passes gets no "read-only by permission" note (it
-  describes the bridge's overrides); one whose rules allow more is told which.
-- `scripts/update.js`: install the newest delivered VSIX into `code` and
-  `code-insiders` when it is newer, only if its sha256 matches
-  `docs/released.txt` (`--from <folder>`, `--check`).

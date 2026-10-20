@@ -53,8 +53,10 @@ export function isInstructionFile(uri: vscode.Uri): boolean {
 
 // What the host adds by itself: instruction and prompt files, Copilot's
 // "<instructions>…" STRING blob (folding it in leaked a raw <workspace-context>
-// into the reply), and the implicit current-file / selection chip.
-const AUTOMATIC_ID = /instruction|prompt|copilot\./i;
+// into the reply), Copilot's own customizations index (`vscode.customizations.index`,
+// a text reference on every turn: chat said "Not sent: a text attachment" the user
+// never attached, 0.0.223 live), and the implicit current-file / selection chip.
+const AUTOMATIC_ID = /instruction|prompt|copilot\.|customizations/i;
 const IMPLICIT_ID = /vscode\.implicit/i;
 
 // What a reference with no file is, from its value's shape: VS Code's

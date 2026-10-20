@@ -3,6 +3,20 @@
 Full release history, newest first; releases before the last one are condensed
 to their summary and headlines. The README ships the last five.
 
+### 0.0.224
+
+- **Copilot's customizations index is the host's** (`AUTOMATIC_ID` in
+  `context.ts`): `vscode.customizations.index` rides on every turn and chat said
+  "Not sent to OpenCode: a text attachment" for it (live, 0.0.223). Logged only.
+- **CLI errors readable** (`exitProblem`, `run-cli.ts`): ANSI colour codes
+  stripped (1.19.3 colours stderr on a pipe; chat showed `[91m[1mError: [0m`),
+  and a bare `Error: Unexpected error` carries the next line, the cause.
+- **1.x on a data folder 2.x created**: 1.19.3 exits with "Database is not
+  empty and has no session table" (REFS); the turn says OpenCode 2 created the
+  folder and names `XDG_DATA_HOME`. README's *OpenCode 2* no longer says the
+  folder is always shared both ways.
+- Checks `SE`, `JN`.
+
 ### 0.0.223
 
 - **1.x permission rules on OpenCode 2 are named once** (`v1PermissionRules`,

@@ -5,6 +5,31 @@ actually measured, so nobody re-derives it.
 
 ---
 
+## 0.0.224: OpenCode 1 cannot open a data folder OpenCode 2 created (2026-10-20)
+
+Windows 11, a live VS Code window with 0.0.223. `~/.local/share/opencode/opencode.db`
+had been created by `@opencode/cli` 2.0.18 (no 1.x ever ran there). Its tables
+(read from a copy with `node:sqlite`): `session_v2` (10 rows), `session_message`,
+`session_inbox`, `migration` (48 rows), `project`, `workspace`, … and **no
+`session` table**.
+
+| `opencode-ai@1.19.3` | Result |
+| --- | --- |
+| `serve`, `agent list`, `run`, on that folder | exit 1, stderr `Error: Unexpected error` then `Database is not empty and has no session table` |
+| `agent list` with `XDG_DATA_HOME=<empty temp dir>` | exit 0, agents listed, a fresh `opencode.db` |
+
+The other order works (0.0.222 entry below: 2.x adds its tables to a 1.x
+folder). The stderr is ANSI-coloured on a pipe (`\x1b[91m\x1b[1mError: \x1b[0m`),
+and 0.0.223 put those codes in chat. `/ping` stayed green: it runs `--version`
+and reads the model catalog, neither of which opens the database.
+
+Also seen in that window: Copilot adds a text reference
+`vscode.customizations.index` to every turn; 0.0.223 said "Not sent to
+OpenCode: a text attachment" for it. Bridge overhead on a prewarmed 1.x server:
+`pre-run: server 28ms`, first byte 416 ms; the rest of a 65 s turn was the model.
+
+---
+
 ## 0.0.223: whose permission rules OpenCode 2 reads (2026-10-19)
 
 Linux, `opencode-ai@1.19.0` and `@opencode/cli@2.0.29`, each in a temp git repo

@@ -62,7 +62,7 @@ const INSTRUCTION_FILES = /(^|[\\/])(AGENTS\.md|CLAUDE\.md|copilot-instructions\
 function isInstructionFile(uri) {
     return INSTRUCTION_FILES.test(uri.fsPath);
 }
-const AUTOMATIC_ID = /instruction|prompt|copilot\./i;
+const AUTOMATIC_ID = /instruction|prompt|copilot\.|customizations/i;
 const IMPLICIT_ID = /vscode\.implicit/i;
 function droppedKind(value) {
     const v = value;

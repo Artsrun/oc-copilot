@@ -22,15 +22,25 @@ const STDERR_CAP = 256 * 1024;
 // the bridge's flags as `Unrecognized flag: --attach in command opencode run`
 // (2.0.27, REFS).
 function exitProblem(executable: string, stderr: string, code: number): string {
-    const flag = stderr.match(/Unrecognized flag: (--[\w-]+) in command opencode\b/);
+    // OpenCode colours stderr even on a pipe: chat showed `[91m[1mError: [0m…` (1.19.3).
+    const clean = stderr.replace(/\x1b\[[0-9;]*m/g, "");
+    const flag = clean.match(/Unrecognized flag: (--[\w-]+) in command opencode\b/);
     if (flag) {
         return markNotOpenCode1(executable, `it rejects \`${flag[1]}\``).message;
     }
-    const line = stderr
-        .split(/\r?\n/)
-        .map((l) => l.trim())
-        .find((l) => l && !/^errors?:?$/i.test(l) && /error|unrecognized|not recognized|unknown|not found|denied|failed|cannot|invalid/i.test(l));
-    return line ? truncate(line, 200) : `opencode exited with code ${code}`;
+    // 1.x on a data folder OpenCode 2 created: its opencode.db has only 2.x's tables (REFS).
+    if (/Database is not empty and has no session table/i.test(clean)) {
+        return "OpenCode 1 cannot open its data folder: its opencode.db was created by OpenCode 2, without 1.x's session table. " +
+            "Give 1.x its own folder (start VS Code with XDG_DATA_HOME set, e.g. ~/.opencode1/data), or turn on opencode2.";
+    }
+    const lines = clean.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    const at = lines.findIndex((l) => !/^errors?:?$/i.test(l) && /error|unrecognized|not recognized|unknown|not found|denied|failed|cannot|invalid/i.test(l));
+    if (at < 0) {
+        return `opencode exited with code ${code}`;
+    }
+    // "Error: Unexpected error" names nothing: the cause is the line after it.
+    const line = /^error:\s*unexpected error$/i.test(lines[at]) && lines[at + 1] ? `${lines[at]}: ${lines[at + 1]}` : lines[at];
+    return truncate(line, 200);
 }
 
 // An attached run gets this turn's permission rules first (read-only turns:

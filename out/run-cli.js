@@ -13,15 +13,22 @@ const run_steps_1 = require("./run-steps");
 const server_session_1 = require("./server-session");
 const STDERR_CAP = 256 * 1024;
 function exitProblem(executable, stderr, code) {
-    const flag = stderr.match(/Unrecognized flag: (--[\w-]+) in command opencode\b/);
+    const clean = stderr.replace(/\x1b\[[0-9;]*m/g, "");
+    const flag = clean.match(/Unrecognized flag: (--[\w-]+) in command opencode\b/);
     if (flag) {
         return (0, net_1.markNotOpenCode1)(executable, `it rejects \`${flag[1]}\``).message;
     }
-    const line = stderr
-        .split(/\r?\n/)
-        .map((l) => l.trim())
-        .find((l) => l && !/^errors?:?$/i.test(l) && /error|unrecognized|not recognized|unknown|not found|denied|failed|cannot|invalid/i.test(l));
-    return line ? (0, core_1.truncate)(line, 200) : `opencode exited with code ${code}`;
+    if (/Database is not empty and has no session table/i.test(clean)) {
+        return "OpenCode 1 cannot open its data folder: its opencode.db was created by OpenCode 2, without 1.x's session table. " +
+            "Give 1.x its own folder (start VS Code with XDG_DATA_HOME set, e.g. ~/.opencode1/data), or turn on opencode2.";
+    }
+    const lines = clean.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    const at = lines.findIndex((l) => !/^errors?:?$/i.test(l) && /error|unrecognized|not recognized|unknown|not found|denied|failed|cannot|invalid/i.test(l));
+    if (at < 0) {
+        return `opencode exited with code ${code}`;
+    }
+    const line = /^error:\s*unexpected error$/i.test(lines[at]) && lines[at + 1] ? `${lines[at]}: ${lines[at + 1]}` : lines[at];
+    return (0, core_1.truncate)(line, 200);
 }
 async function runOpenCode(options) {
     if (options.token?.isCancellationRequested) {

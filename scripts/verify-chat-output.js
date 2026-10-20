@@ -886,6 +886,10 @@ function collectConfigProperties(configuration) {
             /Not sent to OpenCode: an image, Problems, `untitled:Untitled-1` \(never saved\)\. The bridge passes files on disk, by path\./.test(jnChat) && !/text attachment|instructions/.test(jnChat)
         );
         add("JN …and that VS Code's current-file chip is not sent", /current-file chip is not sent: attach the file with `#file`/.test(jnChat));
+        // 0.0.224: Copilot adds its customizations index to every turn (live, 2026-10-20).
+        const jnc = stream();
+        await global.__handler({ prompt: "explain the cart for jn customizations", references: [{ id: "vscode.customizations.index", value: "<customizations>…</customizations>" }] }, {}, jnc.response, jnc.token);
+        add("JN Copilot's customizations index is the host's, not a text attachment the user sent", !/Not sent to OpenCode/.test(jnc.chatMarkdown.join("")));
         add(
             `JN a file outside the folder goes by path, and a read-only turn says it cannot open it (/dev can)${jnSent.includes(jnOutside) ? "" : " [path not sent]"}`,
             jnSent.includes(jnOutside) && jnChat.includes("`" + jnOutside + "` is outside this folder: a read-only turn cannot open it (`/dev` can).")
@@ -1900,6 +1904,20 @@ function collectConfigProperties(configuration) {
     const se0 = stream();
     await global.__handler({ prompt: "a run that exits 3 and says nothing" }, {}, se0.response, se0.token);
     add("SE …and a bare non-zero exit says its code", /OpenCode reported an error: `opencode exited with code 3`/.test(plain(se0.chatMarkdown.join(""))));
+    // 0.0.224: 1.19.3 colours stderr on a pipe and leads with a generic line (live, 2026-10-20).
+    settings.executable = writeFake("fake-stderr-ansi.js", [], "process.stderr.write('\\x1b[91m\\x1b[1mError: \\x1b[0mUnexpected error\\n\\nPlugin acme failed to load\\n'); process.exit(1);\n");
+    memento.clear();
+    const se1 = stream();
+    await global.__handler({ prompt: "a run that fails in colour" }, {}, se1.response, se1.token);
+    const se1Chat = se1.chatMarkdown.join("");
+    add("SE stderr colour codes never reach chat, and a generic first line carries the cause after it",
+        /OpenCode reported an error: `Error: Unexpected error: Plugin acme failed to load`/.test(plain(se1Chat)) && !/\x1b|\[91m|\[0m/.test(se1Chat));
+    settings.executable = writeFake("fake-stderr-db.js", [], "process.stderr.write('\\x1b[91m\\x1b[1mError: \\x1b[0mUnexpected error\\n\\nDatabase is not empty and has no session table\\n'); process.exit(1);\n");
+    memento.clear();
+    const se2 = stream();
+    await global.__handler({ prompt: "a run on a data folder OpenCode 2 made" }, {}, se2.response, se2.token);
+    add("SE a 1.x on OpenCode 2's data folder says so and names XDG_DATA_HOME",
+        /OpenCode 1 cannot open its data folder: its opencode\.db was created by OpenCode 2.*XDG_DATA_HOME/.test(plain(se2.chatMarkdown.join(""))));
     settings.executable = happy;
 
     // LN (v212): lanes have no cap, but Merge and Retry keep the first 8
