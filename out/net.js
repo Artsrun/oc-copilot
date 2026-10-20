@@ -210,7 +210,7 @@ function versionNotice(base) {
     if (!version || !v || versionsNoted.has(version)) {
         return undefined;
     }
-    const range = v[0] === 2 ? exports.TESTED_OPENCODE2 : exports.TESTED_OPENCODE;
+    const range = v[0] >= 2 ? exports.TESTED_OPENCODE2 : exports.TESTED_OPENCODE;
     const lo = semver(range.min);
     const hi = semver(range.max);
     if (!below(v, lo) && !below(hi, v)) {
