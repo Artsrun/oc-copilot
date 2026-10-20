@@ -296,15 +296,14 @@ export async function handleChat(
         response.markdown(`> ${mark("folder")} \`${folder.name}\`${why ? ` — ${why}` : ""}\n\n`);
     }
 
-    // A new chat gets a new session; say so when the folder holds another one.
+    // A new chat gets a new session: what a new chat means, so only the log says
+    // which one the folder held (in chat it was the first of three notes before
+    // any answer, 0.0.223 live). `/sessions` lists it.
     if (!continuing && threadScopeActive(context)) {
         const folderSession = getActiveSession(cwd).id;
         if (folderSession && !newChatNoted.has(cwd)) {
             newChatNoted.add(cwd);
-            response.markdown(
-                `> ${mark("thread")} New chat — starting a fresh OpenCode session. The previous session ` +
-                `\`${folderSession}\` is untouched and still open in its own chat.\n\n`
-            );
+            logChannel.appendLine(`[${stamp()}] new chat: a fresh OpenCode session; ${folderSession} is untouched in its own chat`);
         }
     }
 

@@ -523,6 +523,17 @@ All under `opencodeCopilotBridge.`.
 
 The last five releases; the full history is `CHANGELOG.md` in the repository.
 
+### 0.0.225
+
+- **A data folder OpenCode 2 created now fails at once.** After the first
+  failure, each message is refused before anything starts (it took 9 s of
+  retries per message), with Retry and Ping. `/ping` names the cause and lets
+  the next message check again.
+- `/ping` and Diagnose say why the server is not running, and a model list
+  served from the stale cache is a warning, not a tick.
+- Less noise: no colour codes in the debug log, no "New chat" note before the
+  answer (it is in the log), no `glob: {}` row while a tool call is still
+  being written.
 ### 0.0.224
 
 - **Copilot's own customizations index no longer shows as "Not sent to
@@ -563,14 +574,3 @@ The last five releases; the full history is `CHANGELOG.md` in the repository.
   bodies as before; OpenCode 2's server, another API under `/api`, becomes a
   second set instead of a version check at every call site. No behaviour
   change. Checks `OA`.
-
-### 0.0.220
-
-- **gitScan no longer runs commands from a repository's Git config.** `git status`
-  passes a stat-dirty file through its `filter.<name>.clean`/`process` driver
-  and runs a status of its own in each submodule; either executed a command the
-  repository's config named (git 2.43, measured: a fixture's filter created a
-  file through 0.0.219's server). Every configured filter driver is now blanked
-  for the scan and submodules are compared by commit only
-  (`--ignore-submodules=dirty`). A filtered file whose stat changed can show
-  as modified. Checks `GS`.

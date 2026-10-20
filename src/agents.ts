@@ -20,7 +20,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { config, logChannel, stamp } from "./core";
 import { enforcedConfigContent } from "./enforce";
-import { currentServerGeneration } from "./net";
+import { currentServerGeneration, plainError } from "./net";
 import { api } from "./oc-api";
 import { killTree, spawnOpenCode } from "./proc";
 
@@ -236,7 +236,7 @@ export async function listAgents(cwd: string, base?: string, want?: string): Pro
         try {
             agents = base ? await agentsFromServer(base, cwd) : await agentsFromCli(cwd);
         } catch (error) {
-            logChannel.appendLine(`[${stamp()}] could not list OpenCode's agents: ${error}`);
+            logChannel.appendLine(`[${stamp()}] could not list OpenCode's agents: ${plainError(String(error))}`);
         }
         listed.set(key, { at: Date.now(), agents });
         return agents;

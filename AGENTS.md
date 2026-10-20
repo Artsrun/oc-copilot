@@ -34,7 +34,7 @@ no bundler, no test runner: plain TypeScript → `out/`, plain Node for the suit
 | `src/enforce.ts` | **Read-only by permission**: the `OPENCODE_CONFIG_CONTENT` every spawn gets (`enforcedConfigContent`: `plan` and `readOnlySubagents` overridden, `readOnlyTools`, the `ENFORCED_MARKER` rule), the one-time notice. Leaf: imports only core. |
 | `src/oc-api.ts` | **Every server request**: `api(base)` is the route set of the major `base` named — 1.x, or 2.x's `/api` with `opencode2` (Basic auth, `location`, the async prompt awaited on its own run's events) — `safeSessionId`, `sessionPath`, `sessionRoot`. Callers speak 1.x's shapes. |
 | `src/v2-events.ts` | **OpenCode 2's event stream read as 1.x events** (`v2Translator`, stateful per stream; `shell`→`bash`, `subagent`→`task`), plus `v2.delivered` / `v2.compaction`, which only `oc-api` reads. Leaf. |
-| `src/net.ts` | Bounded HTTP, the managed `opencode serve`, shared SSE demux by session id, the not-OpenCode-1 refusal (`markNotOpenCode1`, `openCode1Refusal`) and the CLI identity check (`ensureCliIdentity`: one `--version` per executable file). |
+| `src/net.ts` | Bounded HTTP, the managed `opencode serve`, shared SSE demux by session id, the not-OpenCode-1 refusal (`markNotOpenCode1`, `openCode1Refusal`), the data-folder refusal (`noteDataFolderClash`, `dataFolderRefusal`: a 1.x on a folder OpenCode 2 created), `plainError` (stderr without colour codes) and the CLI identity check (`ensureCliIdentity`: one `--version` per executable file). |
 | `src/session.ts` | Session state per chat thread (`threadSession`), handoff chain and the way back after one, completion toasts, status bar. |
 | `src/proc.ts` | Spawning: shim resolution (`~/` paths too), `cmd.exe` quoting, `killTree`, `PWD = cwd`, `runCapture` (a short command's output), `executableStamp` (the files a name runs, as they are on disk). §2 rule 3. |
 | `src/models.ts` | Model catalog (server `GET /config/providers`, else `opencode models --verbose`), names, variant names, cache tiers, the picker, `writeModelPin`, short names, `modelResolver` (one forced refetch per turn), `effortFor` / `higherEffort`, `contextNote`. |
@@ -204,6 +204,11 @@ pick the next free one.
   the file `spawn` runs, and without its shebang `/bin/sh` reads it. Windows
   wraps every fake in a `.cmd` that calls `node`, so such a check is green there
   and red on Linux and macOS (0.0.213).
+- **`writeFake` answers `--version` with `1.19.0` itself** unless the fake's
+  code mentions `--version`; and the CLI identity check is cached per
+  executable file for the whole suite, across `ext.deactivate()`. A check about
+  what `--version` says needs its own fake file whose code answers it: 0.0.223's
+  3.x check reused a 2.0.29 identity and proved only the server half (0.0.225).
 - `ext.deactivate()` runs near the end; later groups must not start a server.
   Settings keys go in the base `settings` object, never only inside a group.
 - Every `__test` key is read as `ext.__test.<key>` (`MA`).
@@ -361,7 +366,10 @@ history belongs in `CHANGELOG.md`, not in the source.
   without a word but reads `.opencode/agents/*.md` frontmatter (2.0.29): named
   once per folder (`v1PermissionRules`). A later major runs on the 2.x adapter
   with the outside-the-tested-range notice. Both majors keep sessions in the
-  same data folder.
+  same data folder, one way only: 2.x adds its tables to a 1.x `opencode.db`,
+  but 1.19.3 refuses one 2.x created ("Database is not empty and has no session
+  table") on every spawn. Remembered per executable file, refused before any
+  spawn until `/ping` (`dataFolderRefusal`, `SE`).
 - **`opencode --version` costs ~0.7 s on 1.19 (the Bun binary starting)**:
   CLI first use awaits one shared check; later sends reuse it while the file
   behind the name is unchanged (`executableStamp`, file stats): a 2.x installer

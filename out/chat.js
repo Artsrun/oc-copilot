@@ -189,8 +189,7 @@ async function handleChat(request, context, rawResponse, token, turn = {}) {
         const folderSession = (0, session_1.getActiveSession)(cwd).id;
         if (folderSession && !newChatNoted.has(cwd)) {
             newChatNoted.add(cwd);
-            response.markdown(`> ${(0, followups_1.mark)("thread")} New chat — starting a fresh OpenCode session. The previous session ` +
-                `\`${folderSession}\` is untouched and still open in its own chat.\n\n`);
+            core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] new chat: a fresh OpenCode session; ${folderSession} is untouched in its own chat`);
         }
     }
     (0, core_1.setStatus)(`$(sync~spin) OpenCode · ${agentLabel}`, `Running the OpenCode ${agentLabel} agent${model ? ` (${model})` : ""}`);

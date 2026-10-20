@@ -1905,6 +1905,7 @@ function collectConfigProperties(configuration) {
     await global.__handler({ prompt: "a run that exits 3 and says nothing" }, {}, se0.response, se0.token);
     add("SE …and a bare non-zero exit says its code", /OpenCode reported an error: `opencode exited with code 3`/.test(plain(se0.chatMarkdown.join(""))));
     // 0.0.224: 1.19.3 colours stderr on a pipe and leads with a generic line (live, 2026-10-20).
+    const seAnsiLog = logLines.length;
     settings.executable = writeFake("fake-stderr-ansi.js", [], "process.stderr.write('\\x1b[91m\\x1b[1mError: \\x1b[0mUnexpected error\\n\\nPlugin acme failed to load\\n'); process.exit(1);\n");
     memento.clear();
     const se1 = stream();
@@ -1918,7 +1919,30 @@ function collectConfigProperties(configuration) {
     await global.__handler({ prompt: "a run on a data folder OpenCode 2 made" }, {}, se2.response, se2.token);
     add("SE a 1.x on OpenCode 2's data folder says so and names XDG_DATA_HOME",
         /OpenCode 1 cannot open its data folder: its opencode\.db was created by OpenCode 2.*XDG_DATA_HOME/.test(plain(se2.chatMarkdown.join(""))));
+    // 0.0.225: that turn cost 9 s live (serve twice, agent list, run): once known,
+    // nothing is spawned until /ping; the log keeps no colour codes.
+    const se3Log = logLines.length;
+    const se3 = stream();
+    const se3R = await global.__handler({ prompt: "the next run on that data folder" }, {}, se3.response, se3.token);
+    add("SE …the next turn is refused before anything is spawned, as not sent",
+        /Nothing was run: OpenCode 1 cannot open its data folder/.test(plain(se3.chatMarkdown.join(""))) && se3R.metadata.notSent === true &&
+        !logLines.slice(se3Log).some((l) => /fake-stderr-db\.js\b.*\b(run|serve|agent)\b/.test(l)));
+    add("SE no log line carries a colour code", !logLines.slice(seAnsiLog).some((l) => /\x1b/.test(l)));
+    const seP = stream();
+    await global.__handler({ prompt: "", command: "ping" }, {}, seP.response, seP.token);
+    const sePChat = plain(seP.chatMarkdown.join(""));
+    add("SE /ping fails the server row on that data folder instead of 'Bridge is reachable'",
+        /cannot start: OpenCode 1 cannot open its data folder/.test(sePChat) && /Bridge cannot reach OpenCode/.test(sePChat));
+    const se4Log = logLines.length;
+    const se4 = stream();
+    await global.__handler({ prompt: "after ping, checked again" }, {}, se4.response, se4.token);
+    add("SE …and after /ping the next message checks again (it runs)", logLines.slice(se4Log).some((l) => /fake-stderr-db\.js\b.*\brun\b/.test(l)));
     settings.executable = happy;
+    // 0.0.225: a running tool part before its input arrives is `{}` — the row read
+    // `glob: {}` for 40 s (0.0.223 live). It names nothing yet, so no row.
+    add("SE a tool call with no input yet has no detail (no `glob: {}` row); real input still shows",
+        ext.__test.stepDetail({}) === "" && ext.__test.stepDetail(undefined) === "" &&
+        ext.__test.stepDetail({ pattern: "**/*.ts" }) === "**/*.ts" && ext.__test.stepDetail({ path: "src" }) === "{\"path\":\"src\"}");
 
     // LN (v212): lanes have no cap, but Merge and Retry keep the first 8
     // (LANE_COUNT_CAP); 0.0.211 said nothing about the rest.
@@ -2578,12 +2602,16 @@ function collectConfigProperties(configuration) {
     // End to end, across the process boundary: `--session` in the child's argv is
     // the observable artifact, not anything the extension merely returns.
     const ga1 = stream();
+    const gaLog = logLines.length;
     const gaR1 = await global.__handler({ prompt: "start something new here" }, { history: [] }, ga1.response, ga1.token);
     add("GA a new chat spawns OpenCode without --session", !lastArgv("fake-ok.js").includes("--session"));
     add("GA the turn reports its session back to the thread", gaR1.metadata.sessionId === "ses_test");
     add("GA the turn stamps the folder it ran in", gaR1.metadata.cwd === work);
     add("GA the turn starts this chat's own turn count at 1", gaR1.metadata.turns === 1);
-    add("GA a new chat says the older session is untouched", /New chat/.test(ga1.chatMarkdown.join("")));
+    // 0.0.225: the log says which session the folder held; chat starts with the
+    // answer (it was the first of three notes before any answer, 0.0.223 live).
+    add("GA a new chat logs that the older session is untouched, and says nothing in chat",
+        logLines.slice(gaLog).some((l) => /new chat: a fresh OpenCode session; ses_\w+ is untouched/.test(l)) && !/New chat|untouched/.test(ga1.chatMarkdown.join("")));
 
     const ga2 = stream();
     const gaR2 = await global.__handler(
@@ -2598,7 +2626,7 @@ function collectConfigProperties(configuration) {
         gaArgv.includes("--session") && gaArgv[gaArgv.indexOf("--session") + 1] === "ses_test"
     );
     add("GA the thread carries its own turn count forward", gaR2.metadata.turns === 2);
-    add("GA a continuing chat does not repeat the new-chat notice", !/New chat/.test(ga2.chatMarkdown.join("")));
+    add("GA a continuing chat has no new-chat line", !/New chat|untouched/.test(ga2.chatMarkdown.join("")));
 
     // A second chat opened in the same folder at the same moment: its own
     // conversation, even though the folder pointer now says ses_test.
@@ -2606,7 +2634,7 @@ function collectConfigProperties(configuration) {
     await global.__handler({ prompt: "an unrelated question entirely" }, { history: [] }, ga3.response, ga3.token);
     add("GA a second chat in the same folder still starts clean", !lastArgv("fake-ok.js").includes("--session"));
     // v212: the notice printed on the first turn of every new chat in the folder.
-    add("GA …and the new-chat notice is said once per window and folder, not on every new chat", !/New chat/.test(ga3.chatMarkdown.join("")));
+    add("GA …and a second new chat has none either", !/New chat|untouched/.test(ga3.chatMarkdown.join("")));
 
     // Tripwire: the handler must never go back to reading the folder pointer for
     // continuity, which is exactly how this bug was written in the first place.
@@ -6601,7 +6629,7 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         // SG: a subagent call (the `task` tool) is labelled by who does it.
         const D = (...a) => ext.__test.stepDetail?.(...a);
         add("SG a task call reads 'agent: description'", D({ subagent_type: "explore", description: "find auth handlers", prompt: "long prompt" }) === "explore: find auth handlers");
-        add("SG other tools keep their precedence", D({ command: "npm test", description: "run tests" }) === "npm test" && D({ filePath: "a.ts" }) === "a.ts" && D({}) === "{}" && D(undefined, "") === "");
+        add("SG other tools keep their precedence", D({ command: "npm test", description: "run tests" }) === "npm test" && D({ filePath: "a.ts" }) === "a.ts" && D({}) === "" && D(undefined, "") === "");
         const sgFake = writeFake("fake-sg.js", [
             { type: "tool_use", sessionID: "ses_sg", part: { tool: "task", state: { input: { description: "find auth handlers", prompt: "Search the repo", subagent_type: "explore" }, output: "found 3", time: { start: 0, end: 50 } } } },
             { type: "text", sessionID: "ses_sg", part: { text: "sg answer" } },
@@ -8086,11 +8114,19 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
             // outside the tested range; with opencode2 off it is refused as before.
             settings.transport = "server";
             process.env.FAKE_OC2_VERSION = "3.0.0";
+            // Its own file (0.0.225): on twFake the 2.0.29 identity check was reused
+            // (same file stamp), so `--version` never said 3.0.0 and the CLI half of
+            // the 3.x path (majorVersionNote, noteExecutableMajor) went unchecked.
+            // (The `--version` text keeps writeFake from answering 1.19.0 itself.)
+            settings.executable = writeFake("fake-tw3.js", [], `if (!process.argv.includes('--version') || true) require(${JSON.stringify(path.join(__dirname, "fixtures", "fake-opencode2.js"))})(process.argv);\n`);
+            const tw7Log = logLines.length;
             const tw7 = stream();
             await global.__handler({ prompt: "explain the cart on three [[probe:text]]" }, { history: [] }, tw7.response, tw7.token);
             const tw7Chat = plain(tw7.chatMarkdown.join(""));
-            add("TW a 3.x with opencode2 runs on the 2.x adapter and says it is outside the tested 2.0.29–2.0.32",
+            add(`TW a 3.x with opencode2 runs on the 2.x adapter and says it is outside the tested 2.0.29–2.0.32${/Hello from the scripted model/.test(tw7Chat) ? "" : ` [chat: ${tw7Chat.slice(0, 400)}]`}`,
                 /Hello from the scripted model\./.test(tw7Chat) && /3\.0\.0 is outside the versions this bridge was tested with \(2\.0\.29/.test(tw7Chat));
+            add("TW …its own `--version` was read (3.0.0), not a cached 2.x identity",
+                logLines.slice(tw7Log).some((l) => /fake-tw3\.js --version/.test(l)) && logLines.slice(tw7Log).some((l) => /CLI identity verified/.test(l)));
             ext.deactivate();
             settings.opencode2 = false;
             const tw8 = stream();
@@ -8099,8 +8135,14 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
             ext.deactivate();
             delete process.env.FAKE_OC2_VERSION;
             settings.opencode2 = true;
+            settings.executable = twFake;
 
             // 0.0.223: OpenCode 2 ignores 1.x's agent.<n>.permission in opencode.json (2.0.29, measured): said once.
+            // 0.0.225: an empty global config dir — a developer's own global
+            // opencode.json with agent permissions was named first and broke the match.
+            const twGlobal = fs.mkdtempSync(path.join(os.tmpdir(), "ocb-twglobal-"));
+            const twGlobalSaved = process.env.OPENCODE_CONFIG_DIR;
+            process.env.OPENCODE_CONFIG_DIR = twGlobal;
             const twCfg = path.join(work, "opencode.json");
             const twCfgHad = fs.existsSync(twCfg) ? fs.readFileSync(twCfg) : undefined;
             fs.writeFileSync(twCfg, JSON.stringify({ agent: { plan: { permission: { "*": "deny", read: "allow" } } } }));
@@ -8110,6 +8152,16 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
             await global.__handler({ prompt: "and again with old rules [[probe:text]]" }, { history: [] }, tw10.response, tw10.token);
             add("TW on OpenCode 2, 1.x agent permission rules in opencode.json are named once",
                 /ignores the 1\.x permission rules in .?opencode\.json \(plan\)/.test(plain(tw9.chatMarkdown.join(""))) && !/ignores the 1\.x permission rules/.test(plain(tw10.chatMarkdown.join(""))));
+            // 0.0.225: keyed by folder AND finding (CHANGELOG 0.0.223), so a file added later is named.
+            const twDotDir = path.join(work, ".opencode");
+            const twDotHad = fs.existsSync(twDotDir);
+            fs.mkdirSync(twDotDir, { recursive: true });
+            fs.writeFileSync(path.join(twDotDir, "opencode.json"), JSON.stringify({ agent: { build: { permission: { bash: "ask" } } } }));
+            const tw11 = stream();
+            await global.__handler({ prompt: "and with one more rules file [[probe:text]]" }, { history: [] }, tw11.response, tw11.token);
+            add("TW …and a rules file added later is named on the next turn",
+                /ignores the 1\.x permission rules in .*\.opencode\/opencode\.json \(build\)/.test(plain(tw11.chatMarkdown.join(""))));
+            if (twDotHad) fs.rmSync(path.join(twDotDir, "opencode.json"), { force: true }); else fs.rmSync(twDotDir, { recursive: true, force: true });
             if (twCfgHad === undefined) fs.rmSync(twCfg, { force: true }); else fs.writeFileSync(twCfg, twCfgHad);
             ext.deactivate();
             delete process.env.FAKE_OC2_RECORD;
@@ -8141,9 +8193,16 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
             });
             await new Promise((r) => w1Server.listen(0, "127.0.0.1", r));
             Object.assign(settings, { executable: twSaved.exe, serverPort: w1Server.address().port, transport: "server", opencode2: false });
+            // 0.0.225: 1.x reads agent.<n>.permission, so a 1.x server never gets the
+            // 2.x note (a finding not named yet: the note is once per finding).
+            fs.writeFileSync(twCfg, JSON.stringify({ agent: { general: { permission: { bash: "ask" } } } }));
             const w1 = stream();
             await global.__handler({ prompt: "say hello [[probe:text]]", command: "dev" }, { history: [] }, w1.response, w1.token);
             const w1Chat = w1.chatMarkdown.join("");
+            add("TW a 1.x server with 1.x rules in opencode.json gets no OpenCode 2 note", !/ignores the 1\.x permission rules/.test(plain(w1Chat)));
+            if (twCfgHad === undefined) fs.rmSync(twCfg, { force: true }); else fs.writeFileSync(twCfg, twCfgHad);
+            if (twGlobalSaved === undefined) delete process.env.OPENCODE_CONFIG_DIR; else process.env.OPENCODE_CONFIG_DIR = twGlobalSaved;
+            fs.rmSync(twGlobal, { recursive: true, force: true });
             add(`TW 1.19.0's recorded text turn: deltas, the whole part and the reply give the answer once (${once(w1Chat, "Hello from the scripted model.")}×)`, once(w1Chat, "Hello from the scripted model.") === 1);
             for (const r of w1Sse) r.end();
             await new Promise((r) => w1Server.close(r));

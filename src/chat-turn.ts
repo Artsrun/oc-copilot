@@ -8,7 +8,7 @@ import { mark, prompt as promptText } from "./followups";
 import { ChatKind, RunMetrics, RunOptions, StepRecord, finalizeStepStatuses, toolOutputBytes } from "./metrics";
 import { composeVisibleAnswer, createEchoGate, createLeakGate, isPromptEcho, metricsLogLine, scrubLeakedContext } from "./format";
 import { createFileLinker, emitAnswerParts, emitReferences, stepUris } from "./context";
-import { isIdentityUnknown, isNotOpenCode1, openCode1Refusal, versionNotice, warmServer } from "./net";
+import { dataFolderRefusal, isDataFolderClash, isIdentityUnknown, isNotOpenCode1, openCode1Refusal, plainError, versionNotice, warmServer } from "./net";
 import { isTurnPermissionError } from "./server-session";
 import { serverMajor } from "./oc-api";
 import { v1PermissionRules } from "./env";
@@ -187,6 +187,11 @@ async function prepareRun(t: Turn, live: Live): Promise<Ready | Stopped> {
     if (refused && !useServer) {
         throw refused;
     }
+    // A 1.x whose data folder is OpenCode 2's fails every spawn alike: refused at once.
+    const clashed = dataFolderRefusal(executable);
+    if (clashed) {
+        throw clashed;
+    }
 
     // An attached run needs its session id first, for the SSE liveness feed.
     if (attachUrl && !sessionId && !token.isCancellationRequested) {
@@ -200,7 +205,7 @@ async function prepareRun(t: Turn, live: Live): Promise<Ready | Stopped> {
     // Never queue silently behind a run nobody watches (busySessionPolicy).
     const guardBase = attachUrl ?? (useServer ? await untilStop(timed("server", () => warmServer(cwd, (text) => response.progress(text))), token) : undefined);
     // The start may just have found it out (a web page for a health answer).
-    const refusedNow = guardBase ? undefined : openCode1Refusal(executable);
+    const refusedNow = guardBase ? undefined : openCode1Refusal(executable) ?? dataFolderRefusal(executable);
     if (refusedNow) {
         throw refusedNow;
     }
@@ -425,12 +430,13 @@ async function runAttempts(t: Turn, live: Live, ready: Ready): Promise<Outcome> 
                 );
                 sessionRestarted = true;
                 rerun(true);
-            } else if (!serverTransport || token.isCancellationRequested || isNotOpenCode1(error)) {
-                // Not OpenCode 1: no CLI fallback without the bridge's rules.
+            } else if (!serverTransport || token.isCancellationRequested || isNotOpenCode1(error) || isDataFolderClash(error)) {
+                // Not OpenCode 1: no CLI fallback without the bridge's rules. A
+                // data folder 2.x created: the CLI opens the same one.
                 throw error;
             } else {
                 // The managed server failed: the CLI takes this and later attempts.
-                logChannel.appendLine(`[${stamp()}] server failed, falling back to CLI: ${error}`);
+                logChannel.appendLine(`[${stamp()}] server failed, falling back to CLI: ${plainError(String(error))}`);
                 beat.phase("Server transport unavailable — retrying via cli");
                 serverTransport = false;
                 rerun();
@@ -674,7 +680,7 @@ async function finishTurn(t: Turn, live: Live, outcome: Outcome): Promise<vscode
 
 // Refused before anything reached OpenCode: not OpenCode 1, an identity its
 // `--version` could not confirm, or this turn's permission rules not set.
-const notSent = (error: unknown): boolean => isNotOpenCode1(error) || isIdentityUnknown(error) || isTurnPermissionError(error);
+const notSent = (error: unknown): boolean => isNotOpenCode1(error) || isIdentityUnknown(error) || isTurnPermissionError(error) || isDataFolderClash(error);
 
 // A throw out of the turn: Stop is not a failure; a launch that failed says why.
 async function failTurn(t: Turn, live: Live, error: unknown): Promise<vscode.ChatResult> {

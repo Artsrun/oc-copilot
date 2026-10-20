@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.PREWARM_DELAY_MS = exports.currentServerGeneration = exports.isNotOpenCode1 = exports.openCode1Refusal = exports.isIdentityUnknown = exports.serverVersion = exports.TESTED_OPENCODE2 = exports.TESTED_OPENCODE = exports.openCode2Allowed = exports.serverAuth = void 0;
+exports.PREWARM_DELAY_MS = exports.currentServerGeneration = exports.lastServeFailure = exports.forgetDataFolderClash = exports.isDataFolderClash = exports.plainError = exports.isNotOpenCode1 = exports.openCode1Refusal = exports.isIdentityUnknown = exports.serverVersion = exports.TESTED_OPENCODE2 = exports.TESTED_OPENCODE = exports.openCode2Allowed = exports.serverAuth = void 0;
 exports.withDirectory = withDirectory;
 exports.httpRequestJson = httpRequestJson;
 exports.httpGetJson = httpGetJson;
@@ -42,6 +42,8 @@ exports.setStartupDeadline = setStartupDeadline;
 exports.versionNotice = versionNotice;
 exports.ensureCliIdentity = ensureCliIdentity;
 exports.markNotOpenCode1 = markNotOpenCode1;
+exports.noteDataFolderClash = noteDataFolderClash;
+exports.dataFolderRefusal = dataFolderRefusal;
 exports.majorVersionNote = majorVersionNote;
 exports.knownServerBase = knownServerBase;
 exports.stopServer = stopServer;
@@ -290,6 +292,38 @@ const openCode1Refusal = (executable) => notOpenCode1.get(executable);
 exports.openCode1Refusal = openCode1Refusal;
 const isNotOpenCode1 = (error) => error?.code === "ENOTOPENCODE1";
 exports.isNotOpenCode1 = isNotOpenCode1;
+const plainError = (text) => text.replace(/\x1b\[[0-9;]*m/g, "");
+exports.plainError = plainError;
+const DATA_CLASH = /Database is not empty and has no session table/i;
+const dataClash = new Map();
+const isDataFolderClash = (error) => error?.code === "EOPENCODEDATA";
+exports.isDataFolderClash = isDataFolderClash;
+function noteDataFolderClash(executable, output) {
+    if (!DATA_CLASH.test((0, exports.plainError)(output))) {
+        return undefined;
+    }
+    const error = Object.assign(new Error("Nothing was run: OpenCode 1 cannot open its data folder — its `opencode.db` was created by OpenCode 2, without 1.x's `session` table. " +
+        "Give 1.x its own folder: close VS Code and start it with `XDG_DATA_HOME` set (PowerShell: `$env:XDG_DATA_HOME = \"$HOME\\.opencode1\\data\"; code .`), " +
+        "or turn on `opencodeCopilotBridge.opencode2`. `/ping` checks again."), { code: "EOPENCODEDATA" });
+    if (!dataClash.has(executable)) {
+        core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] ${executable}: OpenCode 1 cannot open its data folder (created by OpenCode 2); nothing more is started until /ping`);
+    }
+    dataClash.set(executable, { file: fileOf(executable), error });
+    return error;
+}
+function dataFolderRefusal(executable) {
+    const hit = dataClash.get(executable);
+    if (hit && hit.file !== fileOf(executable)) {
+        dataClash.delete(executable);
+        return undefined;
+    }
+    return hit?.error;
+}
+const forgetDataFolderClash = (executable) => dataClash.delete(executable);
+exports.forgetDataFolderClash = forgetDataFolderClash;
+let serveFailure;
+const lastServeFailure = () => serveFailure;
+exports.lastServeFailure = lastServeFailure;
 function majorVersionNote(executable, output) {
     const found = output.match(/(?:^|\s)v?(\d+)\.\d+\.\d+/);
     const major = found ? Number(found[1]) : undefined;
@@ -458,7 +492,7 @@ async function ensureServerOnce(cwd, onSlowStart) {
         if ((0, exports.openCode2Allowed)()) {
             await ensureCliIdentity(executable, cwd ?? (0, core_1.resolveFolder)()?.folder.uri.fsPath ?? process.cwd());
         }
-        const refused = (0, exports.openCode1Refusal)(executable);
+        const refused = (0, exports.openCode1Refusal)(executable) ?? dataFolderRefusal(executable);
         if (refused) {
             throw refused;
         }
@@ -476,7 +510,7 @@ async function ensureServerOnce(cwd, onSlowStart) {
             if (secret) {
                 servePassword = secret;
             }
-            const said = d.replace(/\b(password)(\s*[:=]\s*|\s+)\S+/gi, "$1$2[redacted]");
+            const said = (0, exports.plainError)(d).replace(/\b(password)(\s*[:=]\s*|\s+)\S+/gi, "$1$2[redacted]");
             core_1.logChannel.appendLine(`[serve] ${said.trim()}`);
             serveTail = (serveTail + said).slice(-600);
         };
@@ -532,6 +566,10 @@ async function ensureServerOnce(cwd, onSlowStart) {
         if (serveSpawnError) {
             return new Error(`OpenCode server could not be started: ${serveSpawnError}`);
         }
+        const clash = noteDataFolderClash(executable, serveTail);
+        if (clash) {
+            return clash;
+        }
         const why = lastServeLine(serveTail);
         return new Error(`OpenCode server process exited (code ${serveProcess.exitCode})${why ? `: ${why}` : "."}`);
     };
@@ -544,6 +582,7 @@ async function ensureServerOnce(cwd, onSlowStart) {
         }
         const health = await probe(POLL_HEALTH_MS);
         if (health.healthy) {
+            serveFailure = undefined;
             core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] serve on ${base} answered after ${((Date.now() - waitStarted) / 1000).toFixed(1)}s`);
             return base;
         }
@@ -567,7 +606,11 @@ async function warmServer(cwd, onSlowStart) {
         return await ensureServer(cwd, onSlowStart);
     }
     catch (error) {
-        core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] ${(0, exports.isNotOpenCode1)(error) ? "server not started: not OpenCode 1 (logged above)" : `server unavailable, dev runs cold: ${error}`}`);
+        const why = (0, exports.plainError)(error instanceof Error ? error.message : String(error));
+        serveFailure = (0, core_1.truncate)(why, 200);
+        core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] ${(0, exports.isNotOpenCode1)(error)
+            ? "server not started: not OpenCode 1 (logged above)"
+            : (0, exports.isDataFolderClash)(error) ? "server not started: its data folder is OpenCode 2's (logged above)" : `server unavailable, dev runs cold: ${why}`}`);
         return undefined;
     }
 }

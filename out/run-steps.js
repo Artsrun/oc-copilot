@@ -71,7 +71,7 @@ const stepDetail = (input, fallback) => {
         input?.pattern ??
         description ??
         fallback ??
-        JSON.stringify(input ?? {}));
+        (input && Object.keys(input).length ? JSON.stringify(input) : ""));
 };
 exports.stepDetail = stepDetail;
 const blankMetrics = (sessionId) => ({

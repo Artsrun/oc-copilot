@@ -4,7 +4,7 @@ import { platform } from "node:process";
 import { config, resolveFolder, truncate } from "./core";
 import { mark } from "./followups";
 import { resolveExecutable, runCapture } from "./proc";
-import { knownServerBase, majorVersionNote } from "./net";
+import { dataFolderRefusal, knownServerBase, lastServeFailure, majorVersionNote } from "./net";
 import { api } from "./oc-api";
 import { getActiveSession } from "./session";
 import { catalogAge, getModelCatalog } from "./models";
@@ -34,7 +34,10 @@ export async function diagnose(): Promise<void> {
         lines.push(row("version", `\`${truncate(version, 80)}\`${major ? ` — ${mark("fail")} ${major}` : ""}`));
     }
 
-    let serverState = "not running (started on demand)";
+    const failed = lastServeFailure();
+    let serverState = dataFolderRefusal(executable)
+        ? `${mark("fail")} cannot start: OpenCode 1 cannot open its data folder, which OpenCode 2 created (README, *OpenCode 2*)`
+        : failed ? `${mark("warn")} not running — the last start failed: ${failed.replace(/\|/g, "\\|")}` : "not running (started on demand)";
     const serverBase = knownServerBase();
     if (serverBase) {
         try {

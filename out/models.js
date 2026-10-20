@@ -246,7 +246,8 @@ async function getModelCatalog(executable, cwd, opts = {}) {
         }
     }
     catch (error) {
-        core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] model catalog fetch failed: ${error}`);
+        (0, net_1.noteDataFolderClash)(executable, String(error));
+        core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] model catalog fetch failed: ${(0, net_1.plainError)(String(error))}`);
     }
     if (cached?.models.length) {
         return { models: cached.models, info: cached.info ?? {}, source: "stale", fetchedAt: cached.fetchedAt };

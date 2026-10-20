@@ -3,6 +3,27 @@
 Full release history, newest first; releases before the last one are condensed
 to their summary and headlines. The README ships the last five.
 
+### 0.0.225
+
+- **A data folder OpenCode 2 created fails fast** (`noteDataFolderClash`,
+  `dataFolderRefusal` in `net.ts`): once `serve`, `run` or `models` says so, every
+  later turn is refused before anything is spawned, as not sent (Retry, Ping).
+  0.0.224 spent 9 s per turn re-spawning into it (`serve` twice, `agent list`,
+  `run`). `/ping` fails the server row and lets the next message check again.
+- **`/ping` and Diagnose say why the server is not running**: the last failed
+  start (`lastServeFailure`), instead of "not running (started on demand)"; a
+  model list served from the **stale** tier is a warning, not a tick.
+- **No colour codes in the log** (`plainError`): `[serve]`, stderr, the agent
+  list and the model catalog lines.
+- **The new-chat note is log-only** (`GA`): it was the first of three notes
+  before any answer (0.0.223 live). Reverses v212's once-per-window chat line.
+- **No `glob: {}` row** (`stepDetail`): a tool part before its input arrives
+  names nothing; its row appears with the arguments.
+- Checks: `TW` 3.x through its own fake file (`--version` really says 3.0.0;
+  0.0.223's reused a cached 2.0.29 identity), a 1.x server stays silent about
+  1.x rules, a rules file added later is named, the global config dir isolated;
+  `SE`, `GA`, `SG`. AGENTS §5: what `writeFake` answers to `--version`.
+
 ### 0.0.224
 
 - **Copilot's customizations index is the host's** (`AUTOMATIC_ID` in

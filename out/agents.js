@@ -208,7 +208,7 @@ async function listAgents(cwd, base, want) {
             agents = base ? await agentsFromServer(base, cwd) : await agentsFromCli(cwd);
         }
         catch (error) {
-            core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] could not list OpenCode's agents: ${error}`);
+            core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] could not list OpenCode's agents: ${(0, net_1.plainError)(String(error))}`);
         }
         listed.set(key, { at: Date.now(), agents });
         return agents;

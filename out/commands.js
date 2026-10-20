@@ -68,7 +68,10 @@ async function diagnose() {
         const major = (0, net_1.majorVersionNote)(executable, version);
         lines.push(row("version", `\`${(0, core_1.truncate)(version, 80)}\`${major ? ` — ${(0, followups_1.mark)("fail")} ${major}` : ""}`));
     }
-    let serverState = "not running (started on demand)";
+    const failed = (0, net_1.lastServeFailure)();
+    let serverState = (0, net_1.dataFolderRefusal)(executable)
+        ? `${(0, followups_1.mark)("fail")} cannot start: OpenCode 1 cannot open its data folder, which OpenCode 2 created (README, *OpenCode 2*)`
+        : failed ? `${(0, followups_1.mark)("warn")} not running — the last start failed: ${failed.replace(/\|/g, "\\|")}` : "not running (started on demand)";
     const serverBase = (0, net_1.knownServerBase)();
     if (serverBase) {
         try {

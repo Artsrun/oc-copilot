@@ -371,6 +371,55 @@ export const openCode1Refusal = (executable: string): Error | undefined => notOp
 
 export const isNotOpenCode1 = (error: unknown): boolean => (error as { code?: unknown } | undefined)?.code === "ENOTOPENCODE1";
 
+/** OpenCode's error text as words: 1.19.3 colours stderr even on a pipe (`\x1b[91m`, measured). */
+export const plainError = (text: string): string => text.replace(/\x1b\[[0-9;]*m/g, "");
+
+// 1.x on an opencode.db that OpenCode 2 created refuses it on serve, run, agent
+// list and models alike (1.19.3, REFS 0.0.224): a turn spent 9 s re-spawning
+// into it. The folder is this process's XDG_DATA_HOME, so nothing in the window
+// can change it: remembered per executable file, like a refusal, until `/ping`.
+const DATA_CLASH = /Database is not empty and has no session table/i;
+const dataClash = new Map<string, { file: string; error: Error }>();
+
+export const isDataFolderClash = (error: unknown): boolean => (error as { code?: unknown } | undefined)?.code === "EOPENCODEDATA";
+
+/** The refusal `output` proves, if OpenCode said its data folder is 2.x's; remembered. */
+export function noteDataFolderClash(executable: string, output: string): Error | undefined {
+    if (!DATA_CLASH.test(plainError(output))) {
+        return undefined;
+    }
+    const error = Object.assign(
+        new Error(
+            "Nothing was run: OpenCode 1 cannot open its data folder — its `opencode.db` was created by OpenCode 2, without 1.x's `session` table. " +
+            "Give 1.x its own folder: close VS Code and start it with `XDG_DATA_HOME` set (PowerShell: `$env:XDG_DATA_HOME = \"$HOME\\.opencode1\\data\"; code .`), " +
+            "or turn on `opencodeCopilotBridge.opencode2`. `/ping` checks again."
+        ),
+        { code: "EOPENCODEDATA" }
+    );
+    if (!dataClash.has(executable)) {
+        logChannel.appendLine(`[${stamp()}] ${executable}: OpenCode 1 cannot open its data folder (created by OpenCode 2); nothing more is started until /ping`);
+    }
+    dataClash.set(executable, { file: fileOf(executable), error });
+    return error;
+}
+
+/** Why `executable` must not be started, if its data folder is 2.x's; a replaced file is checked afresh. */
+export function dataFolderRefusal(executable: string): Error | undefined {
+    const hit = dataClash.get(executable);
+    if (hit && hit.file !== fileOf(executable)) {
+        dataClash.delete(executable);
+        return undefined;
+    }
+    return hit?.error;
+}
+
+/** `/ping`: the next message checks the data folder again. */
+export const forgetDataFolderClash = (executable: string): boolean => dataClash.delete(executable);
+
+// The last managed-server start that failed, readable, for `/ping` and Diagnose.
+let serveFailure: string | undefined;
+export const lastServeFailure = (): string | undefined => serveFailure;
+
 /** `opencode --version` read for its major: 2+ is refused from now on (the
  * row's note), 1 lifts an earlier refusal. 1.x prints `1.19.0`, 2.x `opencode v2.0.27`. */
 export function majorVersionNote(executable: string, output: string): string | undefined {
@@ -578,7 +627,7 @@ async function ensureServerOnce(cwd?: string, onSlowStart?: (text: string) => vo
             await ensureCliIdentity(executable, cwd ?? resolveFolder()?.folder.uri.fsPath ?? process.cwd());
         }
         // A healthy OpenCode 1 server is still adopted above; this one is never started.
-        const refused = openCode1Refusal(executable);
+        const refused = openCode1Refusal(executable) ?? dataFolderRefusal(executable);
         if (refused) {
             throw refused;
         }
@@ -603,7 +652,7 @@ async function ensureServerOnce(cwd?: string, onSlowStart?: (text: string) => vo
             if (secret) {
                 servePassword = secret;
             }
-            const said = d.replace(/\b(password)(\s*[:=]\s*|\s+)\S+/gi, "$1$2[redacted]");
+            const said = plainError(d).replace(/\b(password)(\s*[:=]\s*|\s+)\S+/gi, "$1$2[redacted]");
             logChannel.appendLine(`[serve] ${said.trim()}`);
             serveTail = (serveTail + said).slice(-600);
         };
@@ -672,6 +721,10 @@ async function ensureServerOnce(cwd?: string, onSlowStart?: (text: string) => vo
         if (serveSpawnError) {
             return new Error(`OpenCode server could not be started: ${serveSpawnError}`);
         }
+        const clash = noteDataFolderClash(executable, serveTail);
+        if (clash) {
+            return clash;
+        }
         const why = lastServeLine(serveTail);
         return new Error(`OpenCode server process exited (code ${serveProcess.exitCode})${why ? `: ${why}` : "."}`);
     };
@@ -684,6 +737,7 @@ async function ensureServerOnce(cwd?: string, onSlowStart?: (text: string) => vo
         }
         const health = await probe(POLL_HEALTH_MS);
         if (health.healthy) {
+            serveFailure = undefined;
             // Measured per start, so a slow first boot shows up in the log.
             logChannel.appendLine(`[${stamp()}] serve on ${base} answered after ${((Date.now() - waitStarted) / 1000).toFixed(1)}s`);
             return base;
@@ -712,7 +766,11 @@ export async function warmServer(cwd: string, onSlowStart?: (text: string) => vo
     try {
         return await ensureServer(cwd, onSlowStart);
     } catch (error) {
-        logChannel.appendLine(`[${stamp()}] ${isNotOpenCode1(error) ? "server not started: not OpenCode 1 (logged above)" : `server unavailable, dev runs cold: ${error}`}`);
+        const why = plainError(error instanceof Error ? error.message : String(error));
+        serveFailure = truncate(why, 200);
+        logChannel.appendLine(`[${stamp()}] ${isNotOpenCode1(error)
+            ? "server not started: not OpenCode 1 (logged above)"
+            : isDataFolderClash(error) ? "server not started: its data folder is OpenCode 2's (logged above)" : `server unavailable, dev runs cold: ${why}`}`);
         return undefined;
     }
 }

@@ -13,12 +13,12 @@ const run_steps_1 = require("./run-steps");
 const server_session_1 = require("./server-session");
 const STDERR_CAP = 256 * 1024;
 function exitProblem(executable, stderr, code) {
-    const clean = stderr.replace(/\x1b\[[0-9;]*m/g, "");
+    const clean = (0, net_1.plainError)(stderr);
     const flag = clean.match(/Unrecognized flag: (--[\w-]+) in command opencode\b/);
     if (flag) {
         return (0, net_1.markNotOpenCode1)(executable, `it rejects \`${flag[1]}\``).message;
     }
-    if (/Database is not empty and has no session table/i.test(clean)) {
+    if ((0, net_1.noteDataFolderClash)(executable, clean)) {
         return "OpenCode 1 cannot open its data folder: its opencode.db was created by OpenCode 2, without 1.x's session table. " +
             "Give 1.x its own folder (start VS Code with XDG_DATA_HOME set, e.g. ~/.opencode1/data), or turn on opencode2.";
     }
@@ -37,6 +37,10 @@ async function runOpenCode(options) {
     const ready = await untilStopped((0, net_1.ensureCliIdentity)(options.executable, options.cwd).then(() => true), options);
     if (!ready || options.token?.isCancellationRequested) {
         return (0, run_steps_1.blankMetrics)(options.sessionId);
+    }
+    const clashed = (0, net_1.dataFolderRefusal)(options.executable);
+    if (clashed) {
+        throw clashed;
     }
     if ((0, enforce_1.executableMajor)(options.executable) === 2) {
         return (0, run_server_1.runOpenCodeServer)({ ...options, serverUrl: options.attachUrl });
@@ -424,7 +428,7 @@ function runCli(options, evidence) {
                         "later output still reaches the stderr lines below, 200 chars per chunk");
                 }
             }
-            core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] stderr: ${(0, core_1.truncate)(chunk, 200)}`);
+            core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] stderr: ${(0, core_1.truncate)((0, net_1.plainError)(chunk), 200)}`);
         });
         child.on("error", (err) => {
             if (settled) {

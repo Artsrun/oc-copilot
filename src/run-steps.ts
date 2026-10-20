@@ -98,7 +98,9 @@ export const stepDetail = (input: Record<string, unknown> | undefined, fallback?
         (input?.pattern as string) ??
         description ??
         fallback ??
-        JSON.stringify(input ?? {})
+        // A running part before its input arrives is `{}`: the row read `glob: {}`
+        // for 40 s while the model wrote the arguments (0.0.223 live). Nothing yet.
+        (input && Object.keys(input).length ? JSON.stringify(input) : "")
     );
 };
 

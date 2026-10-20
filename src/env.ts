@@ -102,13 +102,6 @@ function listSkillDirs(dir: string): string[] {
 }
 
 /**
- * The `model` OpenCode's own config sets, as OpenCode reads it — later files
- * win: global (config.json, opencode.json, opencode.jsonc), `OPENCODE_CONFIG`,
- * the folder's opencode.json(c), `.opencode/opencode.json(c)`,
- * `OPENCODE_CONFIG_CONTENT`. Advisory (for /model): the server may run with a
- * different environment.
- */
-/**
  * The config files whose `agent.<name>.permission` is 1.x's rule format, with
  * the agents named. OpenCode 2 ignores those rules without a word (2.0.29: a
  * project `agent.plan.permission` left plan's stock rules), while it still reads
@@ -138,6 +131,13 @@ const configFiles = (cwd: string): Array<[string, string]> => {
     ];
 };
 
+/**
+ * The `model` OpenCode's own config sets, as OpenCode reads it — later files
+ * win: global (config.json, opencode.json, opencode.jsonc), `OPENCODE_CONFIG`,
+ * the folder's opencode.json(c), `.opencode/opencode.json(c)`,
+ * `OPENCODE_CONFIG_CONTENT`. Advisory (for /model): the server may run with a
+ * different environment.
+ */
 export function openCodeConfigModel(cwd: string): { model: string; from: string } | undefined {
     const files = configFiles(cwd);
     let found: { model: string; from: string } | undefined;

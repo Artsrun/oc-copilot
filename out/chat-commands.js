@@ -128,6 +128,7 @@ async function handleControlCommand(p) {
                 healthy = healthy && Boolean(ok);
                 rows.push(`| version | ${ok ? (0, followups_1.mark)("ok") : (0, followups_1.mark)("fail")} \`${(0, core_1.truncate)(version || "no output", 60)}\`${major ? ` — ${major}` : ""} |`);
             }
+            const catalog = await (0, models_1.getModelCatalog)(exe, p.cwd);
             const serverBase = (0, net_1.knownServerBase)();
             try {
                 if (!serverBase) {
@@ -145,10 +146,19 @@ async function handleControlCommand(p) {
                 rows.push(`| server | ${(0, followups_1.mark)("ok")} healthy on ${serverBase?.replace(/^http:\/\//, "")}${reported}${scope} |`);
             }
             catch {
-                rows.push(`| server | not running _(started on demand)_ |`);
+                const failed = (0, net_1.lastServeFailure)();
+                if ((0, net_1.forgetDataFolderClash)(exe)) {
+                    healthy = false;
+                    rows.push(`| server | ${(0, followups_1.mark)("fail")} cannot start: OpenCode 1 cannot open its data folder, which OpenCode 2 created — README, *OpenCode 2*. The next message checks again. |`);
+                }
+                else if (failed) {
+                    rows.push(`| server | ${(0, followups_1.mark)("warn")} not running — the last start failed: ${failed.replace(/\|/g, "\\|").replace(/`/g, "'")} |`);
+                }
+                else {
+                    rows.push(`| server | not running _(started on demand)_ |`);
+                }
             }
-            const catalog = await (0, models_1.getModelCatalog)(exe, p.cwd);
-            rows.push(`| models | ${catalog.models.length ? (0, followups_1.mark)("ok") : (0, followups_1.mark)("warn")} ${catalog.models.length} via the **${catalog.source}** tier |`);
+            rows.push(`| models | ${catalog.models.length && catalog.source !== "stale" ? (0, followups_1.mark)("ok") : (0, followups_1.mark)("warn")} ${catalog.models.length} via the **${catalog.source}** tier${catalog.source === "stale" ? " _(the refresh failed: debug log)_" : ""} |`);
             rows.push(`| workspace | \`${p.folder.name}\` |`);
             const env = (0, env_1.discoverOpenCodeEnv)(p.cwd);
             const counts = ["plugin", "hooks", "mcp", "command", "skill"]

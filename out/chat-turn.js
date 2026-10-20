@@ -80,6 +80,10 @@ async function prepareRun(t, live) {
     if (refused && !useServer) {
         throw refused;
     }
+    const clashed = (0, net_1.dataFolderRefusal)(executable);
+    if (clashed) {
+        throw clashed;
+    }
     if (attachUrl && !sessionId && !token.isCancellationRequested) {
         try {
             sessionId = await timed("session", () => (0, runs_1.createServerSession)(attachUrl, cwd, task, !isBuild));
@@ -89,7 +93,7 @@ async function prepareRun(t, live) {
         }
     }
     const guardBase = attachUrl ?? (useServer ? await (0, core_1.untilStop)(timed("server", () => (0, net_1.warmServer)(cwd, (text) => response.progress(text))), token) : undefined);
-    const refusedNow = guardBase ? undefined : (0, net_1.openCode1Refusal)(executable);
+    const refusedNow = guardBase ? undefined : (0, net_1.openCode1Refusal)(executable) ?? (0, net_1.dataFolderRefusal)(executable);
     if (refusedNow) {
         throw refusedNow;
     }
@@ -270,11 +274,11 @@ async function runAttempts(t, live, ready) {
                 sessionRestarted = true;
                 rerun(true);
             }
-            else if (!serverTransport || token.isCancellationRequested || (0, net_1.isNotOpenCode1)(error)) {
+            else if (!serverTransport || token.isCancellationRequested || (0, net_1.isNotOpenCode1)(error) || (0, net_1.isDataFolderClash)(error)) {
                 throw error;
             }
             else {
-                core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] server failed, falling back to CLI: ${error}`);
+                core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] server failed, falling back to CLI: ${(0, net_1.plainError)(String(error))}`);
                 beat.phase("Server transport unavailable — retrying via cli");
                 serverTransport = false;
                 rerun();
@@ -462,7 +466,7 @@ async function finishTurn(t, live, outcome) {
         }
     };
 }
-const notSent = (error) => (0, net_1.isNotOpenCode1)(error) || (0, net_1.isIdentityUnknown)(error) || (0, server_session_1.isTurnPermissionError)(error);
+const notSent = (error) => (0, net_1.isNotOpenCode1)(error) || (0, net_1.isIdentityUnknown)(error) || (0, server_session_1.isTurnPermissionError)(error) || (0, net_1.isDataFolderClash)(error);
 async function failTurn(t, live, error) {
     const { response, token, state, cwd, kind, agentLabel, executable, replay } = t;
     const { beat, linker } = live;

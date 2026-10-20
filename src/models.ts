@@ -3,7 +3,7 @@ import { config, extensionContext, logChannel, own, resolveFolder, stamp } from 
 import { mark } from "./followups";
 import { killTree, spawnOpenCode } from "./proc";
 import { uniqueModels } from "./context";
-import { knownServerBase } from "./net";
+import { knownServerBase, noteDataFolderClash, plainError } from "./net";
 import { api } from "./oc-api";
 import { openCodeConfigModel } from "./env";
 
@@ -297,7 +297,8 @@ export async function getModelCatalog(
             return { models, info: snapshot.info ?? {}, source: "live", fetchedAt: snapshot.fetchedAt };
         }
     } catch (error) {
-        logChannel.appendLine(`[${stamp()}] model catalog fetch failed: ${error}`);
+        noteDataFolderClash(executable, String(error));
+        logChannel.appendLine(`[${stamp()}] model catalog fetch failed: ${plainError(String(error))}`);
     }
     if (cached?.models.length) {
         return { models: cached.models, info: cached.info ?? {}, source: "stale", fetchedAt: cached.fetchedAt };

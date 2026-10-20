@@ -5,7 +5,7 @@ import { ChildProcessWithoutNullStreams } from "node:child_process";
 import { debugLine, logChannel, secs, stamp, truncate } from "./core";
 import { mark } from "./followups";
 import { killTree, spawnOpenCode } from "./proc";
-import { connectSse, ensureCliIdentity, markNotOpenCode1, sessionIdFromEvent } from "./net";
+import { connectSse, dataFolderRefusal, ensureCliIdentity, markNotOpenCode1, noteDataFolderClash, plainError, sessionIdFromEvent } from "./net";
 import { executableMajor } from "./enforce";
 import { runOpenCodeServer } from "./run-server";
 import { ReadOnlyEnforcement, RunMetrics, RunOptions, StepRecord, TokenUsage, contextOf, stepOutput, toolFilePath } from "./metrics";
@@ -22,14 +22,14 @@ const STDERR_CAP = 256 * 1024;
 // the bridge's flags as `Unrecognized flag: --attach in command opencode run`
 // (2.0.27, REFS).
 function exitProblem(executable: string, stderr: string, code: number): string {
-    // OpenCode colours stderr even on a pipe: chat showed `[91m[1mError: [0m…` (1.19.3).
-    const clean = stderr.replace(/\x1b\[[0-9;]*m/g, "");
+    const clean = plainError(stderr);
     const flag = clean.match(/Unrecognized flag: (--[\w-]+) in command opencode\b/);
     if (flag) {
         return markNotOpenCode1(executable, `it rejects \`${flag[1]}\``).message;
     }
-    // 1.x on a data folder OpenCode 2 created: its opencode.db has only 2.x's tables (REFS).
-    if (/Database is not empty and has no session table/i.test(clean)) {
+    // 1.x on a data folder OpenCode 2 created: its opencode.db has only 2.x's tables
+    // (REFS). Remembered, so the next turn is refused before anything is spawned.
+    if (noteDataFolderClash(executable, clean)) {
         return "OpenCode 1 cannot open its data folder: its opencode.db was created by OpenCode 2, without 1.x's session table. " +
             "Give 1.x its own folder (start VS Code with XDG_DATA_HOME set, e.g. ~/.opencode1/data), or turn on opencode2.";
     }
@@ -52,6 +52,10 @@ export async function runOpenCode(options: RunOptions): Promise<RunMetrics> {
     const ready = await untilStopped(ensureCliIdentity(options.executable, options.cwd).then(() => true), options);
     if (!ready || options.token?.isCancellationRequested) {
         return blankMetrics(options.sessionId);
+    }
+    const clashed = dataFolderRefusal(options.executable);
+    if (clashed) {
+        throw clashed;
     }
     // OpenCode 2 (opencode2): its `run` takes none of the bridge's flags, and a
     // cold run's rules cannot be read back (no `agent list`): every turn, cold
@@ -531,7 +535,7 @@ function runCli(options: RunOptions, evidence?: ReadOnlyEnforcement): Promise<Ru
                     );
                 }
             }
-            logChannel.appendLine(`[${stamp()}] stderr: ${truncate(chunk, 200)}`);
+            logChannel.appendLine(`[${stamp()}] stderr: ${truncate(plainError(chunk), 200)}`);
         });
         child.on("error", (err) => {
             if (settled) {

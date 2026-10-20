@@ -2,7 +2,7 @@ import * as vscode from "vscode";
 import { config, formatBytes, logChannel, own, stamp, truncate, untilStop } from "./core";
 import { mark } from "./followups";
 import { resolveExecutable, runCapture } from "./proc";
-import { ensureServer, isNotOpenCode1, knownServerBase, majorVersionNote } from "./net";
+import { ensureServer, forgetDataFolderClash, isNotOpenCode1, knownServerBase, lastServeFailure, majorVersionNote } from "./net";
 import { api } from "./oc-api";
 import { abortServerRun, compactSession, sessionBusy } from "./runs";
 import { discoverOpenCodeEnv, openCodeConfigModel, summariseEnv } from "./env";
@@ -172,6 +172,9 @@ export async function handleControlCommand(p: ControlProps): Promise<vscode.Chat
                 healthy = healthy && Boolean(ok);
                 rows.push(`| version | ${ok ? mark("ok") : mark("fail")} \`${truncate(version || "no output", 60)}\`${major ? ` — ${major}` : ""} |`);
             }
+            // Fetched first, rows kept in order: a failing `opencode models` can
+            // be what shows the data folder is OpenCode 2's.
+            const catalog = await getModelCatalog(exe, p.cwd);
             const serverBase = knownServerBase();
             try {
                 if (!serverBase) {
@@ -190,12 +193,22 @@ export async function handleControlCommand(p: ControlProps): Promise<vscode.Chat
                 }
                 rows.push(`| server | ${mark("ok")} healthy on ${serverBase?.replace(/^http:\/\//, "")}${reported}${scope} |`);
             } catch {
-                rows.push(`| server | not running _(started on demand)_ |`);
+                // "Not running" while every start fails read as healthy (0.0.224 live):
+                // the last failure says why, and the data folder clash fails the row.
+                const failed = lastServeFailure();
+                if (forgetDataFolderClash(exe)) {
+                    healthy = false;
+                    rows.push(`| server | ${mark("fail")} cannot start: OpenCode 1 cannot open its data folder, which OpenCode 2 created — README, *OpenCode 2*. The next message checks again. |`);
+                } else if (failed) {
+                    rows.push(`| server | ${mark("warn")} not running — the last start failed: ${failed.replace(/\|/g, "\\|").replace(/`/g, "'")} |`);
+                } else {
+                    rows.push(`| server | not running _(started on demand)_ |`);
+                }
             }
-            const catalog = await getModelCatalog(exe, p.cwd);
+            // `stale`: the refresh failed and the last good list answered.
             rows.push(
-                `| models | ${catalog.models.length ? mark("ok") : mark("warn")} ${catalog.models.length} via the **${catalog.source
-                }** tier |`
+                `| models | ${catalog.models.length && catalog.source !== "stale" ? mark("ok") : mark("warn")} ${catalog.models.length} via the **${catalog.source
+                }** tier${catalog.source === "stale" ? " _(the refresh failed: debug log)_" : ""} |`
             );
             rows.push(`| workspace | \`${p.folder.name}\` |`);
             const env = discoverOpenCodeEnv(p.cwd);
