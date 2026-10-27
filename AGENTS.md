@@ -185,6 +185,10 @@ startup, not exit (Windows holds a just-exited child's cwd).
 *Make a probe go red before trusting its green.* Fakes must be `.cmd`-wrapped
 on Windows (`writeFake()` does it).
 
+*A path in a shell command is the shell's to parse*: OpenCode 2's shell on
+Windows is Git Bash, which drops an unquoted `\`, so a probe writes `C:/…`
+(REFS, 0.0.227: a control read "absent" for a file that landed renamed).
+
 ---
 
 ## §5 · Assertion style

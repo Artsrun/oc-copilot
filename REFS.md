@@ -5,6 +5,33 @@ actually measured, so nobody re-derives it.
 
 ---
 
+## 0.0.227: the 2.x probe on Windows looked where bash did not write (2026-10-27)
+
+Windows 11, Node 22.23.2, `@opencode/cli` 2.0.18 (installed) and 2.0.32 (a temp
+prefix), `node scripts/probe-opencode2.js <exe>`. Both control rows wrote
+`echo hi > C:\…\project\w-4.txt`; the shell step ran
+(`steps=bash:running,bash:done`), but 2.x's shell on Windows is Git Bash, which
+drops an unquoted backslash (asked in a `/dev` turn on both versions:
+`MINGW64_NT-10.0-26300`, bash `5.1.16(1)-release`,
+`C:\Program Files\Git\usr\bin\bash.exe`). The file landed as `C:UsersUser…projectw-4.txt` in
+the project, the probe read "absent", and the rows went red
+(`2 ROW(S) NOT AS EXPECTED`, the same on both versions). Read as "edits do not
+land on 2.0.18", which was false.
+
+| Redirect target, measured here | bash | cmd | PowerShell |
+| --- | --- | --- | --- |
+| `C:\…\x.txt` | renamed, in its cwd | lands | lands |
+| `C:/…/x.txt` | lands | lands | lands |
+
+With forward slashes, and a `/dev` write-tool control row (the counterpart of
+plan → general · write, which had none): `ALL 10 ROWS AS EXPECTED` on 2.0.18
+and on 2.0.32, the three control files at their own paths and nothing else in
+the project. The 0.0.222 runs were on Linux, where a path has no backslash, and
+`probes.yml` runs on `ubuntu-latest`: neither could show it. `probe-readonly.js`
+built its shell writes the same way and now writes `C:/…` too.
+
+---
+
 ## 0.0.224: OpenCode 1 cannot open a data folder OpenCode 2 created (2026-10-20)
 
 Windows 11, a live VS Code window with 0.0.223. `~/.local/share/opencode/opencode.db`

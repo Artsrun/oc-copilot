@@ -92,6 +92,11 @@ const { compactSession } = out("server-session.js");
         console.log(`${got === expect ? "ok  " : "FAIL"} ${label}: ${got}${got === expect ? "" : ` (expected ${expect})`} · ${Date.now() - t0} ms${note ? ` · ${note}` : ""}`);
     };
     const wrote = (file) => (fs.existsSync(file) ? "CREATED" : "absent");
+    // A shell parses the command: 2.x on Windows runs Git Bash (2.0.18,
+    // 2.0.32), where an unquoted `C:\…` loses its backslashes, so a control's
+    // file landed as `C:Users…w-4.txt` in the project and read "absent" here.
+    // Forward slashes reach the same file in bash, cmd and PowerShell (REFS).
+    const echoTo = (file) => `echo hi > ${file.replace(/\\/g, "/")}`;
 
     await row("build · text turn streams and answers", "answered", async () => {
         const r = await turn("[[probe:text]] hi");
@@ -103,12 +108,12 @@ const { compactSession } = out("server-session.js");
     console.log(`     server ${base} (${version})`);
     await row("plan · shell echo > file", "absent", async () => {
         const f = target(1);
-        const r = await turn(`[[probe:bash:echo hi > ${f}]] go`, { agent: "plan", readOnly: true });
+        const r = await turn(`[[probe:bash:${echoTo(f)}]] go`, { agent: "plan", readOnly: true });
         return [wrote(f), `evidence=${r.metrics.readOnlyEnforcement?.kind} steps=${r.steps.join(",") || "-"}`];
     });
     await row("plan → explore · shell echo > file", "absent", async () => {
         const f = target(2);
-        const r = await turn(`[[probe:task@explore:bash:echo hi > ${f}]] go`, { agent: "plan", readOnly: true });
+        const r = await turn(`[[probe:task@explore:bash:${echoTo(f)}]] go`, { agent: "plan", readOnly: true });
         return [wrote(f), `subagents=${r.metrics.subagents?.count ?? 0} steps=${r.steps.join(",") || "-"}`];
     });
     await row("plan → general · write", "absent", async () => {
@@ -118,7 +123,14 @@ const { compactSession } = out("server-session.js");
     });
     await row("control: /dev build · shell echo > file", "CREATED", async () => {
         const f = target(4);
-        const r = await turn(`[[probe:bash:echo hi > ${f}]] go`, { autoApprove: true });
+        const r = await turn(`[[probe:bash:${echoTo(f)}]] go`, { autoApprove: true });
+        return [wrote(f), `steps=${r.steps.join(",") || "-"}`];
+    });
+    // The write tool's own control: without it "plan → general · write: absent"
+    // would read the same on a binary whose write tool never writes.
+    await row("control: /dev build · write", "CREATED", async () => {
+        const f = target(6);
+        const r = await turn(`[[probe:write:${f}]] go`, { autoApprove: true });
         return [wrote(f), `steps=${r.steps.join(",") || "-"}`];
     });
     await row("plan → explore · git status runs (subagent row)", "runs", async () => {
@@ -146,7 +158,7 @@ const { compactSession } = out("server-session.js");
     settings.enforceReadOnly = false;
     await row("control: enforceReadOnly off · plan shell echo > file", "CREATED", async () => {
         const f = target(5);
-        await turn(`[[probe:bash:echo hi > ${f}]] go`, { agent: "plan", readOnly: true });
+        await turn(`[[probe:bash:${echoTo(f)}]] go`, { agent: "plan", readOnly: true });
         return [wrote(f), ""];
     });
     stopServer();

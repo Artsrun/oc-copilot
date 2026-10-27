@@ -137,7 +137,9 @@ const capture = (args, cwd) =>
         return from;
     };
     const say = (action) => `Go. [[probe:${action}]]`;
-    const write = (file) => `bash:echo written > ${file}`;
+    // Forward slashes: bash, OpenCode 2's shell on Windows (2.0.18, 2.0.32),
+    // reads an unquoted `C:\…` without its backslashes (REFS, 0.0.227).
+    const write = (file) => `bash:echo written > ${file.replace(/\\/g, "/")}`;
 
     if (major === 1) {
         const helper = path.join(project, process.platform === "win32" ? "external-diff.cmd" : "external-diff.sh");
