@@ -1,5 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.WORKTREE_TURN = void 0;
 exports.suggestFollowups = suggestFollowups;
 exports.rememberFollowups = rememberFollowups;
 exports.recalledFollowups = recalledFollowups;
@@ -35,6 +36,7 @@ function rememberFollowups(sessionId, turns, chips) {
 function recalledFollowups(sessionId, turns) {
     return sessionId ? followupStore.get(`${sessionId}#${turns}`) ?? [] : [];
 }
+exports.WORKTREE_TURN = 0;
 const BACKOFF_KEY = "opencodeCopilotBridge.chipBackoff";
 const BACKOFF_AFTER = 3;
 const BACKOFF_MAX_HOLD = 32;
@@ -137,6 +139,12 @@ function outcomeOf(metadata) {
     }
 }
 function followupsFor(metadata) {
+    if (metadata.kind === "worktree") {
+        const session = typeof metadata.worktreeSession === "string" ? metadata.worktreeSession : undefined;
+        return metadata.error || metadata.timedOut || metadata.cancelled
+            ? []
+            : recalledFollowups(session, exports.WORKTREE_TURN).map(({ label, prompt, command }) => ({ label, prompt, command }));
+    }
     const outcome = outcomeOf(metadata);
     const kind = metadata.agent === "dev" || metadata.kind === "dev" ? "dev" : "plan";
     const own = typeof metadata.prompt === "string" ? metadata.prompt : undefined;

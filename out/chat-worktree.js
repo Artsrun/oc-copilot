@@ -62,9 +62,12 @@ async function handleWorktree(p) {
             return { metadata: { kind: "worktree", cwd, error: created.reason } };
         }
         wt = created.worktree;
-        core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] worktree ${wt.path} on ${wt.branch} from ${wt.baseRef}@${wt.baseSha.slice(0, 7)}`);
+        const left = created.uncommitted;
+        core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] worktree ${wt.path} on ${wt.branch} from ${wt.baseRef}@${wt.baseSha.slice(0, 7)}; ${left} uncommitted left in the checkout`);
         response.markdown(`> ${(0, followups_1.mark)("worktree")} Isolated run in \`${wt.path}\` on branch \`${wt.branch}\` ` +
-            `(from \`${wt.baseRef}\` @ \`${wt.baseSha.slice(0, 7)}\`). Your checkout is not touched.\n\n`);
+            `(from \`${wt.baseRef}\` @ \`${wt.baseSha.slice(0, 7)}\`). Your checkout is not touched.` +
+            (left ? ` Its ${left} uncommitted ${left === 1 ? "change is" : "changes are"} not in the worktree: commit first if the task needs them.` : "") +
+            "\n\n");
     }
     const tPlan = (0, prompt_1.planTimeout)();
     const devAgent = settings.get("devAgent", "build").trim() || "build";
@@ -137,6 +140,12 @@ async function handleWorktree(p) {
     }
     if (!answer.trim()) {
         response.markdown(metrics.error ? `> ${(0, followups_1.mark)("fail")} OpenCode reported an error: \`${metrics.error}\`` : "_OpenCode returned no text._");
+    }
+    if (runSession && !metrics.error && !metrics.timedOut) {
+        const chips = (0, chat_boot_1.suggestFollowups)({ agent: "dev", answer, steps: metrics.steps })
+            .filter((c) => c.command === "dev")
+            .map((c) => ({ ...c, command: "worktree" }));
+        (0, chat_boot_1.rememberFollowups)(runSession, chat_boot_1.WORKTREE_TURN, chips);
     }
     const stat = await (0, worktree_1.worktreeDiff)(wt, true, (0, core_1.config)().get("worktreeDiffMaxMB", 16));
     response.markdown(stat

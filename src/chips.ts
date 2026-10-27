@@ -18,8 +18,9 @@ export interface Followup {
     label: string;
     prompt: string;
     /** Set on every chip: Copilot keeps the last command sticky, so the kind
-     * lives here and the prompt is only the sentence. */
-    command: "dev" | "plan" | "parallel";
+     * lives here and the prompt is only the sentence. `worktree`: a chip under
+     * a /worktree turn, which continues that worktree. */
+    command: "dev" | "plan" | "parallel" | "worktree";
     /** What made it (./natural), for the backoff. Never sent to the host. */
     kind?: string;
 }
@@ -53,6 +54,10 @@ export function rememberFollowups(sessionId: string, turns: number, chips: Follo
 export function recalledFollowups(sessionId: string | undefined, turns: number): Followup[] {
     return sessionId ? followupStore.get(`${sessionId}#${turns}`) ?? [] : [];
 }
+
+/** A /worktree turn's chips are kept under its own session at this turn: its
+ * session is not the chat's, and its turns are not counted. */
+export const WORKTREE_TURN = 0;
 
 // ---------------------------------------------------------------------------
 // Chip backoff. claim:chip-backoff
@@ -209,6 +214,14 @@ export function outcomeOf(metadata: Record<string, unknown>): Outcome {
 }
 
 export function followupsFor(metadata: Record<string, unknown>): vscode.ChatFollowup[] {
+    // A finished /worktree turn: the answer's own chips, kept by ./chat-worktree
+    // and sent as `/worktree`; a failed one has no recovery chips (its buttons).
+    if (metadata.kind === "worktree") {
+        const session = typeof metadata.worktreeSession === "string" ? metadata.worktreeSession : undefined;
+        return metadata.error || metadata.timedOut || metadata.cancelled
+            ? []
+            : recalledFollowups(session, WORKTREE_TURN).map(({ label, prompt, command }) => ({ label, prompt, command }));
+    }
     const outcome = outcomeOf(metadata);
     const kind: "dev" | "plan" = metadata.agent === "dev" || metadata.kind === "dev" ? "dev" : "plan";
     const own = typeof metadata.prompt === "string" ? metadata.prompt : undefined;

@@ -20,7 +20,7 @@ no bundler, no test runner: plain TypeScript → `out/`, plain Node for the suit
 | `src/chat-boot.ts` | The command vocabulary: control/kind/routed commands, aliases, retired words, `helpMarkdown`. Re-exports `heartbeat`, `lanes` and `chips`, so the chat layer keeps one import. |
 | `src/heartbeat.ts` | The live turn: heartbeat (plain live lines + milestone ticker; finished accordions with `groupProgress`; a subagent's tool over its `task` row), **`chatStream`** (nothing after Stop, never throws, one pill badger per turn), `thoughtLine`. |
 | `src/lanes.ts` | `/parallel`: `splitLanes` (`\|` `;;` `---` only), `runParallelLanes`, the lane store behind Merge / Retry, `retryLanesPrompt`. |
-| `src/chips.ts` | **`followupsFor`**: state chips first (Resume a subagent, Compact), then the answer's own (`suggestFollowups`, kept per turn). |
+| `src/chips.ts` | **`followupsFor`**: state chips first (Resume a subagent, Compact), then the answer's own (`suggestFollowups`, kept per turn); a `/worktree` turn's editing chips, kept at `WORKTREE_TURN` and sent as `/worktree`. |
 | `src/chat-commands.ts` | Control commands — `/help` `/new` `/model` `/ping` `/env` `/session` `/sessions` `/stop` `/compact`: answers without a turn (`/compact` is one summarize pass). |
 | `src/chat-sessions.ts` | **/sessions**: the picker and Continue / Fork / Close / Delete; binds a chat by returning `{sessionId, turns, cwd}` metadata. |
 | `src/sessions.ts` | OpenCode's session store over HTTP: list, last messages, fork (+ headless rules back), archive, delete. |
@@ -42,11 +42,11 @@ no bundler, no test runner: plain TypeScript → `out/`, plain Node for the suit
 | `src/context.ts` | Attachments/selection folding, every reference noted kept or dropped (`referenceLogLine`, `contextNotice`: what OpenCode won't get, said in chat), references, answer file pills (`createFileLinker`), `parseChatPrompt`, `splitModelPrefix`, `splitModelsFanout`. |
 | `src/env.ts` | What OpenCode loaded: config, plugins, MCP, commands, skills, agents, instruction files. |
 | `src/followups.ts` + `.json` | **Every word a chip or handoff sends**, the marks, pills (`createBadger`), `followupsProblems`. Leaf: imports only its JSON. |
-| `src/natural.ts` | Answer-derived chips: the agent's own offer or either/or, a named step 1, the file it edited, failing tests, Dig deeper — or nothing. `laneItems` is the lanes rule for the chip and for `autoParallel: auto`. |
+| `src/natural.ts` | Answer-derived chips: the agent's own offer or either/or, a named step 1, a review's findings by severity (`findingsOf`: headings, item tags, a Severity column, `<li>`), the file it edited, failing tests, Dig deeper — or nothing. `laneItems` is the lanes rule for the chip and for `autoParallel: auto`. |
 | `src/core.ts` | **The foundation**: imports nothing local. `config()`, `logChannel`, text helpers, status bar, folder resolution. |
 | `src/extension.ts` | `activate()` (panel + guarded inline participant), the `__test` handle, `deactivate()`. |
 | `src/commands.ts`, `commands-registry.ts` | Palette commands, worktree buttons, config listener. |
-| `src/worktree.ts`, `chat-worktree.ts` | `/worktree`: git via `execFile`, an isolated dev run; a follow-up in the same chat continues its worktree and session (`reopenWorktree` checks what the metadata names). |
+| `src/worktree.ts`, `chat-worktree.ts` | `/worktree`: git via `execFile`, an isolated dev run from HEAD (the uncommitted count is said); a follow-up in the same chat continues its worktree and session (`reopenWorktree` checks what the metadata names). |
 | `src/format.ts`, `metrics.ts`, `prompt.ts` | Metrics → markdown; run types; timeouts and vague-prompt detection. |
 | `src/context-markers.ts` | Host-free context vocabulary shared by the producer and leak gate. |
 | `src/git-scan-server.ts` | Standalone newline-delimited JSON-RPC MCP server; one bounded, shell-free Git status call. |
@@ -204,6 +204,8 @@ pick the next free one.
   the file `spawn` runs, and without its shebang `/bin/sh` reads it. Windows
   wraps every fake in a `.cmd` that calls `node`, so such a check is green there
   and red on Linux and macOS (0.0.213).
+- **A file git checks out is CRLF on Windows** (`core.autocrlf`): compare its
+  text without line endings (`WT8` read `v1\r\n` and went red).
 - **`writeFake` answers `--version` with `1.19.0` itself** unless the fake's
   code mentions `--version`; and the CLI identity check is cached per
   executable file for the whole suite, across `ext.deactivate()`. A check about
@@ -326,6 +328,14 @@ history belongs in `CHANGELOG.md`, not in the source.
   every message in that chat is `/worktree`, and a sticky one cannot be told
   from a typed one: so a follow-up continues the chat's worktree, and a fresh
   one is an explicit action (New worktree, a new chat, `/new`) (`WT5`).
+- **A worktree starts from HEAD**: uncommitted edits stay in the checkout, and
+  a task about them ends in "No file changes". A new worktree says the count
+  (`WT8`). A chip under a `/worktree` turn carries `command: "worktree"`: a
+  `dev` or `plan` chip would run in the checkout, so read-only chips are left
+  out there (`WT9`).
+- **A review has no one layout**: OpenCode 1.19.3's `/review` prompt says only
+  "communicate severity". A severity counts as a heading, an item's leading
+  tag or a Severity column, never as a word in a sentence (`NF`).
 - **A file-path menu icon is a CSS `background-image`**: `currentColor` is black.
   Use a `$(codicon)` (`HA`).
 - **Session ids are untrusted**: URLs via `sessionPath`, argv via

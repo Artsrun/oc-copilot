@@ -10,7 +10,8 @@
 // GUARANTEES: a worktree at <parent>/<repo>.worktrees/<slug> on branch
 //   ai/<slug>, created from your current HEAD — or, for a follow-up in the same
 //   chat, the one it already made (reopenWorktree); the dev run's cwd and --dir
-//   are that folder, so tracked files in your checkout are not written.
+//   are that folder, so tracked files in your checkout are not written. A new
+//   worktree says how many uncommitted changes it left behind.
 // DOES NOT: commit; copy untracked files (.env, node_modules); separate ports or
 //   OpenCode's global session store; merge anything back.
 //
@@ -60,7 +61,8 @@ export interface Worktree {
     baseSha: string;
 }
 
-export type WorktreeResult = { ok: true; worktree: Worktree } | { ok: false; reason: string };
+/** `uncommitted`: the checkout's `git status` entries, which the worktree does not get. */
+export type WorktreeResult = { ok: true; worktree: Worktree; uncommitted: number } | { ok: false; reason: string };
 
 export const createWorktree = async (cwd: string, task: string): Promise<WorktreeResult> => {
     const top = await git(cwd, ["rev-parse", "--show-toplevel"]);
@@ -73,6 +75,10 @@ export const createWorktree = async (cwd: string, task: string): Promise<Worktre
         return { ok: false, reason: "the repository has no commits yet — a worktree needs a commit to start from." };
     }
     const ref = await git(root, ["rev-parse", "--abbrev-ref", "HEAD"]);
+    // The worktree starts from HEAD: edits not yet committed stay behind, and a
+    // task about them finds nothing to do there.
+    const status = await git(root, ["status", "--porcelain"]);
+    const uncommitted = status.code === 0 ? status.stdout.split("\n").filter((l) => l.trim()).length : 0;
     const slug = `${slugify(task)}-${stampSlug()}`;
     const branch = `ai/${slug}`;
     const wtPath = path.join(path.dirname(root), `${path.basename(root)}.worktrees`, slug);
@@ -82,7 +88,8 @@ export const createWorktree = async (cwd: string, task: string): Promise<Worktre
     }
     return {
         ok: true,
-        worktree: { root, path: wtPath, branch, baseRef: ref.stdout.trim() || "HEAD", baseSha: sha.stdout.trim() }
+        worktree: { root, path: wtPath, branch, baseRef: ref.stdout.trim() || "HEAD", baseSha: sha.stdout.trim() },
+        uncommitted
     };
 };
 

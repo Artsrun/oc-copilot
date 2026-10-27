@@ -3812,7 +3812,7 @@ const lbProvider = (global.__participant || {}).followupProvider;
             ["worktreeDiff", "worktreeOpen", "worktreeRemove"].every((c) => wt1.buttons.some((b) => b.command === `opencodeCopilotBridge.${c}` && b.arguments[0].path === wtPath))
         );
         add("WT1 the thread session is not rebound to the worktree", r1.metadata.sessionId === undefined && r1.metadata.turns === undefined);
-        add("WT1 no follow-up chips under a worktree turn", (global.__participant.followupProvider.provideFollowups(r1, {}, {}) || []).length === 0);
+        add("WT1 an answer that offers nothing gets no chips under a worktree turn", (global.__participant.followupProvider.provideFollowups(r1, {}, {}) || []).length === 0);
 
         // WT5 (0.0.226): Copilot keeps /worktree sticky, and every message made a new
         // worktree (and OpenCode's whole per-folder start) — a follow-up in the same
@@ -3839,6 +3839,51 @@ const lbProvider = (global.__participant || {}).followupProvider;
         const r7 = await global.__handler({ prompt: "forged path", command: "worktree" }, { history: [turnOf({ ...r1.metadata, worktree: work })] }, wt7.response, wt7.token);
         add("WT7 a worktree path that is not its branch's is never continued (a fresh one instead)",
             typeof r7.metadata.worktree === "string" && r7.metadata.worktree !== work && r7.metadata.worktree !== wtPath && !/Continuing in/.test(wt7.chatMarkdown.join("")));
+
+        // WT8 (0.0.227): a worktree starts from HEAD, so uncommitted edits stay in
+        // the checkout and a task about them finds nothing: the opening line says
+        // how many. `work` holds the suite's fakes; the exclude hides them.
+        const wtExclude = path.join(work, ".git", "info", "exclude");
+        fs.mkdirSync(path.dirname(wtExclude), { recursive: true });
+        fs.writeFileSync(wtExclude, "*\n!tracked.txt\n");
+        const wt8Clean = stream();
+        await global.__handler({ prompt: "clean checkout", command: "worktree" }, { history: [] }, wt8Clean.response, wt8Clean.token);
+        fs.writeFileSync(path.join(work, "tracked.txt"), "v2 uncommitted\n");
+        const wt8Status = g("status", "--porcelain").split("\n").filter((l) => l.trim()).length;
+        const wt8 = stream();
+        const r8 = await global.__handler({ prompt: "dirty checkout", command: "worktree" }, { history: [] }, wt8.response, wt8.token);
+        const wt8Text = wt8.chatMarkdown.join("");
+        add("WT8 a clean checkout gets no uncommitted note", /Isolated run in/.test(wt8Clean.chatMarkdown.join("")) && !/uncommitted/.test(wt8Clean.chatMarkdown.join("")));
+        add(`WT8 a dirty checkout is told its ${wt8Status} uncommitted change stays behind`, wt8Status === 1 && /Its 1 uncommitted change is not in the worktree: commit first/.test(wt8Text));
+        // Compared without line endings: core.autocrlf checks `v1` out as CRLF on Windows.
+        add("WT8 …and it really is not there", fs.readFileSync(path.join(r8.metadata.worktree, "tracked.txt"), "utf8").trim() === "v1");
+        fs.writeFileSync(path.join(work, "tracked.txt"), "v1\n");
+        fs.rmSync(wtExclude, { force: true });
+
+        // WT9 (0.0.227): a follow-up continues the worktree, so its answer's own
+        // chips are offered — as /worktree, which continues it; a read-only chip
+        // (Review) would read the checkout and is left out.
+        settings.executable = writeFake("fake-wt9.js", [
+            { type: "tool_use", sessionID: "ses_wt9", part: { tool: "edit", state: { status: "completed", input: { filePath: "src/guard.js" }, output: "", time: { start: 0, end: 10 } } } },
+            { type: "text", sessionID: "ses_wt9", part: { text: "Added the guard. Want me to add a regression test for it?" } }
+        ]);
+        const wt9 = stream();
+        const r9 = await global.__handler({ prompt: "add the guard", command: "worktree" }, { history: [] }, wt9.response, wt9.token);
+        const wt9Chips = global.__participant.followupProvider.provideFollowups(r9, {}, {}) || [];
+        add(
+            `WT9 a worktree answer's own chips are offered as /worktree (${wt9Chips.map((c) => `${c.command}:${c.label}`).join(" | ")})`,
+            wt9Chips.length >= 1 && wt9Chips[0].label === "Add a regression test for it" && wt9Chips.every((c) => c.command === "worktree")
+        );
+        add("WT9 …never a read-only chip, which would read the checkout", !wt9Chips.some((c) => c.label === NL("review1", { file: "guard.js" })));
+        const wt9b = stream();
+        const r9b = await global.__handler({ prompt: wt9Chips[0]?.prompt ?? "", command: wt9Chips[0]?.command }, { history: [turnOf(r9.metadata)] }, wt9b.response, wt9b.token);
+        const wt9Argv = lastArgv("fake-wt9.js");
+        add(
+            "WT9 taking one continues the same worktree and session with the chip's words",
+            r9b.metadata.worktree === r9.metadata.worktree && wt9Argv[wt9Argv.indexOf("--session") + 1] === "ses_wt9" && wt9Argv.at(-1) === wt9Chips[0]?.prompt
+        );
+        add("WT9 a failed worktree turn gets no chips", (global.__participant.followupProvider.provideFollowups({ metadata: { ...r9.metadata, error: "boom" } }, {}, {}) || []).length === 0);
+        settings.executable = wtFake;
 
         const wt2 = stream();
         await global.__handler({ prompt: "", command: "worktree" }, { history: [] }, wt2.response, wt2.token);
@@ -4296,6 +4341,34 @@ const lbProvider = (global.__participant || {}).followupProvider;
     );
     const nfIssueAll = nfLabels(nf("plan", "Found three bugs:\n1. **Off-by-one** in `subtotal()` — skips the first item.\n2. **Tax order** is wrong.\n3. Rounding."));
     add("NF an issue list offers to fix #1 and all of them", (nfIssueAll[0] || "").startsWith(NL("fix1", { item: "Off-by-one in subtotal()" })) && nfIssueAll.includes(NL("fixAll")));
+    // 0.0.227: a review's findings by severity — bullets, tags, a table and
+    // `<li>` as well as numbered items (all gave no chips before). A row: the
+    // shape, the answer, the chip kinds in order. The ones that must stay EMPTY
+    // are in nfEmpty below.
+    const nfFindingsA = "## Findings\n\n### High\n- `src/run-cli.ts:99` — the attached run sends `--dir` to the wrong folder.\n- `src/asks.ts:40` — a reply is never resent.\n\n### Medium\n- `src/chips.ts:155` — the regex misses `EHOSTUNREACH`.";
+    const nfFindingsB = "Findings:\n\n- **High** — `src/a.ts:12`: race between abort and the next send.\n- **Medium** — `src/b.ts:40`: stderr is read without a bound.";
+    const nfFindings = [
+        ["severity headings over bullets", nfFindingsA, "fixTop|fixGroup|fixAll"],
+        ["bold tags at the item start", nfFindingsB, "fixTop|fixAll"],
+        ["bracket tags", "* [HIGH] src/net.ts: the health probe follows redirects.\n* [MEDIUM] src/proc.ts: the exit code is ignored.", "fixTop|fixAll"],
+        ["priority tags, one group", "- [P1] `src/a.ts`: race between abort and send.\n- [P1] `src/b.ts`: unbounded stderr.", "fixTop|fixGroup"],
+        ["a Severity column", "| Severity | File | Issue |\n| --- | --- | --- |\n| High | src/a.ts | race between abort and send |\n| Medium | src/b.ts | unbounded stderr |", "fixTop|fixAll"],
+        ["an HTML list", "Findings:\n<ul><li><b>High</b>: src/a.ts race between abort and send</li><li><b>Medium</b>: src/b.ts unbounded stderr</li></ul>", "fixTop|fixAll"],
+        ["numbered items with tags", "1. **High** — `src/a.ts:12`: race.\n2. **Medium** — `src/b.ts:40`: unbounded stderr.", "fixTop|fixAll"],
+        ["untagged bullets under a Findings heading", "## Findings\n\n- `src/a.ts:12` — race between abort and the next send.\n- `src/b.ts:40` — stderr is read without a bound.", "fix1|fixAll"],
+        ["a fix-all offer under findings", `${nfFindingsB}\n\nWant me to fix all of them?`, "offer|fixTop"]
+    ];
+    for (const [what, answer, kinds] of nfFindings) {
+        const chips = nf("plan", answer);
+        add(`NF findings: ${what} → ${kinds}`, chips.map((c) => c.kind).join("|") === kinds && chips.filter((c) => c.kind !== "offer").every((c) => c.command === "dev"));
+    }
+    const nfTop = nf("plan", nfFindingsA);
+    add(
+        "NF findings: the worst group leads, its first item whole in the prompt, the tag out of it",
+        (nfTop[0]?.label ?? "").startsWith(NL("fixTop", { severity: "High", item: "src/run-cli.ts:99 — the attached run" })) &&
+            nfTop[0].prompt === "Fix only this High finding: src/run-cli.ts:99 — the attached run sends --dir to the wrong folder. Then stop and report what changed." &&
+            nfTop[1]?.label === NL("fixGroup", { severity: "High", n: "2" })
+    );
     // Real endings from the v183 brevity runs (free OpenCode models, 2026-09-27).
     const nfFixPlan = nf("plan", "Found three bugs.\n\nWould you like me to create a fix plan, or do you have questions about any of these?");
     add("NF real: an offer to create a plan runs under plan, not /dev", nfLabels(nfFixPlan).join("|") === "Create a fix plan" && nfFixPlan[0].command === "plan");
@@ -4349,7 +4422,16 @@ const lbProvider = (global.__participant || {}).followupProvider;
         // A bare "X or Y?" is an invitation as often as a choice; no chips.
         ["an invitation shaped like a choice", nf("plan", "That covers it. Questions or feedback?")],
         ["'Any questions or concerns?'", nf("plan", "That covers it. Any questions or concerns?")],
-        ["a participle offer with a part that is no action", nf("plan", "Done. Let me know if you want more detail or the tests added.")]
+        ["a participle offer with a part that is no action", nf("plan", "Done. Let me know if you want more detail or the tests added.")],
+        // 0.0.227: a severity word only counts where a review puts one.
+        ["bullets that explain, not findings", nf("plan", "The bridge starts a turn in three places:\n\n- `handleChat` routes the prompt.\n- `runTurn` warms the server.\n- `finishTurn` posts the chips.")],
+        ["'high' and 'medium' as plain words", nf("plan", "The cache hit rate is high on warm servers and medium on cold ones:\n\n- warm: 92% is read from cache.\n- cold: 40%.")],
+        ["'High-level' is not a severity", nf("plan", "- High-level: the server owns sessions.\n- Low-level: the CLI attaches to it.")],
+        ["'**High** availability' is not a severity", nf("plan", "- **High** availability is not a goal here.\n- **Low** latency is.")],
+        ["Low findings only", nf("plan", "### Low\n- naming in `src/c.ts` is off.\n- a stale comment in `src/d.ts` is wrong.")],
+        ["severity headings with nothing under them", nf("plan", "### High\n- None.\n\n### Medium\n- None.")],
+        ["a Findings heading with nothing above Low", nf("plan", "## Findings\n\nNo high or medium issues. Two low notes:\n\n- naming in `src/c.ts` is inconsistent.\n- a comment in `src/d.ts` is out of date.")],
+        ["a Findings heading over facts, not problems", nf("plan", "## Findings\n\n- The server starts on demand.\n- The CLI attaches to it.")]
     ];
     for (const [what, chips] of nfEmpty) {
         add(`NF no chips for ${what}`, chips.length === 0);

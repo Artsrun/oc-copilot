@@ -165,7 +165,9 @@ OpenCode's server (started on demand). Debug: the output channel logs
   names in inline code (`src/cart.ts:42`) becomes a pill that opens it at that
   line; an accordion row that read or edited one file opens it too.
 - **Follow-ups are the answer's own next moves**: what the agent offered or
-  asked ("Which do you prefer: Postgres or MySQL?"), a step 1, the file it
+  asked ("Which do you prefer: Postgres or MySQL?"), a step 1, a review's worst
+  finding and its severity group (**Fix High: …**, **Fix High (2)**, from
+  bullets, tags, a Severity column or a numbered list; Low alone gets none), the file it
   edited, the tests it said fail, one more look at a higher effort when it
   said it was unsure — else none. Recovery chips appear only after a failure or a stop,
   and fit it: a rate limit or a refused model gets **Pick model**, a hung tool
@@ -381,9 +383,13 @@ there the read-only `plan` itself limits `task`. <!-- claim:read-only-subagents 
 ### `/worktree <task>` (in chat)
 
 Creates `<parent>/<repo>.worktrees/<slug>` on branch `ai/<slug>` from `HEAD`
-and runs the editing agent there. It ends with the changed files and buttons:
+and runs the editing agent there. Uncommitted edits stay in your checkout: a
+dirty checkout is told how many the worktree does not have, so commit first if
+the task needs them. It ends with the changed files and buttons:
 **Show full diff**, **Open in new window**, **Remove worktree** (asks first;
-deletes the branch), **New worktree**. The chat's own session stays on your checkout.
+deletes the branch), **New worktree**. The chat's own session stays on your
+checkout. The answer's own chips (its offer, **Test it**) continue the worktree;
+a read-only one such as **Review** would read your checkout, so it is not offered.
 
 A follow-up in the same chat continues that worktree and its OpenCode session —
 Copilot keeps `/worktree` selected, and a worktree per message also meant
@@ -529,6 +535,19 @@ All under `opencodeCopilotBridge.`.
 
 The last five releases; the full history is `CHANGELOG.md` in the repository.
 
+### 0.0.227
+
+- **A review gets Fix chips whatever its layout.** Findings ranked High,
+  Medium, P1 and the like, as bullets, tags, a Severity column, an HTML list or
+  a numbered list, now offer **Fix High: …** for the worst one, **Fix High (2)**
+  for its group and **Fix all**; before, only a numbered list got chips. A
+  severity word in a sentence is not read as one, and Low alone gets none.
+- **`/worktree` says what it leaves behind**: a new worktree starts from your
+  last commit, and a dirty checkout is told how many uncommitted changes it
+  does not have.
+- **Chips under `/worktree`**: the answer's own editing chips, sent back to
+  the same worktree. Checks `NF`, `WT8`, `WT9`.
+
 ### 0.0.226
 
 - **`/worktree` follow-ups continue the same worktree.** Copilot keeps
@@ -569,12 +588,3 @@ The last five releases; the full history is `CHANGELOG.md` in the repository.
   is outside the tested versions, instead of being refused.
 - CI: the gate on Linux, Windows and macOS for every push and pull request, and
   nightly probes against real OpenCode 1.19.0, 2.0.29 and the latest 2.x.
-
-### 0.0.222
-
-- **OpenCode 2, experimental** (`opencode2`, off by default): a 2.x
-  `opencode` is driven through its HTTP API instead of refused — every turn
-  through this window's own server, its events read as 1.x's, read-only turns
-  sent only when that server lists the bridge's rules ([OpenCode 2](#opencode-2)).
-  Measured end to end on real 2.0.29 and 2.0.32 (`scripts/probe-opencode2.js`:
-  9 rows each); the suite replays frames recorded from both majors. Checks `TW`.

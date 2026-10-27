@@ -179,6 +179,112 @@ const laneItems = (markdown, splits) => {
     return ok && splits(items.join("\n---\n")).length === items.length ? items : undefined;
 };
 exports.laneItems = laneItems;
+const RANKS = {
+    critical: 4, blocker: 4, blocking: 4, p0: 4,
+    high: 3, major: 3, p1: 3,
+    medium: 2, moderate: 2, p2: 2,
+    low: 1, minor: 1, nit: 1, nitpick: 1, p3: 1
+};
+const TAG = String.raw `(critical|blocker|blocking|p[0-3]|high|major|medium|moderate|low|minor|nit(?:pick)?)(?:\s+(?:severity|priority|risk|impact))?`;
+const TAGGED = new RegExp(String.raw `^[^\w[(*_]*(?:(?:\*\*|__)\[?${TAG}(?:\]|:)(?:\*\*|__)|[[(]${TAG}[\])]|(?:\*\*|__)?${TAG}(?:\*\*|__)?(?=\s*[:—–]|\s+-\s|\s*\x60))\s*(?:[:—–]|-\s)?\s*(.*)$`, "i");
+const TAG_HEADING = new RegExp(String.raw `^[^\w[(]*[[(]?${TAG}[\])]?(?:\s+(?:issues?|findings?|problems?|bugs?|concerns?))?(?:\s*\(\d+\))?(?:(?:\s*[:—–]|\s+-\s).*|\s*)$`, "i");
+const FINDINGS_HEADING = /^[^\w]*(?:(?:code\s+)?review\s+)?(?:findings?|issues?|problems?|bugs?|concerns?)(?:\s+found)?(?:\s*\(\d+\))?\s*:?\s*$/i;
+const FINDING_ITEM = /^ ?(?:[-*+•]|\d{1,3}[.)])\s+(.+)$/;
+const NONE_ITEM = /^(?:none|n\/a|nothing|no (?:issues?|findings?|problems?|bugs?))\b/i;
+const SEVERITY_COLUMN = /^(?:severity|sev|priority|impact|risk|level)$/i;
+const findingText = (raw) => {
+    const text = (0, core_1.plainText)(raw.replace(/<[^>]+>/g, " "))
+        .replace(/[*`]/g, "")
+        .replace(/\s+\([^)]+\)/g, "")
+        .replace(/^[\s:—–-]+|[\s.:;]+$/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
+    return text.length > 200 ? text.slice(0, text.lastIndexOf(" ", 200)) : text;
+};
+const headingOf = (line) => {
+    const strong = line.match(/^\s{0,3}#{1,6}\s+(.+?)[\s#]*$/)?.[1] ?? line.match(/^\s*(?:\*\*|__)([^*_]+?)(?:\*\*|__)\s*:?\s*$/)?.[1];
+    if (strong !== undefined) {
+        return { text: (0, core_1.plainText)(strong).trim(), strong: true };
+    }
+    const label = line.match(/^\s*([^\s|<>`*+•-][^:|]{0,48}):\s*$/)?.[1];
+    return label === undefined ? undefined : { text: (0, core_1.plainText)(label).trim(), strong: false };
+};
+const findingsOf = (markdown) => {
+    const lines = markdown
+        .replace(/```[\s\S]*?```/g, "\n")
+        .replace(/<h[1-6][^>]*>([\s\S]*?)<\/h[1-6]>/gi, "\n### $1\n")
+        .replace(/<\/?(?:b|strong)>/gi, "**")
+        .replace(/<li[^>]*>/gi, "\n- ")
+        .replace(/<\/li>|<\/?(?:ul|ol|p)[^>]*>|<br\s*\/?>/gi, "\n")
+        .split("\n");
+    const found = [];
+    let section;
+    let columns;
+    const add = (tag, raw) => {
+        const text = findingText(raw);
+        if (!text || NONE_ITEM.test(text)) {
+            return;
+        }
+        if (tag) {
+            found.push({ rank: RANKS[tag.toLowerCase()], tag, text });
+        }
+        else if (section) {
+            found.push({ ...section, text });
+        }
+    };
+    for (const line of lines) {
+        const row = line.match(/^\s*\|(.*)\|\s*$/);
+        if (row) {
+            const cells = row[1].split("|").map((c) => (0, core_1.plainText)(c).trim());
+            if (cells.every((c) => !c || /^:?-{2,}:?$/.test(c))) {
+                continue;
+            }
+            if (!columns) {
+                columns = cells;
+                continue;
+            }
+            const at = columns.findIndex((c) => SEVERITY_COLUMN.test(c));
+            const cell = at >= 0 ? (cells[at] ?? "").replace(/^\W+|\W+$/g, "") : "";
+            add(Object.hasOwn(RANKS, cell.toLowerCase()) ? cell : undefined, cells.filter((c, i) => i !== at && c).join(" — "));
+            continue;
+        }
+        columns = undefined;
+        const item = line.match(FINDING_ITEM);
+        if (item) {
+            const tagged = item[1].match(TAGGED);
+            add(tagged ? tagged[1] ?? tagged[2] ?? tagged[3] : undefined, tagged ? tagged[4] : item[1]);
+            continue;
+        }
+        const heading = headingOf(line);
+        if (heading) {
+            const tag = heading.text.match(TAG_HEADING)?.[1];
+            const set = tag ? { rank: RANKS[tag.toLowerCase()], tag } : FINDINGS_HEADING.test(heading.text) ? { rank: 0, tag: "" } : undefined;
+            section = set ?? (heading.strong ? undefined : section);
+        }
+    }
+    return found;
+};
+const severityName = (tag) => (/^p\d$/i.test(tag) ? tag.toUpperCase() : capitalize(tag.toLowerCase()));
+const findingChips = (found, offersAll) => {
+    const top = Math.max(0, ...found.map((f) => f.rank));
+    const fixAll = !offersAll ? [cueChip("fixAll", "dev", (0, followups_1.naturalText)("fixAll"))] : [];
+    if (top === 0) {
+        const first = found[0]?.text ?? "";
+        return found.length >= 2 && ISSUE.test(first) && !EDIT_VERBS.has(firstWord(first))
+            ? [cueChip("fix1", "dev", (0, followups_1.naturalText)("fix1", { item: first })), ...fixAll]
+            : [];
+    }
+    if (top < 2) {
+        return [];
+    }
+    const group = found.filter((f) => f.rank === top);
+    const severity = severityName(group[0].tag);
+    const out = [cueChip("fixTop", "dev", (0, followups_1.naturalText)("fixTop", { severity, item: group[0].text }))];
+    if (group.length >= 2) {
+        out.push(cueChip("fixGroup", "dev", (0, followups_1.naturalText)("fixGroup", { severity, n: String(group.length) })));
+    }
+    return found.length > group.length ? [...out, ...fixAll] : out;
+};
 const OFFER_TAIL_CHARS = 900;
 const OFFER_TAIL_SENTENCES = 4;
 const OFFER_HEAD_SENTENCES = 3;
@@ -242,7 +348,9 @@ const cueChipsIn = (input, answer, text, turnKind, offersAll, splits) => {
         out.push(cueChip("applyNow", "dev", (0, followups_1.naturalText)("applyNow")));
     }
     if (turnKind === "plan") {
-        const first = firstOfNumbered(answer);
+        const findings = findingChips(findingsOf(answer), offersAll);
+        out.push(...findings);
+        const first = findings.length ? undefined : firstOfNumbered(answer);
         const item = first && first.replace(/\s+\([^)]+\)/g, "").trim();
         const shortItem = item && (item.length > 200 ? item.slice(0, item.lastIndexOf(" ", 200)) : item);
         if (shortItem && EDIT_VERBS.has(firstWord(shortItem))) {

@@ -258,6 +258,145 @@ export const laneItems = (markdown: string, splits: (task: string) => string[]):
     return ok && splits(items.join("\n---\n")).length === items.length ? items : undefined;
 };
 
+// A review's findings, ranked by a severity named where a review puts one: a
+// heading above the items ("### High"), a tag at an item's start ("**High** —",
+// "[P1]", "High:") or a Severity column. "high" inside a sentence is a word,
+// not a severity. OpenCode's own /review asks only to "communicate severity"
+// (1.19.3), so bullets, `<li>`, table rows and numbered items are all read.
+interface Finding {
+    rank: number;
+    tag: string;
+    text: string;
+}
+const RANKS: Record<string, number> = {
+    critical: 4, blocker: 4, blocking: 4, p0: 4,
+    high: 3, major: 3, p1: 3,
+    medium: 2, moderate: 2, p2: 2,
+    low: 1, minor: 1, nit: 1, nitpick: 1, p3: 1
+};
+const TAG = String.raw`(critical|blocker|blocking|p[0-3]|high|major|medium|moderate|low|minor|nit(?:pick)?)(?:\s+(?:severity|priority|risk|impact))?`;
+// The tag, then a mark that ends it: "**High:**", "**[P1]**", "[HIGH]", "(Low)",
+// or "**High**" / "High" before a colon, a spaced dash or a code span.
+// "High-level design" and "**High** availability" are not tags.
+const TAGGED = new RegExp(
+    String.raw`^[^\w[(*_]*(?:(?:\*\*|__)\[?${TAG}(?:\]|:)(?:\*\*|__)|[[(]${TAG}[\])]|(?:\*\*|__)?${TAG}(?:\*\*|__)?(?=\s*[:—–]|\s+-\s|\s*\x60))\s*(?:[:—–]|-\s)?\s*(.*)$`,
+    "i"
+);
+const TAG_HEADING = new RegExp(
+    String.raw`^[^\w[(]*[[(]?${TAG}[\])]?(?:\s+(?:issues?|findings?|problems?|bugs?|concerns?))?(?:\s*\(\d+\))?(?:(?:\s*[:—–]|\s+-\s).*|\s*)$`,
+    "i"
+);
+const FINDINGS_HEADING = /^[^\w]*(?:(?:code\s+)?review\s+)?(?:findings?|issues?|problems?|bugs?|concerns?)(?:\s+found)?(?:\s*\(\d+\))?\s*:?\s*$/i;
+// Top-level items only: an indented one is the detail of the item above.
+const FINDING_ITEM = /^ ?(?:[-*+•]|\d{1,3}[.)])\s+(.+)$/;
+const NONE_ITEM = /^(?:none|n\/a|nothing|no (?:issues?|findings?|problems?|bugs?))\b/i;
+const SEVERITY_COLUMN = /^(?:severity|sev|priority|impact|risk|level)$/i;
+
+const findingText = (raw: string): string => {
+    const text = plainText(raw.replace(/<[^>]+>/g, " "))
+        .replace(/[*`]/g, "")
+        .replace(/\s+\([^)]+\)/g, "")
+        .replace(/^[\s:—–-]+|[\s.:;]+$/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
+    return text.length > 200 ? text.slice(0, text.lastIndexOf(" ", 200)) : text;
+};
+
+// "### High" and "**High**" set or end a section; a "High:" line only sets one,
+// so "Details:" between items does not end it.
+const headingOf = (line: string): { text: string; strong: boolean } | undefined => {
+    const strong = line.match(/^\s{0,3}#{1,6}\s+(.+?)[\s#]*$/)?.[1] ?? line.match(/^\s*(?:\*\*|__)([^*_]+?)(?:\*\*|__)\s*:?\s*$/)?.[1];
+    if (strong !== undefined) {
+        return { text: plainText(strong).trim(), strong: true };
+    }
+    const label = line.match(/^\s*([^\s|<>`*+•-][^:|]{0,48}):\s*$/)?.[1];
+    return label === undefined ? undefined : { text: plainText(label).trim(), strong: false };
+};
+
+const findingsOf = (markdown: string): Finding[] => {
+    const lines = markdown
+        .replace(/```[\s\S]*?```/g, "\n")
+        .replace(/<h[1-6][^>]*>([\s\S]*?)<\/h[1-6]>/gi, "\n### $1\n")
+        .replace(/<\/?(?:b|strong)>/gi, "**")
+        .replace(/<li[^>]*>/gi, "\n- ")
+        .replace(/<\/li>|<\/?(?:ul|ol|p)[^>]*>|<br\s*\/?>/gi, "\n")
+        .split("\n");
+    const found: Finding[] = [];
+    let section: { rank: number; tag: string } | undefined;
+    let columns: string[] | undefined;
+    const add = (tag: string | undefined, raw: string): void => {
+        const text = findingText(raw);
+        if (!text || NONE_ITEM.test(text)) {
+            return;
+        }
+        if (tag) {
+            found.push({ rank: RANKS[tag.toLowerCase()], tag, text });
+        } else if (section) {
+            found.push({ ...section, text });
+        }
+    };
+    for (const line of lines) {
+        const row = line.match(/^\s*\|(.*)\|\s*$/);
+        if (row) {
+            const cells = row[1].split("|").map((c) => plainText(c).trim());
+            if (cells.every((c) => !c || /^:?-{2,}:?$/.test(c))) {
+                continue;
+            }
+            if (!columns) {
+                columns = cells;
+                continue;
+            }
+            const at = columns.findIndex((c) => SEVERITY_COLUMN.test(c));
+            const cell = at >= 0 ? (cells[at] ?? "").replace(/^\W+|\W+$/g, "") : "";
+            add(
+                Object.hasOwn(RANKS, cell.toLowerCase()) ? cell : undefined,
+                cells.filter((c, i) => i !== at && c).join(" — ")
+            );
+            continue;
+        }
+        columns = undefined;
+        const item = line.match(FINDING_ITEM);
+        if (item) {
+            const tagged = item[1].match(TAGGED);
+            add(tagged ? tagged[1] ?? tagged[2] ?? tagged[3] : undefined, tagged ? tagged[4] : item[1]);
+            continue;
+        }
+        const heading = headingOf(line);
+        if (heading) {
+            const tag = heading.text.match(TAG_HEADING)?.[1];
+            const set = tag ? { rank: RANKS[tag.toLowerCase()], tag } : FINDINGS_HEADING.test(heading.text) ? { rank: 0, tag: "" } : undefined;
+            section = set ?? (heading.strong ? undefined : section);
+        }
+    }
+    return found;
+};
+
+const severityName = (tag: string): string => (/^p\d$/i.test(tag) ? tag.toUpperCase() : capitalize(tag.toLowerCase()));
+
+/** Ranked findings: the worst one, its group when it has two or more, then all.
+ * Low only gets nothing; unranked items under a Findings heading read like a
+ * numbered issue list. */
+const findingChips = (found: readonly Finding[], offersAll: boolean): NaturalChip[] => {
+    const top = Math.max(0, ...found.map((f) => f.rank));
+    const fixAll = !offersAll ? [cueChip("fixAll", "dev", naturalText("fixAll"))] : [];
+    if (top === 0) {
+        const first = found[0]?.text ?? "";
+        return found.length >= 2 && ISSUE.test(first) && !EDIT_VERBS.has(firstWord(first))
+            ? [cueChip("fix1", "dev", naturalText("fix1", { item: first })), ...fixAll]
+            : [];
+    }
+    if (top < 2) {
+        return [];
+    }
+    const group = found.filter((f) => f.rank === top);
+    const severity = severityName(group[0].tag);
+    const out = [cueChip("fixTop", "dev", naturalText("fixTop", { severity, item: group[0].text }))];
+    if (group.length >= 2) {
+        out.push(cueChip("fixGroup", "dev", naturalText("fixGroup", { severity, n: String(group.length) })));
+    }
+    return found.length > group.length ? [...out, ...fixAll] : out;
+};
+
 // Bounds on what part of the answer is read: the whole answer can be 250 KB.
 const OFFER_TAIL_CHARS = 900; // the tail scanned for the agent's offers
 const OFFER_TAIL_SENTENCES = 4; // …sentences of that tail
@@ -345,10 +484,13 @@ const cueChipsIn = (
         out.push(cueChip("applyNow", "dev", naturalText("applyNow")));
     }
     if (turnKind === "plan") {
+        // A review's findings take the place of the numbered-list reading below.
+        const findings = findingChips(findingsOf(answer), offersAll);
+        out.push(...findings);
         // A numbered list is a PLAN when item 1 is an instruction ("Fix …"),
         // an ISSUE LIST when it names a problem, and an explanation otherwise —
         // which gets no chip: "Do #1" under "how does X work" is noise.
-        const first = firstOfNumbered(answer);
+        const first = findings.length ? undefined : firstOfNumbered(answer);
         // Drop a spaced aside "(it skips the first item)", keep a call "subtotal()".
         const item = first && first.replace(/\s+\([^)]+\)/g, "").trim();
         // The label is cut by labelOf (word boundary); the PROMPT keeps the whole

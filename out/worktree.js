@@ -67,6 +67,8 @@ const createWorktree = async (cwd, task) => {
         return { ok: false, reason: "the repository has no commits yet — a worktree needs a commit to start from." };
     }
     const ref = await (0, exports.git)(root, ["rev-parse", "--abbrev-ref", "HEAD"]);
+    const status = await (0, exports.git)(root, ["status", "--porcelain"]);
+    const uncommitted = status.code === 0 ? status.stdout.split("\n").filter((l) => l.trim()).length : 0;
     const slug = `${(0, exports.slugify)(task)}-${stampSlug()}`;
     const branch = `ai/${slug}`;
     const wtPath = path.join(path.dirname(root), `${path.basename(root)}.worktrees`, slug);
@@ -76,7 +78,8 @@ const createWorktree = async (cwd, task) => {
     }
     return {
         ok: true,
-        worktree: { root, path: wtPath, branch, baseRef: ref.stdout.trim() || "HEAD", baseSha: sha.stdout.trim() }
+        worktree: { root, path: wtPath, branch, baseRef: ref.stdout.trim() || "HEAD", baseSha: sha.stdout.trim() },
+        uncommitted
     };
 };
 exports.createWorktree = createWorktree;

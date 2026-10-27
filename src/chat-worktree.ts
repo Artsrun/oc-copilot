@@ -5,7 +5,7 @@ import { dataFolderRefusal, ensureCliIdentity, ensureServer, isDataFolderClash, 
 import { abortServerRun, createServerSession, isMissingSessionRun, runOpenCode } from "./runs";
 import { planTimeout } from "./prompt";
 import { metricsLogLine, scrubLeakedContext } from "./format";
-import { startHeartbeat } from "./chat-boot";
+import { WORKTREE_TURN, rememberFollowups, startHeartbeat, suggestFollowups } from "./chat-boot";
 import { Worktree, createWorktree, reopenWorktree, worktreeDiff } from "./worktree";
 
 // What the next `/worktree` turn of this chat needs to continue: `threadWorktree`
@@ -81,10 +81,13 @@ export async function handleWorktree(p: {
             return { metadata: { kind: "worktree", cwd, error: created.reason } };
         }
         wt = created.worktree;
-        logChannel.appendLine(`[${stamp()}] worktree ${wt.path} on ${wt.branch} from ${wt.baseRef}@${wt.baseSha.slice(0, 7)}`);
+        const left = created.uncommitted;
+        logChannel.appendLine(`[${stamp()}] worktree ${wt.path} on ${wt.branch} from ${wt.baseRef}@${wt.baseSha.slice(0, 7)}; ${left} uncommitted left in the checkout`);
         response.markdown(
             `> ${mark("worktree")} Isolated run in \`${wt.path}\` on branch \`${wt.branch}\` ` +
-            `(from \`${wt.baseRef}\` @ \`${wt.baseSha.slice(0, 7)}\`). Your checkout is not touched.\n\n`
+            `(from \`${wt.baseRef}\` @ \`${wt.baseSha.slice(0, 7)}\`). Your checkout is not touched.` +
+            (left ? ` Its ${left} uncommitted ${left === 1 ? "change is" : "changes are"} not in the worktree: commit first if the task needs them.` : "") +
+            "\n\n"
         );
     }
 
@@ -168,6 +171,14 @@ export async function handleWorktree(p: {
 
     if (!answer.trim()) {
         response.markdown(metrics.error ? `> ${mark("fail")} OpenCode reported an error: \`${metrics.error}\`` : "_OpenCode returned no text._");
+    }
+    // A follow-up continues this worktree, so the answer's own chips go there as
+    // `/worktree`. A read-only chip would read the checkout instead: left out.
+    if (runSession && !metrics.error && !metrics.timedOut) {
+        const chips = suggestFollowups({ agent: "dev", answer, steps: metrics.steps })
+            .filter((c) => c.command === "dev")
+            .map((c) => ({ ...c, command: "worktree" as const }));
+        rememberFollowups(runSession, WORKTREE_TURN, chips);
     }
     const stat = await worktreeDiff(wt, true, config().get<number>("worktreeDiffMaxMB", 16));
     response.markdown(

@@ -3,6 +3,37 @@
 Full release history, newest first; releases before the last one are condensed
 to their summary and headlines. The README ships the last five.
 
+### 0.0.227
+
+A review's findings get Fix chips in any layout, `/worktree` names the
+uncommitted changes a new worktree does not have, and a `/worktree` answer's own
+editing chips continue that worktree.
+
+- **Fixed: a review in bullets, tags, a table or `<li>` got no chips**
+  (`findingsOf`, `findingChips` in `natural.ts`). Only a numbered list was
+  read (`firstOfNumbered`); the same findings as `- **High** — …`, `[HIGH]`,
+  `### High` over bullets, a Severity column or an HTML list gave nothing
+  (scratch probe through `out/natural.js`: 5 shapes, 0 chips; numbered: Fix #1 +
+  Fix all). OpenCode 1.19.3's own `/review` prompt asks only to "communicate
+  severity", so no one layout can be assumed. A severity counts where a review
+  puts one: a heading over the items, a tag at an item's start ended by bold,
+  brackets, a colon or a spaced dash, or a Severity/Priority column. Chips:
+  **Fix High: …** (the worst finding, whole in the prompt), **Fix High (n)** for
+  a group of two or more, **Fix all** when lower ones exist. Low alone, "None",
+  "High-level", "**High** availability" and an explanation in bullets get none.
+  Untagged bullets under a Findings heading read as a numbered issue list.
+  Checks `NF`.
+- **Fixed: `/worktree` did not say a dirty checkout's edits stay behind**
+  (`createWorktree` counts `git status --porcelain`). The worktree starts from
+  HEAD; a task about uncommitted work found nothing to do there and ended in
+  "No file changes". The opening line now names the count. Checks `WT8`.
+- **Fixed: no chips under `/worktree`** (`followupsFor`, `WORKTREE_TURN`). Since
+  0.0.226 a follow-up continues the worktree, so the answer's own editing chips
+  (its offer, Test it, Continue) are offered with `command: "worktree"` and a
+  click continues the same worktree and session. Read-only chips (Review) are
+  left out: they would read the checkout. A failed worktree turn keeps none.
+  Checks `WT1`, `WT9`.
+
 ### 0.0.226
 
 - **`/worktree` follow-ups continue the same worktree and session**

@@ -56,6 +56,8 @@
         "fix1": { "kao": "(｀・ω・´)ゞ", "label": "Fix #1: {item}", "prompt": "Fix only #1: {item}. Then stop and report what changed." },
         "lanes": { "kao": "(^o^)/", "label": "Run {n} as lanes", "prompt": "{lanes}" },
         "fixAll": { "kao": "(ﾉ◕ヮ◕)ﾉ", "label": "Fix all", "prompt": "Fix all the issues you listed. Report what changed. {tail}" },
+        "fixTop": { "kao": "(｀・ω・´)ゞ", "label": "Fix {severity}: {item}", "prompt": "Fix only this {severity} finding: {item}. Then stop and report what changed." },
+        "fixGroup": { "kao": "(ﾉ◕ヮ◕)ﾉ", "label": "Fix {severity} ({n})", "prompt": "Fix only the {n} {severity} findings you listed. Then stop and report what changed. {tail}" },
         "recommend": { "kao": "(b ᵔ▽ᵔ)b", "label": "Your call", "prompt": "Go with your recommendation and proceed. {tail}" },
         "apply": { "kao": "(ﾉ◕ヮ◕)ﾉ", "label": "Ship it", "prompt": "Apply what you just proposed. Report what changed. {tail}" },
         "review1": { "kao": "(¬‿¬)", "label": "Review {file}", "prompt": "Review the change you just made to {file} for bugs and regressions. {tail}" },

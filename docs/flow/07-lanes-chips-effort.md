@@ -64,7 +64,7 @@ flowchart TD
   OK{{"(・ω・)? failed, stopped, vague?"}}:::bridge
   REC["recovery chips: Retry, Continue, Ping, New"]:::back
   OF["1. the agent's own offer, or a closing either/or"]:::back
-  CUE["2. concrete cues: Continue, #1, Fix #1 + Fix all, lanes, Your call, Ship it"]:::back
+  CUE["2. concrete cues: Continue, #1, Fix High + Fix High (n) or Fix #1, Fix all, lanes, Your call, Ship it"]:::back
   DEV["3. dev edits: Review file, then Fix failing tests or Test it"]:::back
   DD["4. unsure answer + a higher effort level: Dig deeper · high"]:::back
   CAP["at most 3, offers first"]:::bridge
@@ -77,7 +77,10 @@ flowchart TD
 ```
 
 Every word a chip shows or sends is in `src/followups.json`; check `NF` holds
-the answers that must get **no** chip.
+the answers that must get **no** chip. A review's findings are read by
+severity where a review names one (a heading over the items, a tag at an
+item's start, a Severity column), never from the word in a sentence. Under a
+`/worktree` turn only the editing chips are offered, as `/worktree` (`WT9`).
 
 ## Effort: which variant is sent
 
