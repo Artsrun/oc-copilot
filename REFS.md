@@ -13,10 +13,10 @@ prefix), `node scripts/probe-opencode2.js <exe>`. Both control rows wrote
 (`steps=bash:running,bash:done`), but 2.x's shell on Windows is Git Bash, which
 drops an unquoted backslash (asked in a `/dev` turn on both versions:
 `MINGW64_NT-10.0-26300`, bash `5.1.16(1)-release`,
-`C:\Program Files\Git\usr\bin\bash.exe`). The file landed as `C:UsersUser…projectw-4.txt` in
-the project, the probe read "absent", and the rows went red
-(`2 ROW(S) NOT AS EXPECTED`, the same on both versions). Read as "edits do not
-land on 2.0.18", which was false.
+`C:\Program Files\Git\usr\bin\bash.exe`). The file landed as
+`C:UsersUser…projectw-4.txt` in the project, the probe read "absent", and the
+rows went red (`2 ROW(S) NOT AS EXPECTED`, the same on both versions). Read as
+"edits do not land on 2.0.18", which was false.
 
 | Redirect target, measured here | bash | cmd | PowerShell |
 | --- | --- | --- | --- |
@@ -28,7 +28,34 @@ plan → general · write, which had none): `ALL 10 ROWS AS EXPECTED` on 2.0.18
 and on 2.0.32, the three control files at their own paths and nothing else in
 the project. The 0.0.222 runs were on Linux, where a path has no backslash, and
 `probes.yml` runs on `ubuntu-latest`: neither could show it. `probe-readonly.js`
-built its shell writes the same way and now writes `C:/…` too.
+built its shell writes the same way and now writes `C:/…` too: `ALL 48 ROWS AS
+EXPECTED` on 1.19.3.
+
+**Five 2.x versions, the same ten rows.** The fixed probe on 2.0.18, 2.0.29,
+2.0.32, 2.1.4 and 2.2.0 (npm `latest`, published that day): `ALL 10 ROWS AS
+EXPECTED` on each, every plan row `evidence=enforced` with its subagent started
+(a refused plan turn would read "absent" too). Only these rows were measured
+outside 2.0.29–2.0.32.
+
+**2.x versions share one data folder, both ways.** A copy of the installed
+2.0.18 `opencode.db` (20 tables, 48 `migration` rows, 10 `session_v2`), one text
+turn each through `out/` with `XDG_DATA_HOME` on the copy: 2.2.0 answered and
+migrated it (21 tables, 54 migrations); then 2.0.18, 2.1.4, 2.0.32 and 2.0.18
+again each answered on it (`session_v2` 12 → 15). On a fresh copy, in one
+project, turns by 2.2.0, 2.0.32, 2.0.18, 2.2.0 and 2.0.32 in that order: each
+answered and listed every session the others had written (1 → 5). Only 1.x and
+2.x clash (0.0.224, below).
+
+---
+
+## 0.0.227: the NF 250 KB check on battery (2026-10-27)
+
+`NF a 250 KB answer and two backtracking traps take < 500ms` failed at 612 and
+615 ms in two mutation runs while the laptop ran on battery at 19 %. The same
+check in that day's gates: 168, 174 and 264 ms, then 128 and 127 ms on AC. Its
+three inputs alone through `out/natural.js` (nine alternated runs, median, three
+times, on AC): 0.0.226 109–112 ms, 0.0.227 111–114 ms. A red timing check on
+battery is the machine first.
 
 ---
 
