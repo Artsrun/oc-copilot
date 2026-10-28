@@ -227,7 +227,8 @@ the 1.x has your credentials; if not, log it in as your organization says.
 #### Experimental: `opencode2`  <!-- claim:opencode-2-api -->
 
 With `opencodeCopilotBridge.opencode2` on, an `opencode` whose `--version`
-says 2.x is driven through its HTTP API instead (measured on 2.0.29 and 2.0.32):
+says 2.x is driven through its HTTP API instead (tested on 2.0.18 to 2.2.0: every
+check on 2.0.29 and 2.0.32, the nightly probe's ten rows on the others):
 
 - **One server, this window's own.** Every turn — plan, `/dev`, lanes,
   `/worktree`, `transport: cli` too — goes through the `opencode serve` the
@@ -388,8 +389,11 @@ dirty checkout is told how many the worktree does not have, so commit first if
 the task needs them. It ends with the changed files and buttons:
 **Show full diff**, **Open in new window**, **Remove worktree** (asks first;
 deletes the branch), **New worktree**. The chat's own session stays on your
-checkout. The answer's own chips (its offer, **Test it**) continue the worktree;
-a read-only one such as **Review** would read your checkout, so it is not offered.
+checkout. The answer's own chips (its offer, **Test it**, **Review**) continue
+the worktree. `model:`, `effort:` and attachments work as on any turn; an
+attached file your checkout has changed is named, since the worktree has the
+last commit's copy. A bare word such as `fix` is asked about first. `/session`
+names the worktree and its session, and `/compact` compacts it.
 
 A follow-up in the same chat continues that worktree and its OpenCode session —
 Copilot keeps `/worktree` selected, and a worktree per message also meant
@@ -492,7 +496,7 @@ All under `opencodeCopilotBridge.`.
 | `devAgent` | `build` | Agent `/dev` runs, always passed as `--agent`. |
 | `planAgent` | `plan` | Agent for read-only turns and `/parallel` lanes, used once OpenCode lists it (see *Read-only turns*). |
 | `readOnlySubagents` | `["explore"]` | Literal subagent names a read-only turn may start via `task`; trimmed and deduplicated, `*` and `?` rejected. With `enforceReadOnly` only agents with verified shell-free permissions are available. |
-| `opencode2` | `false` | Experimental: drive OpenCode 2 through its HTTP API (2.0.29–2.0.32) instead of refusing it — every turn through this window's own server, read-only turns only when it lists the bridge's rules (see *OpenCode 2*). |
+| `opencode2` | `false` | Experimental: drive OpenCode 2 through its HTTP API (tested on 2.0.18–2.2.0) instead of refusing it — every turn through this window's own server, read-only turns only when it lists the bridge's rules (see *OpenCode 2*). |
 | `enforceReadOnly` | `true` | Read-only turns read-only by permission in every OpenCode process the bridge starts: no edits or shell, `readOnlyTools`, read-only subagents (see *Read-only turns*). `/dev` is unchanged. Off: 0.0.214, read-only by instruction. |
 | `readOnlyTools` | `["git-scan_gitScan"]` | With `enforceReadOnly`, the MCP tools a read-only turn may use, by OpenCode permission name (`<server>_<tool>`, wildcards allowed). A name that would allow a tool that writes, runs commands or starts subagents is left out. 1.x only. |
 | `attachDevToServer` | `true` | With transport `auto`, `/dev` attaches to the warm server instead of booting OpenCode per turn. |
@@ -534,6 +538,21 @@ All under `opencodeCopilotBridge.`.
 ## Changelog
 
 The last five releases; the full history is `CHANGELOG.md` in the repository.
+
+### 0.0.228
+
+- **`/worktree` turns read what a chat turn reads**: `model:` and `effort:`
+  (they went to the model as words and named the branch), the `effort`
+  setting, attachments (dropped without a word; an attached file your checkout
+  has changed is named), and the vague-prompt check (`/worktree fix` made a
+  branch, a folder and a paid run).
+- **A worktree chat's session has books**: `/session` names the worktree and
+  its session, `/compact` compacts it, a slow run gets the completion toast,
+  touched files come back as references, file pills open the worktree's copy,
+  and the session is compacted when it grows large. **Review** is offered
+  under a worktree edit and reviews the worktree.
+- OpenCode 2 tested on 2.0.18–2.2.0; the gate's timing checks no longer fail
+  on battery. Checks `WT9`–`WT13`, `CP`, `TW`, `NF`, `FK`, `LB`.
 
 ### 0.0.227
 
@@ -577,14 +596,4 @@ The last five releases; the full history is `CHANGELOG.md` in the repository.
 - **OpenCode 1 on a data folder OpenCode 2 created is named**: 1.19.3 refuses
   an `opencode.db` that 2.x created (no 1.x `session` table, measured), and
   the turn now says so and how to give 1.x its own folder (`XDG_DATA_HOME`).
-
-### 0.0.223
-
-- **OpenCode 2 ignores your `opencode.json` permission rules, and now you are
-  told.** 2.0.29 skips 1.x's `agent.<name>.permission` there without a word
-  (measured) while it reads `.opencode/agents/*.md` frontmatter; the first turn
-  on a 2.x server names each such file once.
-- With `opencode2` on, a later major (3.x) runs on the 2.x adapter and says it
-  is outside the tested versions, instead of being refused.
-- CI: the gate on Linux, Windows and macOS for every push and pull request, and
-  nightly probes against real OpenCode 1.19.0, 2.0.29 and the latest 2.x.
+

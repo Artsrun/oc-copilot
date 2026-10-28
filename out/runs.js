@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.turnPermission = exports.readOnlyReach = exports.readOnlyEvidence = exports.assertReadOnly = exports.sessionRoot = exports.sessionPath = exports.sessionBusy = exports.safeSessionId = exports.isMissingSessionRun = exports.isMissingSessionError = exports.isAttachFailure = exports.createServerSession = exports.compactionInFlight = exports.compactSession = exports.abortServerRun = exports.HEADLESS_PERMISSION = exports.setReplyConfirmWait = exports.stepDetail = exports.providerRetryOf = exports.partDeltaOf = exports.noteTask = exports.emitKeyedDelta = exports.runOpenCodeServer = exports.runOpenCode = void 0;
+exports.turnPermission = exports.readOnlyReach = exports.readOnlyEvidence = exports.assertReadOnly = exports.sessionRoot = exports.sessionPath = exports.sessionBusy = exports.safeSessionId = exports.isMissingSessionRun = exports.isMissingSessionError = exports.isAttachFailure = exports.createServerSession = exports.contextOverflowing = exports.compactionInFlight = exports.compactSession = exports.abortServerRun = exports.HEADLESS_PERMISSION = exports.setReplyConfirmWait = exports.stepDetail = exports.providerRetryOf = exports.partDeltaOf = exports.noteTask = exports.emitKeyedDelta = exports.runOpenCodeServer = exports.runOpenCode = void 0;
 exports.restartAfterMissingSession = restartAfterMissingSession;
 const core_1 = require("./core");
 const followups_1 = require("./followups");
@@ -24,6 +24,7 @@ Object.defineProperty(exports, "HEADLESS_PERMISSION", { enumerable: true, get: f
 Object.defineProperty(exports, "abortServerRun", { enumerable: true, get: function () { return server_session_1.abortServerRun; } });
 Object.defineProperty(exports, "compactSession", { enumerable: true, get: function () { return server_session_1.compactSession; } });
 Object.defineProperty(exports, "compactionInFlight", { enumerable: true, get: function () { return server_session_1.compactionInFlight; } });
+Object.defineProperty(exports, "contextOverflowing", { enumerable: true, get: function () { return server_session_1.contextOverflowing; } });
 Object.defineProperty(exports, "createServerSession", { enumerable: true, get: function () { return server_session_1.createServerSession; } });
 Object.defineProperty(exports, "isAttachFailure", { enumerable: true, get: function () { return server_session_1.isAttachFailure; } });
 Object.defineProperty(exports, "isMissingSessionError", { enumerable: true, get: function () { return server_session_1.isMissingSessionError; } });

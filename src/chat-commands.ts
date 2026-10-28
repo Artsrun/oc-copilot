@@ -14,10 +14,12 @@ import {
     getActiveSession,
     refreshStatus,
     setActiveSession,
-    threadScopeActive
+    threadScopeActive,
+    threadWorktree
 } from "./session";
 import { helpMarkdown } from "./chat-boot";
 import { handleSessions } from "./chat-sessions";
+import { worktreeLabel } from "./worktree";
 
 // The control commands (SLASH_COMMANDS in ./chat-boot). Each answers from local
 // state or the server and never touches the model, so they
@@ -33,6 +35,10 @@ export interface ControlProps {
     state: SessionState;
     response: vscode.ChatResponseStream;
 }
+
+// The worktree this chat's `/worktree` turns work in, if any (./session).
+const chatWorktree = (p: ControlProps): ReturnType<typeof threadWorktree> =>
+    Array.isArray(p.context?.history) ? threadWorktree(p.context.history, p.cwd) : undefined;
 
 export async function handleControlCommand(p: ControlProps): Promise<vscode.ChatResult | undefined> {
     switch (p.control) {
@@ -76,26 +82,29 @@ export async function handleControlCommand(p: ControlProps): Promise<vscode.Chat
         case "compact": {
             // The same summarize call autocompact makes, on demand: with the
             // model the session runs on, through the server (started if needed).
-            if (!p.state.id) {
+            // A chat that has only worked in a worktree compacts that session.
+            const wt = p.state.id ? undefined : chatWorktree(p);
+            const target = p.state.id ?? wt?.sessionId;
+            if (!target) {
                 p.response.markdown("Nothing to compact — this chat has no OpenCode session yet.");
                 return { metadata: { kind: "compact" } };
             }
-            p.response.progress(`Compacting \`${p.state.id}\` — OpenCode summarises the conversation…`);
-            const work = compactSession(p.state.id, p.cwd, p.state.lastModel, true);
+            p.response.progress(`Compacting \`${target}\`${wt ? ` (worktree \`${wt.branch}\`)` : ""} — OpenCode summarises the conversation…`);
+            const work = compactSession(target, wt ? wt.path : p.cwd, wt ? undefined : p.state.lastModel, true);
             const ok = p.token ? await untilStop(work, p.token) : await work;
             if (ok === undefined) {
                 logChannel.appendLine(`[${stamp()}] /compact: stopped while waiting; the summary may still finish on the server`);
                 return { metadata: { kind: "compact", cancelled: true } };
             }
             if (!ok) {
-                p.response.markdown(`${mark("fail")} Could not compact \`${p.state.id}\`. The debug log says why.`);
+                p.response.markdown(`${mark("fail")} Could not compact \`${target}\`. The debug log says why.`);
                 p.response.button({ command: "opencodeCopilotBridge.showLog", title: "Show debug log" });
                 return { metadata: { kind: "compact" } };
             }
             p.response.markdown(
-                `${mark("ok")} Compacted \`${p.state.id}\`` +
-                (p.state.context ? ` (context was ${Math.round(p.state.context / 1000)}k)` : "") +
-                ". The next turn continues from OpenCode's summary."
+                `${mark("ok")} Compacted \`${target}\`` +
+                (!wt && p.state.context ? ` (context was ${Math.round(p.state.context / 1000)}k)` : "") +
+                `. The next ${wt ? "`/worktree` " : ""}turn continues from OpenCode's summary.`
             );
             return { metadata: { kind: "compact" } };
         }
@@ -245,6 +254,15 @@ export async function handleControlCommand(p: ControlProps): Promise<vscode.Chat
             return { metadata: { kind: "env", items: items.length } };
         }
         case "session": {
+            // The chat's worktree has its own session (./chat-worktree): named too.
+            const wt = chatWorktree(p);
+            const wtLine = wt
+                ? `Worktree \`${wt.branch}\` in \`${worktreeLabel(wt.path)}\`${wt.sessionId ? ` · session \`${wt.sessionId}\`` : ""} — \`/worktree\` follow-ups continue it.`
+                : "";
+            if (!p.state.id && wt) {
+                p.response.markdown(`${wtLine}\n\nThis chat has no session in your checkout yet: a message without \`/worktree\` starts one.`);
+                return { metadata: { kind: "session", cwd: p.cwd } };
+            }
             if (p.state.id) {
                 const totals = [
                     `${p.state.turns} turn(s)`,
@@ -258,7 +276,8 @@ export async function handleControlCommand(p: ControlProps): Promise<vscode.Chat
                 ].filter(Boolean);
                 p.response.markdown(
                     `Active session \`${p.state.id}\` · ${totals.join(" · ")}` +
-                    (threadScopeActive(p.context) ? " — scoped to this chat." : ".")
+                    (threadScopeActive(p.context) ? " — scoped to this chat." : ".") +
+                    (wtLine ? `\n\n${wtLine}` : "")
                 );
             } else {
                 const elsewhere = threadScopeActive(p.context) ? getActiveSession(p.cwd).id : undefined;

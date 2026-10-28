@@ -23,6 +23,10 @@ jobs:
             package: "@opencode/cli@2.0.29"
             probe: scripts/probe-opencode2.js
             optional: false
+          - cell: opencode 2.2.0 (pinned)
+            package: "@opencode/cli@2.2.0"
+            probe: scripts/probe-opencode2.js
+            optional: false
           - cell: opencode 2 latest
             package: "@opencode/cli@latest"
             probe: scripts/probe-opencode2.js

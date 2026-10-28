@@ -157,7 +157,9 @@ function followupsFor(metadata) {
     });
     switch (outcome) {
         case "clarify":
-            return own === undefined ? [] : chips(followups_1.CASES.clarify, { RUN_ANYWAY: own });
+            return own === undefined
+                ? []
+                : chips(followups_1.CASES.clarify, { RUN_ANYWAY: own }).map((chip) => (metadata.agent === "worktree" ? { ...chip, command: "worktree" } : chip));
         case "failed":
         case "failedLong":
         case "failedNet":

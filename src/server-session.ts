@@ -405,6 +405,15 @@ let compactServerFailedAt = 0;
 // the summary is a prompt loop, so the session reads busy (1.18.32 prompt.ts).
 const compactions = new Map<string, Promise<boolean>>();
 
+// Size triggers a summarize, not only the turn count (9.6k → 199k seen in 8 turns):
+// 60k of context, or 70% of the model's window when the catalog knows it.
+const COMPACT_CONTEXT_TOKENS = 60000;
+const COMPACT_CONTEXT_SHARE = 0.7;
+
+/** A session's context (its last step) is where the bridge summarizes it. */
+export const contextOverflowing = (tokens: number, limit: number | undefined): boolean =>
+    tokens > COMPACT_CONTEXT_TOKENS || (limit !== undefined && tokens >= limit * COMPACT_CONTEXT_SHARE);
+
 /** This window's summary of `sessionId` while it runs, else undefined. */
 export function compactionInFlight(sessionId: string): Promise<boolean> | undefined {
     return compactions.get(sessionId);

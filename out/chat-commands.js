@@ -14,6 +14,8 @@ const models_1 = require("./models");
 const session_1 = require("./session");
 const chat_boot_1 = require("./chat-boot");
 const chat_sessions_1 = require("./chat-sessions");
+const worktree_1 = require("./worktree");
+const chatWorktree = (p) => Array.isArray(p.context?.history) ? (0, session_1.threadWorktree)(p.context.history, p.cwd) : undefined;
 async function handleControlCommand(p) {
     switch (p.control) {
         case "help":
@@ -50,25 +52,27 @@ async function handleControlCommand(p) {
             return { metadata: { kind: "stop" } };
         }
         case "compact": {
-            if (!p.state.id) {
+            const wt = p.state.id ? undefined : chatWorktree(p);
+            const target = p.state.id ?? wt?.sessionId;
+            if (!target) {
                 p.response.markdown("Nothing to compact — this chat has no OpenCode session yet.");
                 return { metadata: { kind: "compact" } };
             }
-            p.response.progress(`Compacting \`${p.state.id}\` — OpenCode summarises the conversation…`);
-            const work = (0, runs_1.compactSession)(p.state.id, p.cwd, p.state.lastModel, true);
+            p.response.progress(`Compacting \`${target}\`${wt ? ` (worktree \`${wt.branch}\`)` : ""} — OpenCode summarises the conversation…`);
+            const work = (0, runs_1.compactSession)(target, wt ? wt.path : p.cwd, wt ? undefined : p.state.lastModel, true);
             const ok = p.token ? await (0, core_1.untilStop)(work, p.token) : await work;
             if (ok === undefined) {
                 core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] /compact: stopped while waiting; the summary may still finish on the server`);
                 return { metadata: { kind: "compact", cancelled: true } };
             }
             if (!ok) {
-                p.response.markdown(`${(0, followups_1.mark)("fail")} Could not compact \`${p.state.id}\`. The debug log says why.`);
+                p.response.markdown(`${(0, followups_1.mark)("fail")} Could not compact \`${target}\`. The debug log says why.`);
                 p.response.button({ command: "opencodeCopilotBridge.showLog", title: "Show debug log" });
                 return { metadata: { kind: "compact" } };
             }
-            p.response.markdown(`${(0, followups_1.mark)("ok")} Compacted \`${p.state.id}\`` +
-                (p.state.context ? ` (context was ${Math.round(p.state.context / 1000)}k)` : "") +
-                ". The next turn continues from OpenCode's summary.");
+            p.response.markdown(`${(0, followups_1.mark)("ok")} Compacted \`${target}\`` +
+                (!wt && p.state.context ? ` (context was ${Math.round(p.state.context / 1000)}k)` : "") +
+                `. The next ${wt ? "`/worktree` " : ""}turn continues from OpenCode's summary.`);
             return { metadata: { kind: "compact" } };
         }
         case "new":
@@ -184,6 +188,14 @@ async function handleControlCommand(p) {
             return { metadata: { kind: "env", items: items.length } };
         }
         case "session": {
+            const wt = chatWorktree(p);
+            const wtLine = wt
+                ? `Worktree \`${wt.branch}\` in \`${(0, worktree_1.worktreeLabel)(wt.path)}\`${wt.sessionId ? ` · session \`${wt.sessionId}\`` : ""} — \`/worktree\` follow-ups continue it.`
+                : "";
+            if (!p.state.id && wt) {
+                p.response.markdown(`${wtLine}\n\nThis chat has no session in your checkout yet: a message without \`/worktree\` starts one.`);
+                return { metadata: { kind: "session", cwd: p.cwd } };
+            }
             if (p.state.id) {
                 const totals = [
                     `${p.state.turns} turn(s)`,
@@ -196,7 +208,8 @@ async function handleControlCommand(p) {
                     (0, models_1.contextNote)(p.state.context, p.state.lastModel)
                 ].filter(Boolean);
                 p.response.markdown(`Active session \`${p.state.id}\` · ${totals.join(" · ")}` +
-                    ((0, session_1.threadScopeActive)(p.context) ? " — scoped to this chat." : "."));
+                    ((0, session_1.threadScopeActive)(p.context) ? " — scoped to this chat." : ".") +
+                    (wtLine ? `\n\n${wtLine}` : ""));
             }
             else {
                 const elsewhere = (0, session_1.threadScopeActive)(p.context) ? (0, session_1.getActiveSession)(p.cwd).id : undefined;

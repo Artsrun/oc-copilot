@@ -18,8 +18,6 @@ const models_1 = require("./models");
 const chat_boot_1 = require("./chat-boot");
 const SUMMARY_WAIT_MS = 60000;
 const COMPACT_MIN_TOKENS = 20000;
-const COMPACT_CONTEXT_TOKENS = 60000;
-const COMPACT_CONTEXT_SHARE = 0.7;
 async function runTurn(t) {
     const live = await openTurn(t);
     try {
@@ -419,12 +417,11 @@ async function finishTurn(t, live, outcome) {
         sessionId &&
         turns > 0 &&
         ((turns % compactEvery === 0 && (contextTokens === 0 || contextTokens >= COMPACT_MIN_TOKENS)) ||
-            contextTokens > COMPACT_CONTEXT_TOKENS ||
-            (contextLimit !== undefined && contextTokens >= contextLimit * COMPACT_CONTEXT_SHARE))) {
+            (0, runs_1.contextOverflowing)(contextTokens, contextLimit))) {
         core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] compacting ${sessionId}: turn ${turns}, context ${contextTokens}` + (contextLimit ? ` of ${contextLimit}` : ""));
         void (0, runs_1.compactSession)(sessionId, cwd, answeredBy);
     }
-    const compactOffer = !bridgeCompacts && sessionId && (contextTokens > COMPACT_CONTEXT_TOKENS || (contextLimit !== undefined && contextTokens >= contextLimit * COMPACT_CONTEXT_SHARE))
+    const compactOffer = !bridgeCompacts && sessionId && (0, runs_1.contextOverflowing)(contextTokens, contextLimit)
         ? contextLimit
             ? `${Math.round((100 * contextTokens) / contextLimit)}%`
             : `${Math.round(contextTokens / 1000)}k`

@@ -46,7 +46,7 @@ no bundler, no test runner: plain TypeScript → `out/`, plain Node for the suit
 | `src/core.ts` | **The foundation**: imports nothing local. `config()`, `logChannel`, text helpers, status bar, folder resolution. |
 | `src/extension.ts` | `activate()` (panel + guarded inline participant), the `__test` handle, `deactivate()`. |
 | `src/commands.ts`, `commands-registry.ts` | Palette commands, worktree buttons, config listener. |
-| `src/worktree.ts`, `chat-worktree.ts` | `/worktree`: git via `execFile`, an isolated dev run from HEAD (the uncommitted count is said); a follow-up in the same chat continues its worktree and session (`reopenWorktree` checks what the metadata names). |
+| `src/worktree.ts`, `chat-worktree.ts` | `/worktree`: git via `execFile`, an isolated dev run from HEAD (the uncommitted count is said); a follow-up in the same chat continues its worktree and session (`reopenWorktree` checks what the metadata names); its turns read `model:`, `effort:`, attachments and the vague-prompt gate as a chat turn does, and `/session` and `/compact` reach its session (`threadWorktree`). |
 | `src/format.ts`, `metrics.ts`, `prompt.ts` | Metrics → markdown; run types; timeouts and vague-prompt detection. |
 | `src/context-markers.ts` | Host-free context vocabulary shared by the producer and leak gate. |
 | `src/git-scan-server.ts` | Standalone newline-delimited JSON-RPC MCP server; one bounded, shell-free Git status call. |
@@ -59,9 +59,9 @@ extension.ts  →  chat · chat-boot · commands-registry · git-scan-mcp · ses
      chat     →  agents · chat-boot · chat-commands · chat-parallel · chat-turn · chat-worktree · context · models · natural · prompt · session · core
 chat-parallel →  agents · chat-boot · compose · context · models · net · runs · core
   chat-turn   →  agents · chat-boot · context · enforce · env · format · metrics · models · net · oc-api · runs · session · core
- chat-commands →  chat-boot · chat-sessions · context · env · models · net · oc-api · prompt · proc · runs · session · core
+ chat-commands →  chat-boot · chat-sessions · context · env · models · net · oc-api · prompt · proc · runs · session · worktree · core
  chat-sessions →  net · sessions (→ oc-api · runs) · session · core
- chat-worktree →  chat-boot · format · net · prompt · runs · worktree · core
+ chat-worktree →  chat-boot · context · format · models · net · prompt · runs · session · worktree · core
     compose   →  chat-boot · models · core   (used by chat-parallel and commands-registry)
   chat-boot   →  heartbeat · lanes · chips (re-exported) · core · metrics
     lanes     →  runs · format · metrics · models · core      chips → lanes · natural
@@ -145,7 +145,7 @@ does not run the suite.
 
 CI runs the same gate (`.github/workflows/ship.yml`: Linux, Windows, macOS, every
 push and pull request) and, nightly, the real-binary probes, one job per
-OpenCode version (`probes.yml`: 1.19.0 and 2.0.29 must pass, the latest 2.x may fail).
+OpenCode version (`probes.yml`: 1.19.0, 2.0.29 and 2.2.0 must pass, the latest 2.x may fail).
 
 - The suite takes well over 30 s; do not judge it by a 30 s timeout.
 - It **aborts on the first exception**: fix crashes first, then red checks.
@@ -332,6 +332,10 @@ history belongs in `CHANGELOG.md`, not in the source.
   every message in that chat is `/worktree`, and a sticky one cannot be told
   from a typed one: so a follow-up continues the chat's worktree, and a fresh
   one is an explicit action (New worktree, a new chat, `/new`) (`WT5`).
+- **`/worktree` is routed before the chat turn's own parsing** (`chat.ts`):
+  whatever a chat turn reads from the request — `model:`, `effort:`, the
+  `effort` setting, attachments, the vague-prompt gate — `handleWorktree` must
+  read too, or it reaches the model as words or not at all (0.0.228, `WT10`–`WT12`).
 - **A worktree starts from HEAD**: uncommitted edits stay in the checkout, and
   a task about them ends in "No file changes". A new worktree says the count
   (`WT8`). A chip under a `/worktree` turn carries `command: "worktree"`: a

@@ -22,6 +22,7 @@ export {
     abortServerRun,
     compactSession,
     compactionInFlight,
+    contextOverflowing,
     createServerSession,
     isAttachFailure,
     isMissingSessionError,

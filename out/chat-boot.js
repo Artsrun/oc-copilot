@@ -114,7 +114,7 @@ function helpMarkdown() {
         "| `/plan <task>` | Read-only agent (default): `plan`, or your `planAgent` |",
         "| `/dev <task>` | Editing agent — may write files |",
         "| `/parallel a \\| b \\| c` | Run independent lanes at once in isolated sessions — `/parallel` alone composes them step by step |",
-        "| `/worktree <task>` | Editing agent in a NEW git worktree + branch next to the repo; your checkout is untouched |",
+        "| `/worktree <task>` | Editing agent in its own git worktree + branch next to the repo; follow-ups in this chat continue it; your checkout is untouched |",
         "| `/session` | Session id, turns, totals |",
         "| `/sessions` | This folder's sessions: continue, fork, close or delete one |",
         "| `/stop` | Stop a run still going on the server (closing the chat does not) |",

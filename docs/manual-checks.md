@@ -112,6 +112,25 @@ A real VS Code and a real model. Needs a 1.x and a 2.x OpenCode side by side
    Remove the key after.
 9. **Back off**: `opencode2` off, reload → item 3 again.
 
+## 0.0.228 — quick pass (about 10 minutes)
+
+A trusted Git repository; remove the worktrees after (**Remove worktree**).
+
+1. **Prefixes**: `@opencode /worktree m:<short name> e:high add a hello.txt` →
+   the branch is `ai/add-a-hello-txt-…`; Output › OpenCode, the run line has
+   `--model <id>` and `--variant high` (or the server prompt line names them).
+   `m:zzqx …` is refused and no new folder appears under `<repo>.worktrees/`.
+2. **Attachments**: edit a tracked file without committing, attach it with
+   `#file`, `/worktree explain this file` → the note names it ("uncommitted
+   changes in your checkout"); the logged prompt has "Files the user attached".
+3. **Vague**: a new chat, `/worktree fix` → asked first, no new folder;
+   **Run it** runs it as `/worktree`.
+4. **Books**: after a `/worktree` turn, `/session` names the worktree, branch
+   and session; `/compact` compacts that session. Unfocus the window during a
+   long worktree run → the completion toast.
+5. **Review chip**: after a worktree edit, **Review …** is offered and runs in
+   the worktree ("Continuing in").
+
 ## 0.0.224–0.0.226 — quick pass (about 10 minutes, 1.x)
 
 1. **Data folder OpenCode 2 created** (start VS Code without `XDG_DATA_HOME`

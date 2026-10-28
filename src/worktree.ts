@@ -77,8 +77,7 @@ export const createWorktree = async (cwd: string, task: string): Promise<Worktre
     const ref = await git(root, ["rev-parse", "--abbrev-ref", "HEAD"]);
     // The worktree starts from HEAD: edits not yet committed stay behind, and a
     // task about them finds nothing to do there.
-    const status = await git(root, ["status", "--porcelain"]);
-    const uncommitted = status.code === 0 ? status.stdout.split("\n").filter((l) => l.trim()).length : 0;
+    const uncommitted = (await uncommittedPaths(root)).length;
     const slug = `${slugify(task)}-${stampSlug()}`;
     const branch = `ai/${slug}`;
     const wtPath = path.join(path.dirname(root), `${path.basename(root)}.worktrees`, slug);
@@ -91,6 +90,32 @@ export const createWorktree = async (cwd: string, task: string): Promise<Worktre
         worktree: { root, path: wtPath, branch, baseRef: ref.stdout.trim() || "HEAD", baseSha: sha.stdout.trim() },
         uncommitted
     };
+};
+
+/** `<repo>.worktrees/<slug>`: what chat shows; the log keeps the full path. */
+export const worktreeLabel = (wtPath: string): string => `${path.basename(path.dirname(wtPath))}/${path.basename(wtPath)}`;
+
+/** The checkout's `git status` entries as repo-relative paths (`/`, a rename's
+ * new name): what a worktree from HEAD does not have. Empty when git fails. */
+export const uncommittedPaths = async (root: string): Promise<string[]> => {
+    const status = await git(root, ["status", "--porcelain", "-z"]);
+    if (status.code !== 0) {
+        return [];
+    }
+    const out: string[] = [];
+    const entries = status.stdout.split("\0");
+    for (let i = 0; i < entries.length; i += 1) {
+        const entry = entries[i];
+        if (entry.length < 4) {
+            continue;
+        }
+        out.push(entry.slice(3));
+        // `-z` puts a rename's or copy's old name in the next entry.
+        if (/^[RC]/.test(entry)) {
+            i += 1;
+        }
+    }
+    return out;
 };
 
 // A worktree an earlier turn made, named by chat metadata (untrusted): continued

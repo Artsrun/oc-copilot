@@ -118,7 +118,7 @@ export async function handleChat(
     const typedWorktree = /^\/worktree\b\s*/i.test(prompt);
     if (declared === "worktree" || typedWorktree) {
         const previous = Array.isArray(context?.history) ? threadWorktree(context.history, cwd) : undefined;
-        return handleWorktree({ task: prompt.replace(/^\/worktree\b\s*/i, "").trim(), cwd, response, token, previous });
+        return handleWorktree({ text: prompt.replace(/^\/worktree\b\s*/i, "").trim(), request, cwd, response, token, previous });
     }
 
     if (!prompt && !isKindCommand(declared)) {

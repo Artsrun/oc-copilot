@@ -238,7 +238,9 @@ const SLOW_START_MS = 1500;
 // bridge leans on behaviour measured on these versions only (REFS); outside
 // them it still runs, and says so once per window and version.
 export const TESTED_OPENCODE = { min: "1.18.27", max: "1.19.0" } as const;
-export const TESTED_OPENCODE2 = { min: "2.0.29", max: "2.0.32" } as const;
+// 2.0.29 and 2.0.32 through every manual check; 2.0.18, 2.1.4 and 2.2.0 through
+// the probe's ten rows (scripts/probe-opencode2.js, REFS 0.0.227).
+export const TESTED_OPENCODE2 = { min: "2.0.18", max: "2.2.0" } as const;
 const serverVersions = new Map<string, string>();
 /** The version `base` named at `/global/health`, if it named one. */
 export const serverVersion = (base: string): string | undefined => serverVersions.get(base);

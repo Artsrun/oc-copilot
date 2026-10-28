@@ -19,6 +19,7 @@ import {
     abortServerRun,
     compactSession,
     compactionInFlight,
+    contextOverflowing,
     createServerSession,
     isAttachFailure,
     isMissingSessionError,
@@ -108,10 +109,6 @@ const SUMMARY_WAIT_MS = 60000;
 // The turn-count autocompact needs this much context: summarising a small
 // session costs a model pass and loses detail for nothing.
 const COMPACT_MIN_TOKENS = 20000;
-// Size triggers a summarize too, not only the turn count (9.6k → 199k seen in 8 turns):
-// 60k of context, or 70% of the model's window when the catalog knows it.
-const COMPACT_CONTEXT_TOKENS = 60000;
-const COMPACT_CONTEXT_SHARE = 0.7;
 
 export async function runTurn(t: Turn): Promise<vscode.ChatResult> {
     const live = await openTurn(t);
@@ -619,8 +616,7 @@ async function finishTurn(t: Turn, live: Live, outcome: Outcome): Promise<vscode
         turns > 0 &&
         // The turn count alone fires only with context to spare (or unmeasured).
         ((turns % compactEvery === 0 && (contextTokens === 0 || contextTokens >= COMPACT_MIN_TOKENS)) ||
-            contextTokens > COMPACT_CONTEXT_TOKENS ||
-            (contextLimit !== undefined && contextTokens >= contextLimit * COMPACT_CONTEXT_SHARE))
+            contextOverflowing(contextTokens, contextLimit))
     ) {
         logChannel.appendLine(
             `[${stamp()}] compacting ${sessionId}: turn ${turns}, context ${contextTokens}` + (contextLimit ? ` of ${contextLimit}` : "")
@@ -629,7 +625,7 @@ async function finishTurn(t: Turn, live: Live, outcome: Outcome): Promise<vscode
     }
     // The bridge not compacting: offer it once the context is where it would have fired.
     const compactOffer =
-        !bridgeCompacts && sessionId && (contextTokens > COMPACT_CONTEXT_TOKENS || (contextLimit !== undefined && contextTokens >= contextLimit * COMPACT_CONTEXT_SHARE))
+        !bridgeCompacts && sessionId && contextOverflowing(contextTokens, contextLimit)
             ? contextLimit
                 ? `${Math.round((100 * contextTokens) / contextLimit)}%`
                 : `${Math.round(contextTokens / 1000)}k`

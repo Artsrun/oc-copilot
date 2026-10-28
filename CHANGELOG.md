@@ -3,6 +3,51 @@
 Full release history, newest first; releases before the last one are condensed
 to their summary and headlines. The README ships the last five.
 
+### 0.0.228
+
+A `/worktree` chat has been a conversation since 0.0.226; its turns now read
+what a chat turn reads. OpenCode 2's tested range is 2.0.18–2.2.0, and the gate
+no longer fails on battery.
+
+- **Fixed: `/worktree` sent `model:` and `effort:` to the model as words**
+  (`handleWorktree`, `chat-worktree.ts`). It is routed before `parseChatPrompt`:
+  `model:tundra fix X` ran on the default model with the prefix in the task and
+  in the branch (`ai/model-tundra-…`), and the `effort` setting never reached
+  the run (`/dev` sent `--variant high`, `/worktree` nothing; measured through
+  `out/`). Now both are flags, an unknown short name is refused before a
+  worktree exists, and the setting is sent. Checks `WT10`.
+- **Fixed: `/worktree` dropped attachments without a word.** A `#file` reached
+  `/dev` as "Files the user attached" and `/worktree` not at all; an image got
+  no "Not sent" note. Attachments now go by their repo path (the worktree has
+  the last commit's copy, and an attached file the checkout has changed is
+  named, `uncommittedPaths`), with the same notice and references. Checks `WT11`.
+- **Fixed: `/worktree fix` made a branch, a folder and a paid run.** A bare
+  first word is asked about, as on a chat turn; **Run it** sends it as
+  `/worktree`; a continued worktree's `go` runs. Checks `WT12`.
+- **Fixed: a worktree session had no books.** `/session` names the chat's
+  worktree, branch and session; `/compact` in a worktree-only chat compacts
+  that session in the worktree; a slow run gets the completion toast; touched
+  files come back as references and file pills open the worktree's copy; text
+  passes the leak and echo gates; the session is autocompacted by size
+  (`contextOverflowing`), and the next worktree turn waits for that summary
+  and stops an unwatched run first. Checks `WT13`, `CP`.
+- **Changed: a Review chip under a `/worktree` answer**, sent as `/worktree`:
+  it reviews the worktree, where the change is. Lanes stay out. Checks `WT9`.
+- `/worktree` names its folder `<repo>.worktrees/<slug>`; the log keeps the
+  full path. Checks `WT13`.
+- **OpenCode 2 tested on 2.0.18–2.2.0** (`TESTED_OPENCODE2`): the probe's ten
+  rows passed on 2.0.18, 2.1.4 and 2.2.0 (REFS, 0.0.227); `probes.yml` pins
+  2.2.0 as well. Checks `TW`.
+- **Gate: the NF timing check measured the machine.** Its 500 ms failed at 824
+  ms on battery with the code unchanged; the code is linear (four times the
+  input, 3.5–4.4 times the time). Now four times the input must cost under ten
+  times as much, and the 250 KB answer under 2.5 s; a quadratic mutant fails
+  it (REFS). The file-pill check had the same 500 ms (514 ms beside a second
+  suite) and gets the same. Checks `NF`, `FK`.
+- Words: `/help` and the manifest say a `/worktree` follow-up continues it; the
+  participant's line names `/worktree`, `/sessions` and `/compact`; `/parallel`
+  names `;;` and `---`. Checks `LB`.
+
 ### 0.0.227
 
 A review's findings get Fix chips in any layout, `/worktree` names the

@@ -238,7 +238,10 @@ export function followupsFor(metadata: Record<string, unknown>): vscode.ChatFoll
         case "clarify":
             // The only honest follow-up to "I did not act on this" is the
             // original text, unchanged, under the kind the user was in.
-            return own === undefined ? [] : chips(CASES.clarify, { RUN_ANYWAY: own });
+            // A /worktree turn's chip goes back as /worktree.
+            return own === undefined
+                ? []
+                : chips(CASES.clarify, { RUN_ANYWAY: own }).map((chip) => (metadata.agent === "worktree" ? { ...chip, command: "worktree" } : chip));
         case "failed":
         case "failedLong":
         case "failedNet":

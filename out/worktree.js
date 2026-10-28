@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.removeWorktree = exports.worktreeDiff = exports.reopenWorktree = exports.createWorktree = exports.slugify = exports.git = void 0;
+exports.removeWorktree = exports.worktreeDiff = exports.reopenWorktree = exports.uncommittedPaths = exports.worktreeLabel = exports.createWorktree = exports.slugify = exports.git = void 0;
 const node_child_process_1 = require("node:child_process");
 const fs = __importStar(require("node:fs"));
 const path = __importStar(require("node:path"));
@@ -67,8 +67,7 @@ const createWorktree = async (cwd, task) => {
         return { ok: false, reason: "the repository has no commits yet — a worktree needs a commit to start from." };
     }
     const ref = await (0, exports.git)(root, ["rev-parse", "--abbrev-ref", "HEAD"]);
-    const status = await (0, exports.git)(root, ["status", "--porcelain"]);
-    const uncommitted = status.code === 0 ? status.stdout.split("\n").filter((l) => l.trim()).length : 0;
+    const uncommitted = (await (0, exports.uncommittedPaths)(root)).length;
     const slug = `${(0, exports.slugify)(task)}-${stampSlug()}`;
     const branch = `ai/${slug}`;
     const wtPath = path.join(path.dirname(root), `${path.basename(root)}.worktrees`, slug);
@@ -83,6 +82,28 @@ const createWorktree = async (cwd, task) => {
     };
 };
 exports.createWorktree = createWorktree;
+const worktreeLabel = (wtPath) => `${path.basename(path.dirname(wtPath))}/${path.basename(wtPath)}`;
+exports.worktreeLabel = worktreeLabel;
+const uncommittedPaths = async (root) => {
+    const status = await (0, exports.git)(root, ["status", "--porcelain", "-z"]);
+    if (status.code !== 0) {
+        return [];
+    }
+    const out = [];
+    const entries = status.stdout.split("\0");
+    for (let i = 0; i < entries.length; i += 1) {
+        const entry = entries[i];
+        if (entry.length < 4) {
+            continue;
+        }
+        out.push(entry.slice(3));
+        if (/^[RC]/.test(entry)) {
+            i += 1;
+        }
+    }
+    return out;
+};
+exports.uncommittedPaths = uncommittedPaths;
 const reopenWorktree = async (cwd, wt) => {
     if (!/^ai\/[a-z0-9-]+$/.test(wt.branch)) {
         return false;

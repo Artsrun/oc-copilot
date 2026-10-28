@@ -3874,7 +3874,8 @@ const lbProvider = (global.__participant || {}).followupProvider;
             `WT9 a worktree answer's own chips are offered as /worktree (${wt9Chips.map((c) => `${c.command}:${c.label}`).join(" | ")})`,
             wt9Chips.length >= 1 && wt9Chips[0].label === "Add a regression test for it" && wt9Chips.every((c) => c.command === "worktree")
         );
-        add("WT9 …never a read-only chip, which would read the checkout", !wt9Chips.some((c) => c.label === NL("review1", { file: "guard.js" })));
+        // 0.0.228 (D2): a review chip goes as /worktree too — it reads the worktree, where the change is.
+        add("WT9 …a review chip as well, sent as /worktree", wt9Chips.some((c) => c.label === NL("review1", { file: "guard.js" }) && c.command === "worktree"));
         const wt9b = stream();
         const r9b = await global.__handler({ prompt: wt9Chips[0]?.prompt ?? "", command: wt9Chips[0]?.command }, { history: [turnOf(r9.metadata)] }, wt9b.response, wt9b.token);
         const wt9Argv = lastArgv("fake-wt9.js");
@@ -3883,6 +3884,98 @@ const lbProvider = (global.__participant || {}).followupProvider;
             r9b.metadata.worktree === r9.metadata.worktree && wt9Argv[wt9Argv.indexOf("--session") + 1] === "ses_wt9" && wt9Argv.at(-1) === wt9Chips[0]?.prompt
         );
         add("WT9 a failed worktree turn gets no chips", (global.__participant.followupProvider.provideFollowups({ metadata: { ...r9.metadata, error: "boom" } }, {}, {}) || []).length === 0);
+
+        // WT10 (0.0.228): /worktree was routed before parseChatPrompt, so
+        // `model:` and `effort:` went to the model as words and named the branch,
+        // and the `effort` setting never reached the run.
+        const wt10Fake = writeFake("fake-wt10.js", [{ type: "text", sessionID: "ses_wt10", part: { text: "done in the worktree" } }]);
+        settings.executable = wt10Fake;
+        const wt10 = stream();
+        const r10 = await global.__handler({ prompt: "model:prov/wt-model e:max fix the login redirect", command: "worktree" }, { history: [] }, wt10.response, wt10.token);
+        const wt10Argv = lastArgv("fake-wt10.js");
+        add(
+            `WT10 model: and effort: reach the run as flags, not words (${JSON.stringify(wt10Argv.slice(2))})`,
+            wt10Argv[wt10Argv.indexOf("--model") + 1] === "prov/wt-model" && wt10Argv[wt10Argv.indexOf("--variant") + 1] === "max" && wt10Argv.at(-1) === "fix the login redirect"
+        );
+        add(`WT10 …and the branch is named for the task alone (${r10.metadata.branch})`, /^ai\/fix-the-login-redirect-\d{4}-\d{6}$/.test(r10.metadata.branch ?? ""));
+        const wt10Saved = settings.effort;
+        settings.effort = "high";
+        const wt10b = stream();
+        await global.__handler({ prompt: "tidy the redirect helper", command: "worktree" }, { history: [] }, wt10b.response, wt10b.token);
+        const wt10bArgv = lastArgv("fake-wt10.js");
+        settings.effort = wt10Saved;
+        add(`WT10 the effort setting reaches a worktree run (${JSON.stringify(wt10bArgv.slice(2, -1))})`, wt10bArgv[wt10bArgv.indexOf("--variant") + 1] === "high");
+        const wt10Dirs = fs.readdirSync(wtParent).length;
+        const wt10c = stream();
+        const r10c = await global.__handler({ prompt: "m:zzqx fix the login redirect", command: "worktree" }, { history: [] }, wt10c.response, wt10c.token);
+        add("WT10 an unknown short model name is refused before a worktree exists", /`zzqx` is not in OpenCode's model list/.test(wt10c.chatMarkdown.join("")) && fs.readdirSync(wtParent).length === wt10Dirs && r10c.metadata.kind === "idle");
+
+        // WT11 (0.0.228): attachments went nowhere and nothing said so.
+        fs.writeFileSync(path.join(work, "tracked.txt"), "v2 uncommitted\n");
+        const wt11 = stream();
+        await global.__handler({
+            prompt: "explain this file",
+            command: "worktree",
+            references: [
+                { id: "vscode.file", value: { fsPath: path.join(work, "tracked.txt"), scheme: "file" } },
+                { id: "img", value: { mimeType: "image/png", data: new Uint8Array([1, 2, 3]) } }
+            ]
+        }, { history: [] }, wt11.response, wt11.token);
+        fs.writeFileSync(path.join(work, "tracked.txt"), "v1\n");
+        const wt11Task = lastArgv("fake-wt10.js").at(-1) ?? "";
+        const wt11Chat = plain(wt11.chatMarkdown.join(""));
+        add("WT11 an attached file reaches the worktree run by its repo path", /^explain this file\n/.test(wt11Task) && /Files the user attached:\n- tracked\.txt\n/.test(wt11Task));
+        add("WT11 what OpenCode won't get is said, as on a chat turn", /Not sent to OpenCode: an image/.test(wt11Chat));
+        add("WT11 an attached file the checkout has changed is named: the worktree has the commit's", /`tracked\.txt` has uncommitted changes in your checkout; the worktree has the last commit's version/.test(wt11Chat));
+        add("WT11 the attachment comes back as a reference", wt11.refs.some((r) => samePath(r, path.join(work, "tracked.txt"))));
+
+        // WT12 (0.0.228): a bare word made a branch, a folder and a paid run.
+        const wt12Dirs = fs.readdirSync(wtParent).length;
+        fs.rmSync(path.join(work, "fake-wt10.js.argv"), { force: true });
+        const wt12 = stream();
+        const r12 = await global.__handler({ prompt: "fix", command: "worktree" }, { history: [] }, wt12.response, wt12.token);
+        const wt12Chips = global.__participant.followupProvider.provideFollowups(r12, {}, {}) || [];
+        add("WT12 a vague first /worktree asks first: no worktree, no run", /too short for me to act on/.test(wt12.chatMarkdown.join("")) && fs.readdirSync(wtParent).length === wt12Dirs && lastArgv("fake-wt10.js").length === 0);
+        add(`WT12 …its Run it chip goes back as /worktree (${wt12Chips.map((c) => `${c.command}:${c.prompt}`).join(" | ")})`, wt12Chips.length === 1 && wt12Chips[0].command === "worktree" && wt12Chips[0].prompt === "fix");
+        const wt12b = stream();
+        await global.__handler({ prompt: wt12Chips[0]?.prompt ?? "", command: wt12Chips[0]?.command }, { history: [] }, wt12b.response, wt12b.token);
+        add("WT12 …and taking it runs", fs.readdirSync(wtParent).length === wt12Dirs + 1 && lastArgv("fake-wt10.js").at(-1) === "fix");
+        const wt12c = stream();
+        await global.__handler({ prompt: "go", command: "worktree" }, { history: [turnOf(r10.metadata)] }, wt12c.response, wt12c.token);
+        add("WT12 a continued worktree's one-word reply runs", /Continuing in/.test(wt12c.chatMarkdown.join("")) && lastArgv("fake-wt10.js").at(-1) === "go");
+
+        // WT13 (0.0.228): the worktree's session had no books.
+        const wt13 = stream();
+        await global.__handler({ prompt: "", command: "session" }, { history: [turnOf(r10.metadata)] }, wt13.response, wt13.token);
+        const wt13Text = wt13.chatMarkdown.join("");
+        add(
+            `WT13 /session in a worktree chat names the worktree and its session (${wt13Text.slice(0, 160)})`,
+            wt13Text.includes(`Worktree \`${r10.metadata.branch}\``) && wt13Text.includes("`ses_wt10`") && !/No session in \*\*this chat\*\* yet/.test(wt13Text)
+        );
+        add("WT13 the opening line names the folder by repo, not by full path", wt10.chatMarkdown.join("").includes(`\`${path.basename(wtParent)}/${path.basename(r10.metadata.worktree)}\``) && !wt10.chatMarkdown.join("").includes(r10.metadata.worktree));
+        settings.executable = writeFake("fake-wt13.js", [
+            { type: "tool_use", sessionID: "ses_wt13", part: { tool: "edit", state: { status: "completed", input: { filePath: "src/guard.js" }, output: "", time: { start: 0, end: 10 } } } },
+            { type: "text", sessionID: "ses_wt13", part: { text: "Edited `src/guard.js:3` and stopped." } }
+        ], "fs.mkdirSync('src', { recursive: true }); fs.writeFileSync(require('path').join('src', 'guard.js'), 'x');\n");
+        const wt13Infos = [];
+        const wt13Real = vscodeStub.window.showInformationMessage;
+        const wt13Focus = vscodeStub.window.state.focused;
+        const wt13After = settings.notifyAfterMs;
+        vscodeStub.window.showInformationMessage = (msg) => (wt13Infos.push(msg), Promise.resolve(undefined));
+        vscodeStub.window.state.focused = false;
+        settings.notifyAfterMs = 1;
+        const wt13b = stream();
+        const r13 = await global.__handler({ prompt: "guard the loop", command: "worktree" }, { history: [] }, wt13b.response, wt13b.token);
+        vscodeStub.window.showInformationMessage = wt13Real;
+        vscodeStub.window.state.focused = wt13Focus;
+        settings.notifyAfterMs = wt13After;
+        add(`WT13 a worktree run out of view gets the completion toast (${JSON.stringify(wt13Infos)})`, wt13Infos.some((m) => /OpenCode worktree/.test(m)));
+        add("WT13 the files it touched come back as references in the worktree", wt13b.refs.some((r) => samePath(r, path.join(r13.metadata.worktree, "src", "guard.js"))));
+        fs.writeFileSync(path.join(r13.metadata.worktree, "wt-pill.txt"), "x\n");
+        settings.executable = writeFake("fake-wt13b.js", [{ type: "text", sessionID: "ses_wt13", part: { text: "See `wt-pill.txt:1` for it." } }]);
+        const wt13c = stream();
+        await global.__handler({ prompt: "where is it", command: "worktree" }, { history: [turnOf(r13.metadata)] }, wt13c.response, wt13c.token);
+        add("WT13 a file the answer names opens the worktree's copy", wt13c.anchors.some((a) => samePath(a.uri?.uri?.fsPath ?? a.uri?.fsPath ?? "", path.join(r13.metadata.worktree, "wt-pill.txt"))));
         settings.executable = wtFake;
 
         const wt2 = stream();
@@ -3966,11 +4059,20 @@ const lbProvider = (global.__participant || {}).followupProvider;
         const fkAfter = fkRun(["```\nx\n```\nThen `src/cart.ts`."]);
         add("FK a path after a closed fence becomes an anchor", fkText(fkAfter) === "```\nx\n```\nThen <A>.");
         // An answer that never streamed arrives whole: one 300 KB line, 48k backticks.
+        // Growth plus a cap, as NF (0.0.228): a fixed 500ms failed at 514ms on battery.
         const fkBig = "See `a` and `b.x` here, `src/nope.ts` too. ".repeat(7000);
         const fkT0 = Date.now();
         const fkBigOut = fkRun([fkBig]);
         const fkMs = Date.now() - fkT0;
-        add(`FK a 300 KB one-line answer links in < 500ms (${fkMs}ms)`, fkMs < 500 && fkText(fkBigOut) === fkBig);
+        add(`FK a 300 KB one-line answer links in < 2.5s (${fkMs}ms)`, fkMs < 2500 && fkText(fkBigOut) === fkBig);
+        const fkMedianMs = (n) => {
+            const text = "See `a` and `b.x` here, `src/nope.ts` too. ".repeat(n);
+            const runs = [0, 1, 2].map(() => { const t = process.hrtime.bigint(); fkRun([text]); return Number(process.hrtime.bigint() - t) / 1e6; });
+            return runs.sort((x, y) => x - y)[1];
+        };
+        const fkSmall = fkMedianMs(1750);
+        const fkLarge = fkMedianMs(7000);
+        add(`FK linking grows linearly: x4 input, x${(fkLarge / Math.max(fkSmall, 0.5)).toFixed(1)} time (${fkSmall.toFixed(0)}→${fkLarge.toFixed(0)}ms, < x10)`, fkLarge / Math.max(fkSmall, 0.5) < 10);
 
         // Through a real turn: the anchor reaches the chat, the text around it too.
         fs.writeFileSync(path.join(work, "fk-lane.ts"), "a\nb\nc\n");
@@ -4021,6 +4123,17 @@ const lbProvider = (global.__participant || {}).followupProvider;
         "LB every manifest command carries a description",
         lbPkgCommands.length > 0 && lbPkgCommands.every((c) => typeof c.description === "string" && c.description.length > 0)
     );
+    // 0.0.228: the participant's own line named six commands, and /worktree said
+    // "a new worktree" after 0.0.226 made follow-ups continue it.
+    const lbParticipant = (require(path.join(__dirname, "..", "package.json")).contributes.chatParticipants || []).find((p) => p.id === "opencodeCopilotBridge.chat") || {};
+    const lbMissing = ["dev", "parallel", "worktree", "sessions", "compact", "help"].filter((c) => !new RegExp(`/${c}\\b`).test(lbParticipant.description || ""));
+    add(`LB the participant's description names the task commands${lbMissing.length ? ` (missing: ${lbMissing.join(", ")})` : ""}`, lbMissing.length === 0);
+    const lbWt = lbPkgCommands.find((c) => c.name === "worktree")?.description || "";
+    const lbHelp = stream();
+    await global.__handler({ prompt: "", command: "help" }, { history: [] }, lbHelp.response, lbHelp.token);
+    const lbHelpWt = lbHelp.chatMarkdown.join("").split("\n").find((l) => l.startsWith("| `/worktree")) || "";
+    add("LB /worktree's description and /help say a follow-up continues it", /follow-ups?[^|]*continue/i.test(lbWt) && /follow-ups?[^|]*continue/i.test(lbHelpWt) && !/\bNEW\b/.test(lbHelpWt));
+    add("LB /parallel's description names every lane separator", /\|/.test(lbPkgCommands.find((c) => c.name === "parallel")?.description || "") && /;;/.test(lbPkgCommands.find((c) => c.name === "parallel")?.description || "") && /---/.test(lbPkgCommands.find((c) => c.name === "parallel")?.description || ""));
 
     // ==================== v179 ====================
     // MA: session ids reach two boundaries — a URL path and an argv value. v165
@@ -4485,14 +4598,27 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         add(`NF no run-as-lanes chip for ${what}`, !laneChipOf(chips));
     }
     // It runs on every finished answer in the extension host: bound it on a
-    // 250 KB answer and on inputs shaped to make a regex backtrack.
+    // 250 KB answer and on inputs shaped to make a regex backtrack. Growth, not
+    // a fixed budget: 500ms measured the machine (612–824ms on battery, 109–114
+    // on AC, the same code; REFS 0.0.228). Four times the input costs about four
+    // times as much when linear (2.6–4.8 measured), sixteen when quadratic.
     const nfBig = "The loop starts at index 1, which skips the first item — e.g. one line, or two. ".repeat(3000) + "\n\nWant me to fix the loop, add a test, or open a PR?";
     const nfT0 = Date.now();
     const nfBigChips = nf("plan", nfBig);
-    nf("plan", "Want me to draft a plan for any of these — e.g. " + "a, ".repeat(20000) + "or b?");
-    nf("plan", "Should I " + "fix x or ".repeat(20000) + "stop?");
-    const nfMs = Date.now() - nfT0;
-    add(`NF a 250 KB answer and two backtracking traps take < 500ms (${nfMs}ms)`, nfMs < 500 && nfLabels(nfBigChips).join("|") === "Fix the loop|Add a test|Open a PR");
+    const nfBigMs = Date.now() - nfT0;
+    add(`NF a 250 KB answer takes < 2.5s (${nfBigMs}ms) and keeps its chips`, nfBigMs < 2500 && nfLabels(nfBigChips).join("|") === "Fix the loop|Add a test|Open a PR");
+    const nfMedianMs = (text) => {
+        const runs = [0, 1, 2].map(() => { const t = process.hrtime.bigint(); nf("plan", text); return Number(process.hrtime.bigint() - t) / 1e6; });
+        return runs.sort((x, y) => x - y)[1];
+    };
+    for (const [what, trap] of [
+        ["e.g. a, a, …", (n) => "Want me to draft a plan for any of these — e.g. " + "a, ".repeat(n) + "or b?"],
+        ["fix x or …", (n) => "Should I " + "fix x or ".repeat(n) + "stop?"]
+    ]) {
+        const small = nfMedianMs(trap(5000));
+        const large = nfMedianMs(trap(20000));
+        add(`NF the "${what}" trap grows linearly: x4 input, x${(large / Math.max(small, 0.5)).toFixed(1)} time (${small.toFixed(0)}→${large.toFixed(0)}ms, < x10)`, large < 2500 && large / Math.max(small, 0.5) < 10);
+    }
 
     // PW (v183): `opencode run` works in `process.env.PWD ?? process.cwd()`.
     // Every CLI turn must hand the chosen folder over as PWD as well as cwd.
@@ -6143,6 +6269,20 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         );
         const cp4 = await v5Turn("", { command: "compact" });
         add("CP /compact in a chat with no session runs nothing", /Nothing to compact/.test(cp4.md) && v5.summarize.length === 1);
+        // 0.0.228: a chat that has only worked in a worktree compacts that session, in its folder.
+        const cpWtPath = path.join(path.dirname(work), `${path.basename(work)}.worktrees`, "cp-wt-1028-000000");
+        const cpWtHist = [{ participant: "opencodeCopilotBridge.chat", prompt: "add a guard", result: { metadata: { kind: "worktree", cwd: work, worktree: cpWtPath, branch: "ai/cp-wt-1028-000000", worktreeRoot: work, worktreeBase: "0123456789abcdef", worktreeBaseRef: "main", worktreeSession: "ses_cpwt" } } }];
+        // The fake knows no messages of ses_cpwt: the pin names the model, as a real server's history would.
+        fs.mkdirSync(cpWtPath, { recursive: true });
+        const cpModelSaved = settings.model;
+        settings.model = "oc/cp-wt";
+        const cp5 = await v5Turn("", { command: "compact" }, cpWtHist);
+        settings.model = cpModelSaved;
+        add(
+            `CP /compact in a worktree-only chat summarises the worktree's session in the worktree (${JSON.stringify(v5.summarize.slice(1).map((x) => [x.sid, x.dir]))})`,
+            v5.summarize.length === 2 && v5.summarize[1].sid === "ses_cpwt" && samePath(v5.summarize[1].dir, cpWtPath) && /Compacted `ses_cpwt`/.test(cp5.md)
+        );
+        fs.rmSync(path.dirname(cpWtPath), { recursive: true, force: true });
         add("CP /compact is a control command, in /help and the manifest", ext.__test.slashCommands.includes("compact") && /`\/compact`/.test(cp4.md === "" ? "" : (await v5Turn("", { command: "help" })).md));
         // v212: `autoCompactEveryTurns: 0` is documented as "rely only on
         // OpenCode's native autocompaction"; 0.0.211 still summarized past 60k / 70%.
@@ -8231,11 +8371,23 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
             const tw7 = stream();
             await global.__handler({ prompt: "explain the cart on three [[probe:text]]" }, { history: [] }, tw7.response, tw7.token);
             const tw7Chat = plain(tw7.chatMarkdown.join(""));
-            add(`TW a 3.x with opencode2 runs on the 2.x adapter and says it is outside the tested 2.0.29–2.0.32${/Hello from the scripted model/.test(tw7Chat) ? "" : ` [chat: ${tw7Chat.slice(0, 400)}]`}`,
-                /Hello from the scripted model\./.test(tw7Chat) && /3\.0\.0 is outside the versions this bridge was tested with \(2\.0\.29/.test(tw7Chat));
+            add(`TW a 3.x with opencode2 runs on the 2.x adapter and says it is outside the tested 2.0.18–2.2.0${/Hello from the scripted model/.test(tw7Chat) ? "" : ` [chat: ${tw7Chat.slice(0, 400)}]`}`,
+                /Hello from the scripted model\./.test(tw7Chat) && /3\.0\.0 is outside the versions this bridge was tested with \(2\.0\.18–2\.2\.0\)/.test(tw7Chat));
             add("TW …its own `--version` was read (3.0.0), not a cached 2.x identity",
                 logLines.slice(tw7Log).some((l) => /fake-tw3\.js --version/.test(l)) && logLines.slice(tw7Log).some((l) => /CLI identity verified/.test(l)));
             ext.deactivate();
+            // 0.0.228: the probe's ten rows passed on 2.0.18, 2.1.4 and 2.2.0 too
+            // (REFS): the top of that range runs without the outside-the-range line.
+            process.env.FAKE_OC2_VERSION = "2.2.0";
+            settings.executable = writeFake("fake-tw22.js", [], `if (!process.argv.includes('--version') || true) require(${JSON.stringify(path.join(__dirname, "fixtures", "fake-opencode2.js"))})(process.argv);\n`);
+            const tw22 = stream();
+            await global.__handler({ prompt: "explain the cart on 2.2 [[probe:text]]" }, { history: [] }, tw22.response, tw22.token);
+            const tw22Chat = plain(tw22.chatMarkdown.join(""));
+            add(`TW 2.2.0 runs inside the tested range: no outside-the-range line${/Hello from the scripted model/.test(tw22Chat) ? "" : ` [chat: ${tw22Chat.slice(0, 300)}]`}`,
+                /Hello from the scripted model\./.test(tw22Chat) && !/outside the versions/.test(tw22Chat));
+            ext.deactivate();
+            process.env.FAKE_OC2_VERSION = "3.0.0";
+            settings.executable = writeFake("fake-tw3.js", [], `if (!process.argv.includes('--version') || true) require(${JSON.stringify(path.join(__dirname, "fixtures", "fake-opencode2.js"))})(process.argv);\n`);
             settings.opencode2 = false;
             const tw8 = stream();
             await global.__handler({ prompt: "explain the cart on three, off [[probe:text]]" }, { history: [] }, tw8.response, tw8.token);

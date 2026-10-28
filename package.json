@@ -2,7 +2,7 @@
   "name": "opencode-copilot-bridge",
   "displayName": "OpenCode Copilot Bridge",
   "description": "Delegate research, planning, and development to OpenCode from GitHub Copilot Chat.",
-  "version": "0.0.227",
+  "version": "0.0.228",
   "publisher": "local",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -54,7 +54,7 @@
         "id": "opencodeCopilotBridge.chat",
         "name": "opencode",
         "fullName": "OpenCode Copilot Bridge",
-        "description": "One ongoing OpenCode session. Describe the task (plan, the default agent), or use /dev /parallel /session /new /model /help, or dev:, model:id inline.",
+        "description": "One ongoing OpenCode session. Describe the task (plan, the default agent), or use /dev /parallel /worktree /sessions /compact /new /model /help, or dev:, model:id inline.",
         "isSticky": true,
         "commands": [
           {
@@ -75,7 +75,7 @@
           },
           {
             "name": "parallel",
-            "description": "Run independent lanes at once — separate them with |"
+            "description": "Run independent lanes at once — separate them with |, ;; or a --- line"
           },
           {
             "name": "session",
@@ -87,7 +87,7 @@
           },
           {
             "name": "worktree",
-            "description": "Editing agent in a new git worktree + branch — your checkout is untouched"
+            "description": "Editing agent in its own git worktree + branch; follow-ups in this chat continue it — your checkout is untouched"
           },
           {
             "name": "new",
@@ -299,7 +299,7 @@
           "opencodeCopilotBridge.opencode2": {
             "type": "boolean",
             "default": false,
-            "markdownDescription": "Experimental: drive OpenCode 2 (`@opencode/cli`, measured on 2.0.29–2.0.32) through its HTTP API instead of refusing it. Every turn goes through the server this window starts (its password stays in memory); read-only turns are sent only when that server lists the bridge's read-only rules for `plan`. Off: an OpenCode 2 `opencode` is refused, as before."
+            "markdownDescription": "Experimental: drive OpenCode 2 (`@opencode/cli`, tested on 2.0.18–2.2.0) through its HTTP API instead of refusing it. Every turn goes through the server this window starts (its password stays in memory); read-only turns are sent only when that server lists the bridge's read-only rules for `plan`. Off: an OpenCode 2 `opencode` is refused, as before."
           },
           "opencodeCopilotBridge.readOnlyTools": {
             "type": "array",

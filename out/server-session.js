@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.isTurnPermissionError = exports.serverEnforcement = exports.HEADLESS_PERMISSION = exports.sessionRoot = exports.sessionPath = exports.safeSessionId = void 0;
+exports.contextOverflowing = exports.isTurnPermissionError = exports.serverEnforcement = exports.HEADLESS_PERMISSION = exports.sessionRoot = exports.sessionPath = exports.safeSessionId = void 0;
 exports.turnPermission = turnPermission;
 exports.readOnlyReach = readOnlyReach;
 exports.readOnlyEvidence = readOnlyEvidence;
@@ -276,6 +276,10 @@ const COMPACT_TIMEOUT_MS = 180000;
 const COMPACT_BACKOFF_MS = 5 * 60000;
 let compactServerFailedAt = 0;
 const compactions = new Map();
+const COMPACT_CONTEXT_TOKENS = 60000;
+const COMPACT_CONTEXT_SHARE = 0.7;
+const contextOverflowing = (tokens, limit) => tokens > COMPACT_CONTEXT_TOKENS || (limit !== undefined && tokens >= limit * COMPACT_CONTEXT_SHARE);
+exports.contextOverflowing = contextOverflowing;
 function compactionInFlight(sessionId) {
     return compactions.get(sessionId);
 }

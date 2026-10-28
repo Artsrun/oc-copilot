@@ -5,6 +5,33 @@ actually measured, so nobody re-derives it.
 
 ---
 
+## 0.0.228: two timing checks measured the machine (2026-10-28)
+
+**Dated 2026-10-28. Fixed in 0.0.228.** Windows 11, Node 22.23.2, on battery
+(`Win32_Battery` status 1, 83 %), CPU load 51 %.
+
+`NF a 250 KB answer and two backtracking traps take < 500ms` failed the
+0.0.227 gate at 824 ms, the code unchanged (REFS 0.0.227 below: 612/615 ms on
+battery, 109–114 ms on AC). The same three inputs alone through
+`out/natural.js`: 430 ms cold, 322 ms median of nine. Size against time
+(median of five):
+
+| Input | x1 | x2 | x4 |
+| --- | --- | --- | --- |
+| 250 KB answer | 12.6 ms | 35.4 ms | 82.7 ms |
+| `e.g. a, a, …` (20 000) | 133.4 ms | 275.8 ms | 524.5 ms |
+| `fix x or …` (20 000) | 116.7 ms | 213.2 ms | 518.3 ms |
+
+Linear. `FK a 300 KB one-line answer links in < 500ms` failed at 514 ms with a
+second suite running beside it. Both now check growth (four times the input
+under ten times the time: x3.5–x3.7 measured in the suite) and a 2.5 s cap. A
+quadratic mutant, `input.answer.indexOf("\0", i)` from every position in
+`naturalFollowups`: the 250 KB answer took 16 880 ms, red on the cap; the traps'
+ratios stayed under ten, because the extra scan is cheap next to their own cost.
+The cap is what catches that one.
+
+---
+
 ## 0.0.227: the 2.x probe on Windows looked where bash did not write (2026-10-27)
 
 Windows 11, Node 22.23.2, `@opencode/cli` 2.0.18 (installed) and 2.0.32 (a temp
