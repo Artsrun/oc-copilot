@@ -34,6 +34,9 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.OWN_PARTICIPANTS = exports.INLINE_PARTICIPANT_ID = exports.PARTICIPANT_ID = void 0;
+exports.setParticipantProblem = setParticipantProblem;
+exports.getParticipantProblem = getParticipantProblem;
+exports.harnessNote = harnessNote;
 exports.getActiveSession = getActiveSession;
 exports.setActiveSession = setActiveSession;
 exports.threadSession = threadSession;
@@ -51,6 +54,21 @@ const core_1 = require("./core");
 exports.PARTICIPANT_ID = "opencodeCopilotBridge.chat";
 exports.INLINE_PARTICIPANT_ID = "opencodeCopilotBridge.inline";
 exports.OWN_PARTICIPANTS = new Set([exports.PARTICIPANT_ID, exports.INLINE_PARTICIPANT_ID]);
+let participantProblem = "";
+function setParticipantProblem(problem) {
+    participantProblem = problem;
+}
+function getParticipantProblem() {
+    return participantProblem;
+}
+function harnessNote() {
+    const chat = vscode.workspace.getConfiguration?.("chat");
+    const read = (key) => {
+        const value = chat?.get(key);
+        return value === undefined ? "unset" : String(value);
+    };
+    return `chat.defaultToCopilotHarness ${read("defaultToCopilotHarness")} · chat.editor.localAgent.enabled ${read("editor.localAgent.enabled")}`;
+}
 function sessionStateKey(cwd) {
     return `opencode.session:${cwd}`;
 }

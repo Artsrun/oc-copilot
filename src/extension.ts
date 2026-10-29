@@ -11,9 +11,12 @@ import { createFileLinker, parseChatPrompt, splitLanePrefixes, splitModelPrefix,
 import {
     INLINE_PARTICIPANT_ID,
     PARTICIPANT_ID,
+    getParticipantProblem,
     handoffChain,
+    harnessNote,
     notifyIfSlow,
     resolveSessionState,
+    setParticipantProblem,
     threadSession
 } from "./session";
 import { contextNote, effortFor, getModelCatalog, higherEffort, modelLabel, parseModelList, parseProviders, parseVerboseModels, resolveModelRef } from "./models";
@@ -44,16 +47,31 @@ export function activate(context: vscode.ExtensionContext): void {
     for (const problem of followupsProblems()) {
         logChannel.appendLine(`followups.json: ${problem}`);
     }
-    context.subscriptions.push(participant(context, PARTICIPANT_ID, handleChat));
-    // claim:inline-participant — @opencode in inline chat (Ctrl+I). It needs the
-    // chatParticipantAdditions proposal; registering it must never take the
-    // panel participant down.
+    // The chat participant API is deprecated (Copilot harness, VS Code 1.142+):
+    // a host without it must still get the palette commands and gitScan (HR).
+    setParticipantProblem("");
     try {
-        context.subscriptions.push(
-            participant(context, INLINE_PARTICIPANT_ID, (r, c, s, t) => handleChat(r, c, s, t, { inline: true }))
-        );
+        context.subscriptions.push(participant(context, PARTICIPANT_ID, handleChat));
     } catch (err) {
-        logChannel.appendLine(`inline @opencode unavailable: ${err instanceof Error ? err.message : String(err)}`);
+        setParticipantProblem(err instanceof Error ? err.message : String(err));
+    }
+    const problem = getParticipantProblem();
+    logChannel.appendLine(`[${stamp()}] chat harness: VS Code ${vscode.version ?? "?"} · ${harnessNote()}${problem ? ` · @opencode not registered: ${problem}` : ""}`);
+    if (problem) {
+        void vscode.window.showWarningMessage?.(
+            "OpenCode: this VS Code offers no chat participants, so @opencode cannot run. The palette commands and gitScan still work; OpenCode: Diagnose says why."
+        );
+    } else {
+        // claim:inline-participant — @opencode in inline chat (Ctrl+I). It needs the
+        // chatParticipantAdditions proposal; registering it must never take the
+        // panel participant down.
+        try {
+            context.subscriptions.push(
+                participant(context, INLINE_PARTICIPANT_ID, (r, c, s, t) => handleChat(r, c, s, t, { inline: true }))
+            );
+        } catch (err) {
+            logChannel.appendLine(`inline @opencode unavailable: ${err instanceof Error ? err.message : String(err)}`);
+        }
     }
     registerCommands(context);
     registerGitScan(context);

@@ -5,6 +5,37 @@ actually measured, so nobody re-derives it.
 
 ---
 
+## 0.0.231: the Copilot harness and the participant API (2026-10-29)
+
+**Dated 2026-10-29. Phase 0 shipped in 0.0.231.** Read, not measured in a live
+VS Code: this session had no GUI (P1 step 1 in `docs/v230-plan.md` is still
+owed).
+
+- code.visualstudio.com/api/extension-guides/ai/ai-extensibility-overview:
+  "Chat participant (deprecated)"; "not supported in the Copilot harness. The
+  API remains available for Local harness compatibility". It names agent
+  plugins as "the recommended replacement". No removal date.
+- …/docs/agent-customization/migrate-customizations#_replace-chat-participants:
+  slash commands → skills, service access → MCP tools, buttons → MCP Apps,
+  "custom model calls, history, and response rendering" need refactoring.
+- …/updates/v1_142: Copilot is "progressively" the default harness for new
+  sessions; managed `permissions` or `sandbox.enabled` force it;
+  `vscode.temporaryDefaultToLocalHarness` (enterprise, "temporary") opts out.
+- …/docs/agents/run/agent-harnesses: `chat.editor.localAgent.enabled` makes
+  Local visible (experimental); `chat.defaultToCopilotHarness: false` stops
+  the automatic Copilot preference. Claude is built in, and Codex comes
+  through its extension or the Agent Host. No documented way to add another
+  harness.
+- …/docs/agents/concepts/agent-host: "Tools from extensions are available only
+  in chats in an editor window where the extension is running."
+
+**The bridge's own exposure, measured:** `activate()` called
+`vscode.chat.createChatParticipant` unguarded, first. With `vscode.chat`
+removed from the suite's stub, activation threw before `registerCommands` and
+`registerGitScan` (`HR`, 6 red on 0.0.230).
+
+---
+
 ## 0.0.230: OpenCode 2.2.0 against 2.0.29's wire, archive, retries (2026-10-29)
 
 **Dated 2026-10-29. Fixed in 0.0.230.** Windows 11, `@opencode/cli` 2.2.0 (a

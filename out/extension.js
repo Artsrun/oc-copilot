@@ -67,12 +67,25 @@ function activate(context) {
     for (const problem of (0, followups_1.followupsProblems)()) {
         core_1.logChannel.appendLine(`followups.json: ${problem}`);
     }
-    context.subscriptions.push(participant(context, session_1.PARTICIPANT_ID, chat_1.handleChat));
+    (0, session_1.setParticipantProblem)("");
     try {
-        context.subscriptions.push(participant(context, session_1.INLINE_PARTICIPANT_ID, (r, c, s, t) => (0, chat_1.handleChat)(r, c, s, t, { inline: true })));
+        context.subscriptions.push(participant(context, session_1.PARTICIPANT_ID, chat_1.handleChat));
     }
     catch (err) {
-        core_1.logChannel.appendLine(`inline @opencode unavailable: ${err instanceof Error ? err.message : String(err)}`);
+        (0, session_1.setParticipantProblem)(err instanceof Error ? err.message : String(err));
+    }
+    const problem = (0, session_1.getParticipantProblem)();
+    core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] chat harness: VS Code ${vscode.version ?? "?"} · ${(0, session_1.harnessNote)()}${problem ? ` · @opencode not registered: ${problem}` : ""}`);
+    if (problem) {
+        void vscode.window.showWarningMessage?.("OpenCode: this VS Code offers no chat participants, so @opencode cannot run. The palette commands and gitScan still work; OpenCode: Diagnose says why.");
+    }
+    else {
+        try {
+            context.subscriptions.push(participant(context, session_1.INLINE_PARTICIPANT_ID, (r, c, s, t) => (0, chat_1.handleChat)(r, c, s, t, { inline: true })));
+        }
+        catch (err) {
+            core_1.logChannel.appendLine(`inline @opencode unavailable: ${err instanceof Error ? err.message : String(err)}`);
+        }
     }
     (0, commands_registry_1.registerCommands)(context);
     (0, git_scan_mcp_1.registerGitScan)(context);
