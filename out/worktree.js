@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.removeWorktree = exports.worktreeDiff = exports.reopenWorktree = exports.uncommittedPaths = exports.worktreeLabel = exports.createWorktree = exports.slugify = exports.git = void 0;
+exports.removeWorktree = exports.worktreeChanges = exports.listWorktrees = exports.baseText = exports.changedFiles = exports.worktreeDiff = exports.reopenWorktree = exports.uncommittedPaths = exports.worktreeLabel = exports.createWorktree = exports.slugify = exports.git = void 0;
 const node_child_process_1 = require("node:child_process");
 const fs = __importStar(require("node:fs"));
 const path = __importStar(require("node:path"));
@@ -127,6 +127,68 @@ const worktreeDiff = async (wt, stat = true, maxBufferMB = 16) => {
     return out.stdout.trim();
 };
 exports.worktreeDiff = worktreeDiff;
+const changedFiles = async (wt, maxBufferMB = 16) => {
+    await (0, exports.git)(wt.path, ["add", "-N", "."]);
+    const out = await (0, exports.git)(wt.path, ["-c", "core.quotepath=false", "diff", "--name-status", "--no-renames", "-z", wt.baseSha], 30000, maxBufferMB);
+    if (out.code !== 0) {
+        return [];
+    }
+    const parts = out.stdout.split("\0");
+    const files = [];
+    for (let i = 0; i + 1 < parts.length; i += 2) {
+        const code = parts[i].charAt(0);
+        if (parts[i + 1]) {
+            files.push({ path: parts[i + 1], status: code === "A" ? "A" : code === "D" ? "D" : "M" });
+        }
+    }
+    return files;
+};
+exports.changedFiles = changedFiles;
+const baseText = async (wtPath, base, rel) => {
+    if (!/^[0-9a-f]{7,64}$/.test(base) || !rel || !fs.existsSync(path.join(wtPath, ".git"))) {
+        return "";
+    }
+    const out = await (0, exports.git)(wtPath, ["show", `${base}:${rel}`], 30000, 16);
+    return out.code === 0 ? out.stdout : "";
+};
+exports.baseText = baseText;
+const sameDir = (a, b) => (process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b);
+const listWorktrees = async (cwd) => {
+    const top = await (0, exports.git)(cwd, ["rev-parse", "--show-toplevel"]);
+    if (top.code !== 0) {
+        return undefined;
+    }
+    const root = path.normalize(top.stdout.trim());
+    const parent = path.join(path.dirname(root), `${path.basename(root)}.worktrees`);
+    const list = await (0, exports.git)(root, ["worktree", "list", "--porcelain"]);
+    const worktrees = [];
+    for (const block of list.code === 0 ? list.stdout.split(/\r?\n\r?\n/) : []) {
+        const listed = block.match(/^worktree (.+)$/m)?.[1];
+        const branch = block.match(/^branch refs\/heads\/(.+)$/m)?.[1];
+        if (!listed || !branch || !/^ai\/[a-z0-9-]+$/.test(branch)) {
+            continue;
+        }
+        const wtPath = path.normalize(listed);
+        if (!sameDir(path.dirname(wtPath), parent) || !fs.existsSync(wtPath)) {
+            continue;
+        }
+        const fork = await (0, exports.git)(root, ["merge-base", "HEAD", branch]);
+        const head = fork.code === 0 ? fork : await (0, exports.git)(wtPath, ["rev-parse", "HEAD"]);
+        const base = head.stdout.trim();
+        const ahead = base ? await (0, exports.git)(root, ["rev-list", "--count", `${base}..${branch}`]) : undefined;
+        worktrees.push({
+            path: wtPath,
+            branch,
+            base,
+            changed: (await (0, exports.uncommittedPaths)(wtPath)).length,
+            commits: ahead?.code === 0 ? Number(ahead.stdout.trim()) || 0 : 0
+        });
+    }
+    return { root, worktrees };
+};
+exports.listWorktrees = listWorktrees;
+const worktreeChanges = (wt) => [wt.changed ? `${wt.changed} uncommitted` : "", wt.commits ? `${wt.commits} commit${wt.commits === 1 ? "" : "s"}` : ""].filter(Boolean).join(" · ") || "no changes";
+exports.worktreeChanges = worktreeChanges;
 const removeWorktree = async (root, wtPath, branch) => {
     const rm = await (0, exports.git)(root, ["worktree", "remove", "--force", wtPath], 60000);
     if (rm.code === 0) {

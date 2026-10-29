@@ -112,6 +112,17 @@ A real VS Code and a real model. Needs a 1.x and a 2.x OpenCode side by side
    Remove the key after.
 9. **Back off**: `opencode2` off, reload → item 3 again.
 
+## 0.0.229 — quick pass (about 5 minutes)
+
+1. **Worktrees**: after two `/worktree` turns (one that edits, one that does
+   not), **OpenCode: Worktrees** lists both with "N uncommitted" / "no
+   changes"; a worktree you added by hand on another branch is not listed.
+2. **Show changes** opens the multi-file diff: one row per file, a new file
+   against an empty side; clicking a row shows the base on the left.
+3. **Remove all without changes** asks once, removes the idle one and its
+   `ai/…` branch, keeps the edited one.
+4. `@opencode /worktree` with no task lists them, with **Worktrees…**.
+
 ## 0.0.228 — quick pass (about 10 minutes)
 
 A trusted Git repository; remove the worktrees after (**Remove worktree**).

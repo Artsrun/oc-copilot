@@ -64,6 +64,13 @@ async function handleWorktree(p) {
     if (!task) {
         response.markdown("Give the task after `/worktree`, e.g. `/worktree add a regression test for the redirect loop`.\n\n" +
             "It runs the editing agent in its own git worktree next to this repo, so your checkout is not touched; follow-ups in this chat continue it.");
+        const listed = (await (0, worktree_1.listWorktrees)(cwd))?.worktrees ?? [];
+        if (listed.length) {
+            const shown = listed.slice(0, 8).map((w) => `- \`${w.branch}\` · ${(0, worktree_1.worktreeChanges)(w)}`);
+            response.markdown(`\n\nThis repository has ${listed.length} worktree${listed.length === 1 ? "" : "s"} from \`/worktree\`:\n\n${shown.join("\n")}` +
+                (listed.length > shown.length ? `\n- …${listed.length - shown.length} more` : ""));
+            response.button({ command: "opencodeCopilotBridge.worktrees", title: "Worktrees…" });
+        }
         return { metadata: { kind: "worktree" } };
     }
     const settings = (0, core_1.config)();

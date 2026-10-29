@@ -2,7 +2,7 @@
   "name": "opencode-copilot-bridge",
   "displayName": "OpenCode Copilot Bridge",
   "description": "Delegate research, planning, and development to OpenCode from GitHub Copilot Chat.",
-  "version": "0.0.228",
+  "version": "0.0.229",
   "publisher": "local",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -192,6 +192,10 @@
       {
         "command": "opencodeCopilotBridge.refreshModels",
         "title": "OpenCode: Refresh Model Catalog"
+      },
+      {
+        "command": "opencodeCopilotBridge.worktrees",
+        "title": "OpenCode: Worktrees"
       },
       {
         "command": "opencodeCopilotBridge.worktreeDiff",

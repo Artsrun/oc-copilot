@@ -1,10 +1,14 @@
+import * as path from "node:path";
 import * as vscode from "vscode";
 import { activeCwd, config, logChannel, resolveFolder } from "./core";
 import { getModelCatalog, setDefaultModel } from "./models";
-import { diagnose, quickActions } from "./commands";
+import { diagnose, pickWorktree, quickActions } from "./commands";
 import { chatQuery, composeParallel, insertIntoChat } from "./compose";
 import { refreshStatus, setActiveSession } from "./session";
-import { removeWorktree, worktreeDiff } from "./worktree";
+import { baseText, changedFiles, removeWorktree, worktreeDiff } from "./worktree";
+
+// Read-only documents: a worktree file as its base commit has it.
+const BASE_SCHEME = "ocb-base";
 
 // Every non-chat command in the manifest, registered once at activation. The
 // chat-generated commands (`/new`, `/model`, …) are handled inside handleChat;
@@ -34,13 +38,34 @@ export function registerCommands(context: vscode.ExtensionContext): void {
         }),
         vscode.commands.registerCommand("opencodeCopilotBridge.quickActions", () => quickActions()),
         // /worktree buttons: arguments come from the button the run rendered.
+        // VS Code's multi-file diff, one row per file; the base side comes from
+        // BASE_SCHEME below, so nothing is written. A host without `vscode.changes`
+        // gets the whole diff as text, as before.
         vscode.commands.registerCommand("opencodeCopilotBridge.worktreeDiff", async (wt?: { path: string; baseSha: string; branch: string }) => {
             if (!wt?.path) {
                 return;
             }
-            const doc = await vscode.workspace.openTextDocument({ content: (await worktreeDiff(wt, false, config().get<number>("worktreeDiffMaxMB", 16))) || "(no changes)", language: "diff" });
-            await vscode.window.showTextDocument(doc, { preview: true });
+            const maxMB = config().get<number>("worktreeDiffMaxMB", 16);
+            const files = await changedFiles(wt, maxMB);
+            if (!files.length) {
+                void vscode.window.showInformationMessage(`OpenCode: no changes in ${wt.branch ?? wt.path}.`);
+                return;
+            }
+            const base = (rel: string, empty = false): vscode.Uri =>
+                vscode.Uri.from({ scheme: BASE_SCHEME, path: `/${rel}`, query: JSON.stringify({ wt: wt.path, base: wt.baseSha, rel, ...(empty ? { empty: true } : {}) }) });
+            const rows = files.map((f) => {
+                const onDisk = vscode.Uri.file(path.join(wt.path, f.path));
+                return [onDisk, base(f.path, f.status === "A"), f.status === "D" ? base(f.path, true) : onDisk];
+            });
+            try {
+                await vscode.commands.executeCommand("vscode.changes", `${wt.branch ?? "worktree"} against ${String(wt.baseSha).slice(0, 7)}`, rows);
+            } catch (error) {
+                logChannel.appendLine(`worktree diff: vscode.changes failed (${error instanceof Error ? error.message : String(error)}); the diff opens as text`);
+                const doc = await vscode.workspace.openTextDocument({ content: (await worktreeDiff(wt, false, maxMB)) || "(no changes)", language: "diff" });
+                await vscode.window.showTextDocument(doc, { preview: true });
+            }
         }),
+        vscode.commands.registerCommand("opencodeCopilotBridge.worktrees", () => pickWorktree()),
         vscode.commands.registerCommand("opencodeCopilotBridge.worktreeOpen", async (wt?: { path: string }) => {
             if (wt?.path) {
                 await vscode.commands.executeCommand("vscode.openFolder", vscode.Uri.file(wt.path), { forceNewWindow: true });
@@ -142,6 +167,17 @@ export function registerCommands(context: vscode.ExtensionContext): void {
         vscode.workspace.onDidChangeConfiguration?.((event) => {
             if (event.affectsConfiguration("opencodeCopilotBridge")) {
                 refreshStatus();
+            }
+        }) ?? { dispose: () => undefined },
+        // The left side of Show full diff: a file as the worktree's base commit has it.
+        vscode.workspace.registerTextDocumentContentProvider?.(BASE_SCHEME, {
+            provideTextDocumentContent: async (uri) => {
+                try {
+                    const q = JSON.parse(uri.query) as { wt?: unknown; base?: unknown; rel?: unknown; empty?: unknown };
+                    return q.empty || typeof q.wt !== "string" || typeof q.base !== "string" || typeof q.rel !== "string" ? "" : await baseText(q.wt, q.base, q.rel);
+                } catch {
+                    return "";
+                }
             }
         }) ?? { dispose: () => undefined }
     );

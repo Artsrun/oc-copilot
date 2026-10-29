@@ -146,6 +146,94 @@ export const worktreeDiff = async (wt: { path: string; baseSha: string }, stat =
     return out.stdout.trim();
 };
 
+/** A file the worktree changed against its base: Added, Modified or Deleted. */
+export interface ChangedFile {
+    path: string;
+    status: "A" | "M" | "D";
+}
+
+// The same changes as worktreeDiff, per file, for VS Code's multi-file diff.
+export const changedFiles = async (wt: { path: string; baseSha: string }, maxBufferMB = 16): Promise<ChangedFile[]> => {
+    await git(wt.path, ["add", "-N", "."]);
+    const out = await git(wt.path, ["-c", "core.quotepath=false", "diff", "--name-status", "--no-renames", "-z", wt.baseSha], 30000, maxBufferMB);
+    if (out.code !== 0) {
+        return [];
+    }
+    const parts = out.stdout.split("\0");
+    const files: ChangedFile[] = [];
+    for (let i = 0; i + 1 < parts.length; i += 2) {
+        const code = parts[i].charAt(0);
+        if (parts[i + 1]) {
+            files.push({ path: parts[i + 1], status: code === "A" ? "A" : code === "D" ? "D" : "M" });
+        }
+    }
+    return files;
+};
+
+// A file as the base commit has it, for the diff's left side. The URI that
+// names it is untrusted: a commit id only, a folder that is a git worktree, and
+// `<sha>:<path>` as one argument (git reads no option from it).
+export const baseText = async (wtPath: string, base: string, rel: string): Promise<string> => {
+    if (!/^[0-9a-f]{7,64}$/.test(base) || !rel || !fs.existsSync(path.join(wtPath, ".git"))) {
+        return "";
+    }
+    const out = await git(wtPath, ["show", `${base}:${rel}`], 30000, 16);
+    return out.code === 0 ? out.stdout : "";
+};
+
+/** A `/worktree` worktree as git lists it: `changed` uncommitted entries, `commits` its branch has past the fork point. */
+export interface ListedWorktree {
+    path: string;
+    branch: string;
+    base: string;
+    changed: number;
+    commits: number;
+}
+
+const sameDir = (a: string, b: string): boolean => (process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b);
+
+// This repo's `/worktree` worktrees: `ai/*` branches checked out under
+// `<repo>.worktrees/`, never another worktree of the repo. The base is where the
+// branch forked from the checkout's HEAD (the agent does not commit, so its work
+// is uncommitted there). Undefined outside a git repository.
+export const listWorktrees = async (cwd: string): Promise<{ root: string; worktrees: ListedWorktree[] } | undefined> => {
+    const top = await git(cwd, ["rev-parse", "--show-toplevel"]);
+    if (top.code !== 0) {
+        return undefined;
+    }
+    const root = path.normalize(top.stdout.trim());
+    const parent = path.join(path.dirname(root), `${path.basename(root)}.worktrees`);
+    const list = await git(root, ["worktree", "list", "--porcelain"]);
+    const worktrees: ListedWorktree[] = [];
+    for (const block of list.code === 0 ? list.stdout.split(/\r?\n\r?\n/) : []) {
+        const listed = block.match(/^worktree (.+)$/m)?.[1];
+        const branch = block.match(/^branch refs\/heads\/(.+)$/m)?.[1];
+        if (!listed || !branch || !/^ai\/[a-z0-9-]+$/.test(branch)) {
+            continue;
+        }
+        const wtPath = path.normalize(listed);
+        if (!sameDir(path.dirname(wtPath), parent) || !fs.existsSync(wtPath)) {
+            continue;
+        }
+        const fork = await git(root, ["merge-base", "HEAD", branch]);
+        const head = fork.code === 0 ? fork : await git(wtPath, ["rev-parse", "HEAD"]);
+        const base = head.stdout.trim();
+        const ahead = base ? await git(root, ["rev-list", "--count", `${base}..${branch}`]) : undefined;
+        worktrees.push({
+            path: wtPath,
+            branch,
+            base,
+            changed: (await uncommittedPaths(wtPath)).length,
+            commits: ahead?.code === 0 ? Number(ahead.stdout.trim()) || 0 : 0
+        });
+    }
+    return { root, worktrees };
+};
+
+/** "2 uncommitted · 1 commit", or "no changes": what a worktree holds that the checkout does not. */
+export const worktreeChanges = (wt: ListedWorktree): string =>
+    [wt.changed ? `${wt.changed} uncommitted` : "", wt.commits ? `${wt.commits} commit${wt.commits === 1 ? "" : "s"}` : ""].filter(Boolean).join(" · ") || "no changes";
+
 export const removeWorktree = async (root: string, wtPath: string, branch: string): Promise<GitResult> => {
     const rm = await git(root, ["worktree", "remove", "--force", wtPath], 60000);
     if (rm.code === 0) {

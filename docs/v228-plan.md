@@ -1,7 +1,7 @@
 # 0.0.228 plan — review of 0.0.225–0.0.227, proposals, scope
 
 Dated 2026-10-28. Base `de2d29e` (0.0.227 plus the probe and REFS commits).
-Status: **built in 0.0.228** with D1(a), D2(a), D5(a), D7(a) and U2; D3, D4, D6 and U1, U3–U8 are not. Every finding below was measured through
+Status: **built in 0.0.228** with D1(a), D2(a), D5(a), D7(a) and U2; D3(a), D4(a) and U3, U4 in 0.0.229; D6, U1, U5–U8 are not built. Every finding below was measured through
 `out/` unless it says "code read".
 
 ## Baseline

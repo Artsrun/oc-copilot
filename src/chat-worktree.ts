@@ -10,7 +10,7 @@ import { WORKTREE_TURN, rememberFollowups, startHeartbeat, suggestFollowups } fr
 import { buildChatContext, contextNotice, createFileLinker, emitAnswerParts, emitReferences, parseChatPrompt, referenceLogLine, stepUris } from "./context";
 import { cachedModelInfo, effortFor, modelRefProblem, modelResolver } from "./models";
 import { notifyIfSlow } from "./session";
-import { Worktree, createWorktree, reopenWorktree, uncommittedPaths, worktreeDiff, worktreeLabel } from "./worktree";
+import { Worktree, createWorktree, listWorktrees, reopenWorktree, uncommittedPaths, worktreeChanges, worktreeDiff, worktreeLabel } from "./worktree";
 
 // What the next `/worktree` turn of this chat needs to continue: `threadWorktree`
 // reads it back. Never `sessionId` + `turns`: those bind the chat's own session.
@@ -54,6 +54,16 @@ export async function handleWorktree(p: {
             "Give the task after `/worktree`, e.g. `/worktree add a regression test for the redirect loop`.\n\n" +
             "It runs the editing agent in its own git worktree next to this repo, so your checkout is not touched; follow-ups in this chat continue it."
         );
+        // The ones it already made, and where to manage them (an artifact: a button).
+        const listed = (await listWorktrees(cwd))?.worktrees ?? [];
+        if (listed.length) {
+            const shown = listed.slice(0, 8).map((w) => `- \`${w.branch}\` · ${worktreeChanges(w)}`);
+            response.markdown(
+                `\n\nThis repository has ${listed.length} worktree${listed.length === 1 ? "" : "s"} from \`/worktree\`:\n\n${shown.join("\n")}` +
+                (listed.length > shown.length ? `\n- …${listed.length - shown.length} more` : "")
+            );
+            response.button({ command: "opencodeCopilotBridge.worktrees", title: "Worktrees…" });
+        }
         return { metadata: { kind: "worktree" } };
     }
     const settings = config();

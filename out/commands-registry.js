@@ -34,6 +34,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.registerCommands = registerCommands;
+const path = __importStar(require("node:path"));
 const vscode = __importStar(require("vscode"));
 const core_1 = require("./core");
 const models_1 = require("./models");
@@ -41,6 +42,7 @@ const commands_1 = require("./commands");
 const compose_1 = require("./compose");
 const session_1 = require("./session");
 const worktree_1 = require("./worktree");
+const BASE_SCHEME = "ocb-base";
 function registerCommands(context) {
     context.subscriptions.push(vscode.commands.registerCommand("opencodeCopilotBridge.setModel", () => (0, models_1.setDefaultModel)()), vscode.commands.registerCommand("opencodeCopilotBridge.showLog", () => core_1.logChannel.show()), vscode.commands.registerCommand("opencodeCopilotBridge.diagnose", () => (0, commands_1.diagnose)()), vscode.commands.registerCommand("opencodeCopilotBridge.refreshModels", async () => {
         const settings = (0, core_1.config)();
@@ -57,9 +59,26 @@ function registerCommands(context) {
         if (!wt?.path) {
             return;
         }
-        const doc = await vscode.workspace.openTextDocument({ content: (await (0, worktree_1.worktreeDiff)(wt, false, (0, core_1.config)().get("worktreeDiffMaxMB", 16))) || "(no changes)", language: "diff" });
-        await vscode.window.showTextDocument(doc, { preview: true });
-    }), vscode.commands.registerCommand("opencodeCopilotBridge.worktreeOpen", async (wt) => {
+        const maxMB = (0, core_1.config)().get("worktreeDiffMaxMB", 16);
+        const files = await (0, worktree_1.changedFiles)(wt, maxMB);
+        if (!files.length) {
+            void vscode.window.showInformationMessage(`OpenCode: no changes in ${wt.branch ?? wt.path}.`);
+            return;
+        }
+        const base = (rel, empty = false) => vscode.Uri.from({ scheme: BASE_SCHEME, path: `/${rel}`, query: JSON.stringify({ wt: wt.path, base: wt.baseSha, rel, ...(empty ? { empty: true } : {}) }) });
+        const rows = files.map((f) => {
+            const onDisk = vscode.Uri.file(path.join(wt.path, f.path));
+            return [onDisk, base(f.path, f.status === "A"), f.status === "D" ? base(f.path, true) : onDisk];
+        });
+        try {
+            await vscode.commands.executeCommand("vscode.changes", `${wt.branch ?? "worktree"} against ${String(wt.baseSha).slice(0, 7)}`, rows);
+        }
+        catch (error) {
+            core_1.logChannel.appendLine(`worktree diff: vscode.changes failed (${error instanceof Error ? error.message : String(error)}); the diff opens as text`);
+            const doc = await vscode.workspace.openTextDocument({ content: (await (0, worktree_1.worktreeDiff)(wt, false, maxMB)) || "(no changes)", language: "diff" });
+            await vscode.window.showTextDocument(doc, { preview: true });
+        }
+    }), vscode.commands.registerCommand("opencodeCopilotBridge.worktrees", () => (0, commands_1.pickWorktree)()), vscode.commands.registerCommand("opencodeCopilotBridge.worktreeOpen", async (wt) => {
         if (wt?.path) {
             await vscode.commands.executeCommand("vscode.openFolder", vscode.Uri.file(wt.path), { forceNewWindow: true });
         }
@@ -127,6 +146,16 @@ function registerCommands(context) {
     }), vscode.workspace.onDidChangeConfiguration?.((event) => {
         if (event.affectsConfiguration("opencodeCopilotBridge")) {
             (0, session_1.refreshStatus)();
+        }
+    }) ?? { dispose: () => undefined }, vscode.workspace.registerTextDocumentContentProvider?.(BASE_SCHEME, {
+        provideTextDocumentContent: async (uri) => {
+            try {
+                const q = JSON.parse(uri.query);
+                return q.empty || typeof q.wt !== "string" || typeof q.base !== "string" || typeof q.rel !== "string" ? "" : await (0, worktree_1.baseText)(q.wt, q.base, q.rel);
+            }
+            catch {
+                return "";
+            }
         }
     }) ?? { dispose: () => undefined });
     (0, session_1.refreshStatus)();

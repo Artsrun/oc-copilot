@@ -261,6 +261,8 @@ let quickPickScript;
 const quickPicksShown = [];
 let lastStatusItem;
 const registeredCommands = new Map();
+// 0.0.229: the worktree diff's base side (`ocb-base:`), read back by WT16.
+const contentProviders = new Map();
 const logLines = [];
 let gitScanProvider;
 const workspaceEvents = { trust: [], folders: [], configuration: [] };
@@ -277,6 +279,7 @@ const vscodeStub = {
             get: (key, def) => (settings[key] !== undefined ? settings[key] : def),
             update: async () => { }
         }),
+        registerTextDocumentContentProvider: (scheme, provider) => (contentProviders.set(scheme, provider), { dispose() { } }),
         fs: {
             createDirectory: async (uri) => fs.mkdirSync(uri.fsPath, { recursive: true }),
             readFile: async (uri) => fs.readFileSync(uri.fsPath),
@@ -356,6 +359,7 @@ const vscodeStub = {
     },
     Uri: {
         file: (p) => ({ fsPath: p, scheme: "file", toString: () => p }),
+        from: (c) => ({ scheme: c.scheme, path: c.path ?? "", query: c.query ?? "", fsPath: c.path ?? "", toString: () => `${c.scheme}:${c.path ?? ""}?${c.query ?? ""}` }),
         joinPath: (base, ...parts) => {
             const p = path.join(base.fsPath, ...parts);
             return { fsPath: p, scheme: "file", toString: () => p };
@@ -3978,9 +3982,87 @@ const lbProvider = (global.__participant || {}).followupProvider;
         add("WT13 a file the answer names opens the worktree's copy", wt13c.anchors.some((a) => samePath(a.uri?.uri?.fsPath ?? a.uri?.fsPath ?? "", path.join(r13.metadata.worktree, "wt-pill.txt"))));
         settings.executable = wtFake;
 
+        // WT14 (0.0.229): OpenCode: Worktrees lists the ones /worktree made — `ai/*`
+        // under <repo>.worktrees/, never another worktree of the repo — with what each holds.
+        g("worktree", "add", "-q", "-b", "ai/idle-made-here", path.join(wtParent, "idle-made-here"), "HEAD");
+        g("worktree", "add", "-q", "-b", "not-from-worktree", path.join(wtParent, "not-from-worktree"), "HEAD");
+        const wkExec = [];
+        const wkReal = { exec: vscodeStub.commands.executeCommand, pick: vscodeStub.window.showQuickPick, warn: vscodeStub.window.showWarningMessage, info: vscodeStub.window.showInformationMessage };
+        vscodeStub.commands.executeCommand = async (id, ...args) => {
+            wkExec.push([id, ...args]);
+            const handler = registeredCommands.get(id);
+            return handler ? handler(...args) : undefined;
+        };
+        const wkPicks = [];
+        let wkScript = () => undefined;
+        vscodeStub.window.showQuickPick = async (items) => (wkPicks.push(items), wkScript(items, wkPicks.length));
+        const wkNotes = [];
+        vscodeStub.window.showInformationMessage = (msg) => (wkNotes.push(msg), Promise.resolve(undefined));
+        let wkConfirm;
+        vscodeStub.window.showWarningMessage = (msg, ...rest) => (wkNotes.push(msg), Promise.resolve(rest.includes("Remove") ? wkConfirm : undefined));
+        await registeredCommands.get("opencodeCopilotBridge.worktrees")();
+        const wkItems = wkPicks[0] || [];
+        const wkItem = (branch) => wkItems.find((i) => i.label === `$(git-branch) ${branch}`);
+        add(
+            `WT14 OpenCode: Worktrees lists /worktree's worktrees with what each holds (${wkItems.map((i) => `${i.label.replace("$(git-branch) ", "")}=${i.description ?? ""}`).join(" | ").slice(0, 300)})`,
+            wkItem(r13.metadata.branch)?.description === "2 uncommitted" && wkItem("ai/idle-made-here")?.description === "no changes" &&
+                wkItem(r13.metadata.branch)?.detail === `${path.basename(wtParent)}/${path.basename(r13.metadata.worktree)}`
+        );
+        add("WT14 …never a worktree on another branch", !wkItems.some((i) => /not-from-worktree/.test(i.label)));
+        const wkIdle = wkItems.filter((i) => i.description === "no changes").length;
+        add(`WT14 …and offers to remove the ${wkIdle} without changes`, wkIdle >= 2 && wkItems.some((i) => i.label === `$(trash) Remove all without changes (${wkIdle})`));
+
+        // WT15: Remove all without changes asks once, removes those, keeps the rest.
+        wkPicks.length = 0;
+        wkConfirm = undefined;
+        wkScript = (items) => items.find((i) => i.removeIdle);
+        await registeredCommands.get("opencodeCopilotBridge.worktrees")();
+        add("WT15 declining the confirm removes nothing", fs.existsSync(path.join(wtParent, "idle-made-here")));
+        wkConfirm = "Remove";
+        await registeredCommands.get("opencodeCopilotBridge.worktrees")();
+        add(
+            `WT15 Remove all without changes removes them and their branches, and keeps one with changes (${wkNotes.at(-1)})`,
+            !fs.existsSync(path.join(wtParent, "idle-made-here")) && !g("branch", "--list", "ai/idle-made-here").trim() &&
+                fs.existsSync(r13.metadata.worktree) && fs.existsSync(path.join(wtParent, "not-from-worktree"))
+        );
+
+        // WT16: a worktree's changes open in VS Code's multi-file diff; the base
+        // side comes from `ocb-base:` and nothing is written to read it.
+        // Guarded: a broken Remove all (WT15) may have taken this worktree; the checks below then fail, not crash.
+        if (fs.existsSync(r13.metadata.worktree)) fs.writeFileSync(path.join(r13.metadata.worktree, "tracked.txt"), "v3 in the worktree\n");
+        wkPicks.length = 0;
+        wkExec.length = 0;
+        wkScript = (items, n) => (n === 1 ? items.find((i) => i.label === `$(git-branch) ${r13.metadata.branch}`) : items.find((i) => i.id === "worktreeDiff"));
+        await registeredCommands.get("opencodeCopilotBridge.worktrees")();
+        const wkChanges = wkExec.find((c) => c[0] === "vscode.changes");
+        const wkRows = Object.fromEntries((wkChanges?.[2] ?? []).map(([res, left, right]) => [path.relative(r13.metadata.worktree, res.fsPath).split(path.sep).join("/"), { left, right }]));
+        const wkQ = (u) => { try { return JSON.parse(u?.query ?? "{}"); } catch { return {}; } };
+        add(
+            `WT16 Show changes opens the multi-file diff: one row per file, added files against nothing (${Object.keys(wkRows).join(", ")})`,
+            Boolean(wkChanges) && Object.keys(wkRows).sort().join(",") === "src/guard.js,tracked.txt,wt-pill.txt" &&
+                wkRows["src/guard.js"].left.scheme === "ocb-base" && wkQ(wkRows["src/guard.js"].left).empty === true &&
+                wkRows["tracked.txt"].left.scheme === "ocb-base" && !wkQ(wkRows["tracked.txt"].left).empty && wkRows["tracked.txt"].right.scheme === "file"
+        );
+        const wkProvider = contentProviders.get("ocb-base");
+        const wkBase = wkProvider ? await wkProvider.provideTextDocumentContent(wkRows["tracked.txt"]?.left) : undefined;
+        add(`WT16 the base side reads the base commit's file (${JSON.stringify(wkBase)})`, typeof wkBase === "string" && wkBase.replace(/\r/g, "") === "v1\n");
+        const wkHostile = wkProvider
+            ? await wkProvider.provideTextDocumentContent(vscodeStub.Uri.from({ scheme: "ocb-base", path: "/x", query: JSON.stringify({ wt: r13.metadata.worktree, base: "HEAD", rel: "tracked.txt" }) }))
+            : "x";
+        add("WT16 a base that is not a commit id (HEAD, an option) reads nothing", wkHostile === "");
+        Object.assign(vscodeStub.commands, { executeCommand: wkReal.exec });
+        Object.assign(vscodeStub.window, { showQuickPick: wkReal.pick, showWarningMessage: wkReal.warn, showInformationMessage: wkReal.info });
+        // A broken filter (WT14) may have removed it already: that check fails, the cleanup does not throw.
+        try { g("worktree", "remove", "--force", path.join(wtParent, "not-from-worktree")); } catch { }
+
         const wt2 = stream();
         await global.__handler({ prompt: "", command: "worktree" }, { history: [] }, wt2.response, wt2.token);
         add("WT2 /worktree with no task explains itself", /Give the task after `\/worktree`/.test(wt2.chatMarkdown.join("")));
+        // WT17 (0.0.229): …and lists the ones it already made, with a Worktrees… button.
+        add(
+            "WT17 /worktree with no task lists this repo's worktrees and offers Worktrees…",
+            wt2.chatMarkdown.join("").includes("- `" + r13.metadata.branch + "` · 3 uncommitted") && wt2.buttons.some((b) => b.command === "opencodeCopilotBridge.worktrees")
+        );
         add("WT3 slugs are filesystem- and branch-safe", ext.__test.slugify("Fix: ../../etc  ÆØ!!") === "fix-etc" && ext.__test.slugify("!!!") === "task");
 
         // WT4: git runs without a shell, from one file only.
@@ -3988,7 +4070,8 @@ const lbProvider = (global.__participant || {}).followupProvider;
         add("WT4 execFile appears only in the two Git boundaries", execFileFiles.sort().join(",") === "git-scan-server.ts,worktree.ts");
         add("WT4 git is never run through a shell", !/shell\s*:\s*true/.test(srcText));
 
-        g("worktree", "remove", "--force", wtPath);
+        // A broken Remove all (WT15) may have taken it already.
+        try { g("worktree", "remove", "--force", wtPath); } catch { }
         fs.rmSync(wtParent, { recursive: true, force: true });
         fs.rmSync(path.join(work, ".git"), { recursive: true, force: true });
         fs.rmSync(path.join(work, "tracked.txt"), { force: true });
@@ -5040,6 +5123,7 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         // v190: Ask OpenCode merged into New session (both opened a chat with
         // @opencode typed); New session does it in a NEW chat.
         add("QA Quick Actions leads with New session; Ask OpenCode is gone", !!picked && /New session/.test(picked[0].label) && !picked.some((i) => /Ask OpenCode/.test(i.label)));
+        add("QA Quick Actions offers Worktrees… (0.0.229)", !!picked && picked.some((i) => /Worktrees…/.test(i.label)));
         add(
             "QA New session opens a new chat, types @opencode and sends nothing",
             executed.some((c) => c[0] === "workbench.action.chat.newChat") && opened.length === 1 && opened[0][1].query === "@opencode " && opened[0][1].isPartialQuery === true

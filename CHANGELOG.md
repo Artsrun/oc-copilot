@@ -3,6 +3,25 @@
 Full release history, newest first; releases before the last one are condensed
 to their summary and headlines. The README ships the last five.
 
+### 0.0.229
+
+The worktrees `/worktree` leaves behind can be found, read and cleared.
+
+- **New: OpenCode: Worktrees** (palette and Quick Actions; `pickWorktree`,
+  `listWorktrees`). This repo's `/worktree` worktrees — `ai/*` branches under
+  `<repo>.worktrees/`, never another worktree — each with what it holds
+  (uncommitted entries, commits past the fork point) and Show changes, Open,
+  Remove; **Remove all without changes** asks once and keeps the rest. A day of
+  testing left seven idle folders (0.0.228 probe). Checks `WT14`, `WT15`, `QA`.
+- **Changed: Show full diff opens VS Code's multi-file diff** (`vscode.changes`,
+  `changedFiles`): a row per file against the worktree's base, added files
+  against nothing. The base side is a read-only `ocb-base:` document
+  (`baseText`: a commit id only, `<sha>:<path>` as one argument), so nothing is
+  written; a host without `vscode.changes` gets the text diff as before.
+  Checks `WT16`.
+- `/worktree` with no task lists this repo's worktrees and offers
+  **Worktrees…**. Checks `WT17`.
+
 ### 0.0.228
 
 A `/worktree` chat has been a conversation since 0.0.226; its turns now read

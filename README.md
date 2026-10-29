@@ -388,7 +388,8 @@ and runs the editing agent there. Uncommitted edits stay in your checkout: a
 dirty checkout is told how many the worktree does not have, so commit first if
 the task needs them. It ends with the changed files and buttons:
 **Show full diff**, **Open in new window**, **Remove worktree** (asks first;
-deletes the branch), **New worktree**. The chat's own session stays on your
+deletes the branch), **New worktree**. **OpenCode: Worktrees** (or `/worktree`
+with no task) lists the ones it made, with **Remove all without changes**. The chat's own session stays on your
 checkout. The answer's own chips (its offer, **Test it**, **Review**) continue
 the worktree. `model:`, `effort:` and attachments work as on any turn; an
 attached file your checkout has changed is named, since the worktree has the
@@ -477,7 +478,8 @@ still decide whether it may call the tool (the sample `look` agent denies MCP).
 | Ask in Chat (hidden from the palette since 0.0.190; kept for keybindings) | `retryLast` |
 | **OpenCode: Refresh Model Catalog** | `refreshModels` |
 | **OpenCode: gitScan config for opencode.json** | `gitScanConfig` |
-| **Show Worktree Diff** (button under a `/worktree` reply) | `worktreeDiff` |
+| **OpenCode: Worktrees** — the worktrees `/worktree` made here: show changes, open, remove; **Remove all without changes** (also in Quick Actions) | `worktrees` |
+| **Show Worktree Diff** (button under a `/worktree` reply) — VS Code's multi-file diff against the worktree's base | `worktreeDiff` |
 | **Open Worktree in New Window** (button) | `worktreeOpen` |
 | **Remove Worktree** (button — confirms, deletes the branch) | `worktreeRemove` |
 
@@ -539,6 +541,15 @@ All under `opencodeCopilotBridge.`.
 
 The last five releases; the full history is `CHANGELOG.md` in the repository.
 
+### 0.0.229
+
+- **OpenCode: Worktrees** (palette and Quick Actions): the worktrees
+  `/worktree` made here, each with what it holds, and Show changes, Open,
+  Remove — plus **Remove all without changes**.
+- **Show full diff opens VS Code's multi-file diff**, a row per file against
+  the worktree's base; nothing is written to show it.
+- `/worktree` with no task lists the worktrees it made. Checks `WT14`–`WT17`, `QA`.
+
 ### 0.0.228
 
 - **`/worktree` turns read what a chat turn reads**: `model:` and `effort:`
@@ -585,15 +596,3 @@ The last five releases; the full history is `CHANGELOG.md` in the repository.
 - Less noise: no colour codes in the debug log, no "New chat" note before the
   answer (it is in the log), no `glob: {}` row while a tool call is still
   being written.
-### 0.0.224
-
-- **Copilot's own customizations index no longer shows as "Not sent to
-  OpenCode: a text attachment".** VS Code adds `vscode.customizations.index`
-  to every turn; it is the host's, like instruction files, and stays in the log.
-- **A failed run says why, readably.** OpenCode colours its errors even when
-  piped, and chat showed the raw codes (`[91m[1mError: [0m`); the generic
-  "Unexpected error" line now carries the cause on the line after it.
-- **OpenCode 1 on a data folder OpenCode 2 created is named**: 1.19.3 refuses
-  an `opencode.db` that 2.x created (no 1.x `session` table, measured), and
-  the turn now says so and how to give 1.x its own folder (`XDG_DATA_HOME`).
-

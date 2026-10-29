@@ -35,6 +35,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.diagnose = diagnose;
 exports.quickActions = quickActions;
+exports.pickWorktree = pickWorktree;
 const vscode = __importStar(require("vscode"));
 const path = __importStar(require("node:path"));
 const node_process_1 = require("node:process");
@@ -46,6 +47,7 @@ const oc_api_1 = require("./oc-api");
 const session_1 = require("./session");
 const models_1 = require("./models");
 const env_1 = require("./env");
+const worktree_1 = require("./worktree");
 async function diagnose() {
     const settings = (0, core_1.config)();
     const executable = settings.get("executable", "opencode");
@@ -136,6 +138,11 @@ async function quickActions() {
             run: () => vscode.commands.executeCommand("opencodeCopilotBridge.sessions")
         },
         {
+            label: "$(git-branch) Worktrees…",
+            detail: "The worktrees /worktree made here: show changes, open, remove",
+            run: () => vscode.commands.executeCommand("opencodeCopilotBridge.worktrees")
+        },
+        {
             label: "$(split-horizontal) Compose parallel lanes…",
             detail: "A model and a task per lane; the command lands in the chat input",
             run: () => vscode.commands.executeCommand("opencodeCopilotBridge.composeParallel")
@@ -163,5 +170,56 @@ async function quickActions() {
     ];
     const choice = await vscode.window.showQuickPick(items, { placeHolder: "OpenCode bridge" });
     await choice?.run();
+}
+async function pickWorktree() {
+    const listed = await (0, worktree_1.listWorktrees)((0, core_1.activeCwd)());
+    if (!listed) {
+        void vscode.window.showInformationMessage("OpenCode: this folder is not in a git repository.");
+        return;
+    }
+    if (!listed.worktrees.length) {
+        void vscode.window.showInformationMessage("OpenCode: /worktree has made no worktrees in this repository.");
+        return;
+    }
+    const idle = listed.worktrees.filter((w) => !w.changed && !w.commits);
+    const items = listed.worktrees.map((wt) => ({
+        label: `$(git-branch) ${wt.branch}`,
+        description: (0, worktree_1.worktreeChanges)(wt),
+        detail: (0, worktree_1.worktreeLabel)(wt.path),
+        wt
+    }));
+    if (idle.length) {
+        items.push({ label: `$(trash) Remove all without changes (${idle.length})`, detail: "Their worktrees and branches; the ones with changes stay", removeIdle: true });
+    }
+    const pick = await vscode.window.showQuickPick(items, { placeHolder: "Worktrees /worktree made in this repository" });
+    if (pick?.removeIdle) {
+        const sure = await vscode.window.showWarningMessage(`Remove ${idle.length} worktree${idle.length === 1 ? "" : "s"} without changes, and ${idle.length === 1 ? "its branch" : "their branches"}?`, { modal: true }, "Remove");
+        if (sure !== "Remove") {
+            return;
+        }
+        const failed = [];
+        for (const wt of idle) {
+            const res = await (0, worktree_1.removeWorktree)(listed.root, wt.path, wt.branch);
+            if (res.code !== 0) {
+                failed.push(`${wt.branch}: ${res.stderr.trim().split(/\r?\n/)[0]}`);
+            }
+        }
+        void (failed.length
+            ? vscode.window.showWarningMessage(`OpenCode: removed ${idle.length - failed.length} of ${idle.length}; ${failed.join("; ")}`)
+            : vscode.window.showInformationMessage(`OpenCode: removed ${idle.length} worktree${idle.length === 1 ? "" : "s"} without changes.`));
+        return;
+    }
+    const wt = pick?.wt;
+    if (!wt) {
+        return;
+    }
+    const action = await vscode.window.showQuickPick([
+        ...(wt.changed || wt.commits ? [{ label: "$(diff) Show changes", id: "worktreeDiff" }] : []),
+        { label: "$(empty-window) Open in new window", id: "worktreeOpen" },
+        { label: "$(trash) Remove…", id: "worktreeRemove" }
+    ], { placeHolder: `${wt.branch} · ${(0, worktree_1.worktreeChanges)(wt)}` });
+    if (action) {
+        await vscode.commands.executeCommand(`opencodeCopilotBridge.${action.id}`, { root: listed.root, path: wt.path, branch: wt.branch, baseSha: wt.base });
+    }
 }
 //# sourceMappingURL=commands.js.map
