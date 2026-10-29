@@ -339,8 +339,9 @@ history belongs in `CHANGELOG.md`, not in the source.
 - **A worktree starts from HEAD**: uncommitted edits stay in the checkout, and
   a task about them ends in "No file changes". A new worktree says the count
   (`WT8`). A chip under a `/worktree` turn carries `command: "worktree"`: a
-  `dev` or `plan` chip would run in the checkout, so read-only chips are left
-  out there (`WT9`).
+  `dev` or `plan` chip would run in the checkout. A Review chip goes as
+  `/worktree` too (it reads the worktree); a lanes chip is left out, since
+  lanes run read-only in the checkout (`WT9`).
 - **A review has no one layout**: OpenCode 1.19.3's `/review` prompt says only
   "communicate severity". A severity counts as a heading, an item's leading
   tag or a Severity column, never as a word in a sentence (`NF`).
