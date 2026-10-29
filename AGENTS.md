@@ -418,6 +418,11 @@ history belongs in `CHANGELOG.md`, not in the source.
   run's activity, or the idle cap stops a parent whose subagent works (`SU`).
 - **A task result carries no cost or tokens** (OpenCode #47822): a subagent's
   spend is read from its own session's `message.updated` (`SC`).
+- **The Copilot harness has no chat participants** (VS Code 1.142+; the API
+  is "deprecated", kept for Local sessions). `@opencode` answers in a Local
+  session only. Registering it can throw on a host without the API, so it is
+  guarded: activation must still register the commands and gitScan, and
+  Diagnose names the harness settings (`harnessNote`, `getParticipantProblem`, `HR`).
 - **A quick pick filters its list by what is typed** — the composer's model
   items are `alwaysShow`, or typing a task would hide every model.
 

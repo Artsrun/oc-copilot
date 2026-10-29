@@ -110,6 +110,11 @@ async function diagnose() {
     }
     lines.push("", "## Runtime", "", "| Check | Result |", "| --- | --- |");
     lines.push(row("vscode", `${vscode.version ?? "?"} · ${vscode.env?.appName ?? "?"}`));
+    const problem = (0, session_1.getParticipantProblem)();
+    lines.push(row("chat harness", problem
+        ? `${(0, followups_1.mark)("fail")} @opencode not registered: ${(0, core_1.truncate)(problem, 80).replace(/\|/g, "\\|")} — this host has no chat participants; palette commands and gitScan still work`
+        : "@opencode answers in a **Local** session only: the Copilot harness has no chat participants (README, *Copilot harness*)"));
+    lines.push(row("harness settings", (0, session_1.harnessNote)()));
     lines.push(row("extension host", vscode.env?.remoteName ?? "local"));
     lines.push(row("ui kind", String(vscode.env?.uiKind ?? "?")));
     lines.push(row("workspace trust", vscode.workspace.isTrusted === false ? (0, followups_1.mark)("fail") + " untrusted — spawning is restricted" : (0, followups_1.mark)("ok") + " trusted"));

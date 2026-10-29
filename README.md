@@ -33,6 +33,23 @@ The default agent is the read-only **plan** agent — read-only by permission in
 every OpenCode process the bridge starts — or a stricter one of your own via
 `planAgent` (see [Read-only turns](#read-only-turns-enforced-planagent-and-look)).
 
+### Copilot harness
+
+VS Code 1.142 started making the **Copilot** harness the default for new chat
+sessions, and that harness has no chat participants: VS Code now lists the
+participant API as deprecated, kept for **Local** sessions. `@opencode`
+answers in a Local session only. Start a new chat and pick **Local** as its
+session target; if Local is not offered, turn on `chat.editor.localAgent.enabled`,
+and set `chat.defaultToCopilotHarness` to `false` to keep new chats Local.
+An organization that manages Copilot's sandbox or permission settings moves
+sessions to the Copilot harness. There `@opencode` cannot run, and only an
+administrator can switch that off.
+
+**OpenCode: Diagnose** shows whether `@opencode` is registered and what those
+two settings are, and the OpenCode log names them at activation. A VS Code
+without the participant API still gets the palette commands and gitScan, with
+one warning that `@opencode` cannot run.
+
 ### Inline chat (Ctrl+I)  <!-- claim:inline-participant -->
 
 Ctrl+I (Cmd+I) in an editor, then `@opencode`. The selection goes with the
@@ -542,6 +559,17 @@ All under `opencodeCopilotBridge.`.
 
 The last five releases; the full history is `CHANGELOG.md` in the repository.
 
+### 0.0.231
+
+- **`@opencode` in the Copilot harness.** VS Code's Copilot harness, the
+  default for new chats from 1.142, has no chat participants. The README says
+  how to stay on a Local session (*Copilot harness*), and **OpenCode: Diagnose**
+  shows whether `@opencode` is registered along with the harness settings.
+- **A VS Code without the participant API keeps the rest.** Registering
+  `@opencode` threw and stopped activation, which took the palette commands
+  and gitScan down with it. They now register, and one warning says why
+  `@opencode` cannot run. Checks `HR`.
+
 ### 0.0.230
 
 - **A 2.x run that fails at the start no longer hangs.** OpenCode 2.0.18
@@ -593,10 +621,3 @@ The last five releases; the full history is `CHANGELOG.md` in the repository.
 - **Chips under `/worktree`**: the answer's own editing chips, sent back to
   the same worktree. Checks `NF`, `WT8`, `WT9`.
 
-### 0.0.226
-
-- **`/worktree` follow-ups continue the same worktree.** Copilot keeps
-  `/worktree` selected, so every message in that chat made a new worktree and
-  branch, and OpenCode set up each new folder from scratch. Now the next
-  message continues the worktree and its OpenCode session; **New worktree**
-  (or any new chat, or `/new`) starts a fresh one.

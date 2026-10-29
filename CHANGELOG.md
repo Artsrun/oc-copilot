@@ -3,6 +3,27 @@
 Full release history, newest first; releases before the last one are condensed
 to their summary and headlines. The README ships the last five.
 
+### 0.0.231
+
+VS Code's Copilot harness, the default for new chats from 1.142, has no chat
+participants. The participant API is deprecated and kept only for Local
+sessions (code.visualstudio.com, AI extensibility overview and *Migrate
+customizations*, 2026-10-28). Phase 0 of surviving that: say it, and keep
+the rest of the extension alive without the API.
+
+- **Fixed: a host without the chat participant API took the whole extension
+  down.** `createChatParticipant` was the first thing `activate()` ran, outside
+  any guard; a throw there skipped `registerCommands` and `registerGitScan`.
+  Measured with the suite's stub minus `vscode.chat`: six `HR` checks red on
+  0.0.230, green now. The panel registration is guarded, the inline one is no
+  longer attempted, and one warning says `@opencode` cannot run.
+- **Diagnose rows `chat harness` and `harness settings`**, plus one log line
+  at activation: VS Code's version, `chat.defaultToCopilotHarness` and
+  `chat.editor.localAgent.enabled` as the host reports them (`harnessNote`;
+  read only, "unset" before 1.142), and why `@opencode` is not registered if
+  it is not (`getParticipantProblem`).
+- **README: *Copilot harness*** — how to pick Local and keep new chats there.
+
 ### 0.0.230
 
 OpenCode 2.2.0 against the 2.x adapter, a data folder of the bridge's own, a

@@ -9255,6 +9255,64 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         fs.rmSync(gsRoot, { recursive: true, force: true });
     }
 
+    // 0.0.231 HR: VS Code's Copilot harness has no chat participants (1.142+, the
+    // API deprecated). A host without the API threw at the panel registration and
+    // activate() stopped there: no palette commands, no gitScan provider.
+    {
+        let doc231 = "";
+        Object.assign(vscodeStub.workspace, { openTextDocument: async (o) => ((doc231 = o.content), {}) });
+        vscodeStub.window.showTextDocument = async () => undefined;
+        await registeredCommands.get("opencodeCopilotBridge.diagnose")();
+        add("HR Diagnose: a registered @opencode answers in a Local session; harness settings read, unset", /\| chat harness \| @opencode answers in a \*\*Local\*\* session only/.test(doc231) && doc231.includes("| harness settings | chat.defaultToCopilotHarness unset · chat.editor.localAgent.enabled unset |"));
+
+        const saved231 = { chat: vscodeStub.chat, commands: new Map(registeredCommands), provider: gitScanProvider, warn: vscodeStub.window.showWarningMessage };
+        const toasts231 = [];
+        vscodeStub.window.showWarningMessage = (text) => (toasts231.push(String(text)), Promise.resolve(undefined));
+        delete vscodeStub.chat;
+        registeredCommands.clear();
+        gitScanProvider = undefined;
+        settings.defaultToCopilotHarness = true;
+        const logFrom231 = logLines.length;
+        const ctx231 = {
+            subscriptions: [],
+            extensionUri: { fsPath: repoDir, scheme: "file", toString: () => repoDir },
+            extensionPath: repoDir,
+            globalStorageUri: vscodeStub.Uri.file(path.join(work, "global-storage")),
+            extension: { packageJSON: JSON.parse(fs.readFileSync(path.join(repoDir, "package.json"), "utf8")) },
+            workspaceState: { get: (k) => memento.get(k), update: async (k, v) => void memento.set(k, v) },
+            globalState: { get: (k) => globalMemento.get(k), update: async (k, v) => void globalMemento.set(k, v) }
+        };
+        let threw231 = "";
+        try {
+            ext.activate(ctx231);
+        } catch (err) {
+            threw231 = String(err);
+        }
+        // The prewarm timer: no server after deactivate (§5).
+        for (const d of ctx231.subscriptions) d.dispose?.();
+        add("HR activate without a chat participant API throws nothing", threw231 === "");
+        add("HR palette commands and the gitScan provider still register without @opencode",
+            ["diagnose", "quickActions", "worktrees", "gitScanConfig", "newSession"].every((c) => registeredCommands.has(`opencodeCopilotBridge.${c}`)) && !!gitScanProvider);
+        const log231 = logLines.slice(logFrom231).join("\n");
+        add("HR the log names VS Code, the harness settings and why @opencode is missing",
+            log231.includes("chat harness: VS Code 1.136.0 · chat.defaultToCopilotHarness true · chat.editor.localAgent.enabled unset · @opencode not registered: "));
+        add("HR one toast says @opencode cannot run, nothing tries the inline participant",
+            toasts231.length === 1 && toasts231[0].includes("@opencode cannot run") && !log231.includes("inline @opencode unavailable"));
+        doc231 = "";
+        await registeredCommands.get("opencodeCopilotBridge.diagnose")?.();
+        add("HR Diagnose names the failure and the harness setting",
+            /\| chat harness \| \S+ @opencode not registered: .*palette commands and gitScan still work \|/.test(doc231) && doc231.includes("chat.defaultToCopilotHarness true"));
+
+        vscodeStub.chat = saved231.chat;
+        vscodeStub.window.showWarningMessage = saved231.warn;
+        registeredCommands.clear();
+        for (const [k, v] of saved231.commands) registeredCommands.set(k, v);
+        gitScanProvider = saved231.provider;
+        delete settings.defaultToCopilotHarness;
+        delete vscodeStub.workspace.openTextDocument;
+        delete vscodeStub.window.showTextDocument;
+    }
+
     let failed = 0;
     for (const [name, ok] of checks) {
         console.log(`${ok ? "  ok  " : "FAIL  "} ${name}`);
