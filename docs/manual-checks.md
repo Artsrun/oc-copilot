@@ -112,6 +112,16 @@ A real VS Code and a real model. Needs a 1.x and a 2.x OpenCode side by side
    Remove the key after.
 9. **Back off**: `opencode2` off, reload → item 3 again.
 
+## 0.0.230 — quick pass (about 5 minutes)
+
+1. **2.x failure ends the turn**: on a 2.x whose instruction files fail to load,
+   a message ends with the error instead of waiting for Stop.
+2. **Status bar**: during a run over 3 s it reads `OpenCode · plan · 3s`; after
+   it, `… · ctx N%`. **Close** in `/sessions` on 2.1+: the session keeps its title
+   in OpenCode's own app, gone from the list.
+3. **dataHome**: set it to a new folder; the next turn's log shows the server
+   restarting; the 2.x data-folder refusal stops appearing.
+
 ## 0.0.229 — quick pass (about 5 minutes)
 
 1. **Worktrees**: after two `/worktree` turns (one that edits, one that does

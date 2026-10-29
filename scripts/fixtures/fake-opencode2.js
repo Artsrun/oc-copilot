@@ -16,6 +16,8 @@ const http = require("node:http");
 const wire = require(path.join(__dirname, "wire-v2.json"));
 const PASSWORD = "fake-oc2-PW0rd";
 const VERSION = process.env.FAKE_OC2_VERSION || wire.version;
+// 2.1+ archives a session itself (`archived: true`); 2.0.x answers 204 and ignores it (2.2.0, 2.0.18 measured).
+const ARCHIVES = (([a, b]) => a > 2 || (a === 2 && b >= 1))(VERSION.split(".").map(Number));
 
 module.exports = (argv) => {
     const a = argv.slice(2);
@@ -84,7 +86,7 @@ module.exports = (argv) => {
         }
         turns.delete(sid);
     };
-    const kindOf = (text) => (/probe:slow/.test(text) ? "interrupt" : /probe:task@/.test(text) ? "subagent" : /probe:bash/.test(text) ? "permission" : "text");
+    const kindOf = (text) => (/probe:initfail/.test(text) ? "initfail" : /probe:ratelimit/.test(text) ? "retry" : /probe:slow/.test(text) ? "interrupt" : /probe:task@/.test(text) ? "subagent" : /probe:bash/.test(text) ? "permission" : "text");
 
     const server = http.createServer((req, res) => {
         const u = new URL(req.url, "http://x");
@@ -123,7 +125,10 @@ module.exports = (argv) => {
                 sessions.set(id, { id, time: { created: Date.now(), updated: Date.now() }, permissions: json?.permissions ?? [], metadata: json?.metadata ?? {} });
                 return send(200, { data: sessions.get(id) });
             }
-            if (p === "/session" && req.method === "GET") return send(200, { data: [...sessions.values()], cursor: {} });
+            if (p === "/session" && req.method === "GET") {
+                const hide = ARCHIVES && u.searchParams.get("archived") === "false";
+                return send(200, { data: [...sessions.values()].filter((x) => !hide || !x.time.archived), cursor: {} });
+            }
             const one = p.match(/^\/session\/([^/]+)(\/.*)?$/);
             if (!one) return send(404, { _tag: "NotFound" });
             const [, sid, tail = ""] = one;
@@ -132,6 +137,12 @@ module.exports = (argv) => {
             if (!tail && req.method === "GET") return send(200, { data: s });
             if (!tail && req.method === "PATCH") {
                 if (json?.permissions) s.permissions = [...s.permissions, ...json.permissions];
+                // A metadata PATCH replaces the whole object (both versions measured: the title went).
+                if (json && "metadata" in json) s.metadata = json.metadata ?? {};
+                if (ARCHIVES && json && "archived" in json) {
+                    if (typeof json.archived !== "boolean" && json.archived !== null) return send(400, { _tag: "InvalidRequestError", message: "Expected boolean | null", kind: "Payload" });
+                    s.time = { ...s.time, archived: json.archived ? Date.now() : undefined };
+                }
                 return send(204);
             }
             if (!tail && req.method === "DELETE") { sessions.delete(sid); return send(204); }
@@ -139,7 +150,13 @@ module.exports = (argv) => {
             if (tail === "/message") return send(200, { data: [] });
             if (tail === "/prompt") {
                 const kind = kindOf(String(json?.text ?? ""));
-                const turn = wire.turns[kind];
+                // 2.0.18 on a project with instruction files (live, 2026-10-29): the run fails before the prompt is delivered.
+                const turn = kind === "initfail"
+                    ? { frames: ["session.inbox.enqueued", "session.execution.started", "session.execution.failed"].map((type, i) => JSON.stringify({
+                        id: `evt_initfail${i}`, created: Date.now(), type,
+                        data: { sessionID: "ses_ROOT", ...(type === "session.inbox.enqueued" ? { inboxID: "msg_initfail" } : {}), ...(type === "session.execution.failed" ? { error: { type: "instructions.unavailable", message: "Instruction initialization blocked by unavailable sources: core/instructions" } } : {}) }
+                    })) }
+                    : wire.turns[kind];
                 const frames = turn.frames.map((f) => f.split("ses_ROOT").join(sid).replace(/ses_CHILD(\d+)/g, (_, k) => `${sid}c${k}`));
                 const inbox = JSON.parse(frames.find((f) => f.includes('"type":"session.inbox.enqueued"'))).data.inboxID;
                 turns.set(sid, { frames, at: 0, kind });

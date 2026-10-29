@@ -125,7 +125,7 @@ function threadScopeActive(context) {
     const history = context?.history;
     return (0, core_1.config)().get("sessionScope", "thread") !== "workspace" && Array.isArray(history);
 }
-function refreshStatus(cwd) {
+function refreshStatus(cwd, context) {
     const folder = cwd ?? (0, core_1.resolveFolder)()?.folder.uri.fsPath;
     if (!folder) {
         return;
@@ -137,6 +137,9 @@ function refreshStatus(cwd) {
     }
     if (state.id) {
         parts.push(`${state.turns} turn${state.turns === 1 ? "" : "s"}`);
+    }
+    if (context) {
+        parts.push(context);
     }
     const head = state.id
         ? `Session \`${state.id}\` · ${state.turns} turn(s)`

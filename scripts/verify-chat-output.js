@@ -105,7 +105,7 @@ function writeFake(name, events, extraJs) {
         // v183: what the real CLI resolves its directory from (PWD first).
         "fs.writeFileSync(" +
         JSON.stringify(file + ".env") +
-        ", JSON.stringify({ pwd: process.env.PWD ?? null, cwd: process.cwd(), occ: process.env.OPENCODE_CONFIG_CONTENT ?? null }));\n" +
+        ", JSON.stringify({ pwd: process.env.PWD ?? null, cwd: process.cwd(), occ: process.env.OPENCODE_CONFIG_CONTENT ?? null, xdg: process.env.XDG_DATA_HOME ?? null }));\n" +
         ((extraJs || "").includes("--version") ? "" : "if (process.argv.includes('--version')) { process.stdout.write('1.19.0\\n'); process.exit(0); }\n") +
         "const events = " +
         JSON.stringify(events) +
@@ -246,6 +246,7 @@ const settings = {
     readOnlySubagents: ["explore"],
     enforceReadOnly: true,
     opencode2: false,
+    dataHome: "",
     readOnlyTools: ["git-scan_gitScan"],
     attachDevToServer: true,
     prewarmServer: true,
@@ -1941,6 +1942,19 @@ function collectConfigProperties(configuration) {
     const se4 = stream();
     await global.__handler({ prompt: "after ping, checked again" }, {}, se4.response, se4.token);
     add("SE …and after /ping the next message checks again (it runs)", logLines.slice(se4Log).some((l) => /fake-stderr-db\.js\b.*\brun\b/.test(l)));
+    // 0.0.230 (P4): dataHome is OpenCode's data folder for every spawn; a new one lifts the remembered clash.
+    settings.dataHome = "~/ocb-datahome-check";
+    workspaceEvents.configuration.forEach((cb) => cb({ affectsConfiguration: (key) => key === "opencodeCopilotBridge" || key === "opencodeCopilotBridge.dataHome" }));
+    const se5Log = logLines.length;
+    const se5 = stream();
+    await global.__handler({ prompt: "after a new dataHome" }, {}, se5.response, se5.token);
+    add("SE a new dataHome lifts the remembered clash: the next message runs", logLines.slice(se5Log).some((l) => /fake-stderr-db\.js\b.*\brun\b/.test(l)));
+    add(`SE …and the run gets dataHome as XDG_DATA_HOME, ~/ as the home folder (${lastEnv("fake-stderr-db.js").xdg})`, lastEnv("fake-stderr-db.js").xdg === path.join(os.homedir(), "ocb-datahome-check"));
+    settings.dataHome = "";
+    settings.executable = happy;
+    const se6 = stream();
+    await global.__handler({ prompt: "with no dataHome" }, {}, se6.response, se6.token);
+    add("SE an empty dataHome passes VS Code's own XDG_DATA_HOME", lastEnv("fake-ok.js").xdg === (process.env.XDG_DATA_HOME ?? null));
     settings.executable = happy;
     // 0.0.225: a running tool part before its input arrives is `{}` — the row read
     // `glob: {}` for 40 s (0.0.223 live). It names nothing yet, so no row.
@@ -2031,7 +2045,13 @@ function collectConfigProperties(configuration) {
     settings.progressHeartbeatMs = 1000;
     memento.clear();
     const cj = stream();
+    // 0.0.230 (P4): the status bar names the running turn and its time, at milestones.
+    const cjBar = [];
+    const cjPoll = setInterval(() => lastStatusItem && cjBar.push(lastStatusItem.text), 100);
     await global.__handler({ prompt: "a run long enough to tick several times" }, {}, cj.response, cj.token);
+    clearInterval(cjPoll);
+    add(`ST the status bar shows the running turn and its time (${[...new Set(cjBar)].join(" | ").slice(0, 200)})`, cjBar.some((t) => /^\$\(sync~spin\) OpenCode · plan · [3-9]s$/.test(t)));
+    add("ST …and is back to idle after it", !!lastStatusItem && !/sync~spin/.test(lastStatusItem.text));
     add("CJ progress calls stay well below one per second", cj.progress.length < 8);
     add("CJ progress still reports elapsed against the cap", cj.progress.some((p) => /\d+s \/ \d+s/.test(p)));
     settings.progressHeartbeatMs = 0;
@@ -6341,6 +6361,7 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         v5.tokens = { input: 5, output: 2, reasoning: 0, total: 70000, cache: { read: 0, write: 0 } };
         const cp1 = await v5Turn("explain the cart for cp");
         const cpChips = chipsOf(cp1.result);
+        add(`ST after a turn the status bar names the context (${lastStatusItem?.text})`, /· ctx \d+(%|k)$/.test(lastStatusItem?.text ?? ""));
         add(`CP autocompact off and 70k of context: a Compact chip (${cpChips.map((c) => c.label).join(" | ")})`, cpChips.some((c) => /Compact · 70k$/.test(c.label) && c.command === "compact" && c.prompt === ""));
         v5.tokens = undefined;
         const cp2 = await v5Turn("explain the cart small for cp");
@@ -8395,6 +8416,18 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
                 return i > 0 && tw1Reqs.slice(0, i).some((r) => /\/agent$/.test(r.path ?? "") && r.body?.agent === "plan") && tw1Reqs[i].body?.text?.includes("[[probe:text]]");
             })());
             add("TW …and its password reached neither the log nor chat", !/fake-oc2-PW0rd/.test(tw1Chat) && !logLines.slice(twLog).some((l) => /fake-oc2-PW0rd/.test(l)));
+            // 0.0.230 (P2): Close on 2.1+ is 2.x's own archive, read back; the title survives.
+            {
+                const base = ext.__test.knownServerBase();
+                const v2api = ext.__test.api(base);
+                const made = await v2api.sessionCreate(work, { title: "close me", permission: [] }, 3000);
+                const reqsBefore = twReqs().length;
+                await v2api.sessionPatch(work, made.id, { time: { archived: Date.now() } }, 3000);
+                const sent = twReqs().slice(reqsBefore).filter((r) => r.method === "PATCH");
+                const listed = (await v2api.sessionsRaw(work, 3000)).find((x) => x.id === made.id);
+                add(`TW Close on 2.2.0 sends 2.x's archive, and the session keeps its title (${JSON.stringify(sent.map((r) => r.body))})`,
+                    sent.length === 1 && sent[0].body?.archived === true && typeof listed?.time?.archived === "number" && listed?.title === "close me");
+            }
 
             fs.rmSync(twRecord, { force: true });
             const tw2 = stream();
@@ -8432,6 +8465,25 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
             delete process.env.FAKE_OC2_DROP;
             ext.deactivate();
 
+            // 0.0.230 (P2): 2.2.0's provider backoff (recorded: a scripted 429) names itself on the live line, as 1.x's does.
+            const twRetry = stream();
+            await global.__handler({ prompt: "explain the cart after a rate limit [[probe:ratelimit:2]]" }, { history: [] }, twRetry.response, twRetry.token);
+            const twRetryLines = twRetry.progress.filter((l) => /Provider retry/.test(l));
+            add(`TW a 2.x provider backoff shows on the live line, then the answer (${twRetryLines.join(" | ").slice(0, 160)})`,
+                twRetryLines.some((l) => /Provider retry 2 · Rate limit reached for scripted \(probe\)/.test(plain(l))) && /Hello from the scripted model\./.test(twRetry.chatMarkdown.join("")));
+            ext.deactivate();
+
+            // A run that fails before its prompt is delivered (2.0.18, instruction files unavailable) ends the turn with the error, not at Stop.
+            const twFail = stream();
+            const twFailAt = Date.now();
+            const twFailR = await Promise.race([
+                global.__handler({ prompt: "explain the cart [[probe:initfail]]" }, { history: [] }, twFail.response, twFail.token),
+                new Promise((r) => setTimeout(() => r("hung"), 8000))
+            ]);
+            add(`TW a 2.x run that fails before delivery ends the turn with the error (${twFailR === "hung" ? "hung 8s" : Date.now() - twFailAt + "ms"})`,
+                twFailR !== "hung" && /Instruction initialization blocked by unavailable sources/.test(twFail.chatMarkdown.join("")));
+            ext.deactivate();
+
             // transport cli: 2.x's run takes none of the bridge's flags, so the turn goes through the server.
             settings.transport = "cli";
             fs.rmSync(twRecord, { force: true });
@@ -8462,13 +8514,21 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
             ext.deactivate();
             // 0.0.228: the probe's ten rows passed on 2.0.18, 2.1.4 and 2.2.0 too
             // (REFS): the top of that range runs without the outside-the-range line.
-            process.env.FAKE_OC2_VERSION = "2.2.0";
+            process.env.FAKE_OC2_VERSION = "2.0.18";
             settings.executable = writeFake("fake-tw22.js", [], `if (!process.argv.includes('--version') || true) require(${JSON.stringify(path.join(__dirname, "fixtures", "fake-opencode2.js"))})(process.argv);\n`);
             const tw22 = stream();
             await global.__handler({ prompt: "explain the cart on 2.2 [[probe:text]]" }, { history: [] }, tw22.response, tw22.token);
             const tw22Chat = plain(tw22.chatMarkdown.join(""));
-            add(`TW 2.2.0 runs inside the tested range: no outside-the-range line${/Hello from the scripted model/.test(tw22Chat) ? "" : ` [chat: ${tw22Chat.slice(0, 300)}]`}`,
+            add(`TW 2.0.18 runs inside the tested range: no outside-the-range line${/Hello from the scripted model/.test(tw22Chat) ? "" : ` [chat: ${tw22Chat.slice(0, 300)}]`}`,
                 /Hello from the scripted model\./.test(tw22Chat) && !/outside the versions/.test(tw22Chat));
+            {
+                // 2.0.x ignores `archived` (204): the bridge marks metadata, merged — a metadata PATCH replaces it all.
+                const v2api = ext.__test.api(ext.__test.knownServerBase());
+                const made = await v2api.sessionCreate(work, { title: "close me on 2.0", permission: [] }, 3000);
+                await v2api.sessionPatch(work, made.id, { time: { archived: 42 } }, 3000);
+                const listed = (await v2api.sessionsRaw(work, 3000)).find((x) => x.id === made.id);
+                add(`TW Close on 2.0.18 falls back to the bridge's mark and keeps the title (${JSON.stringify(listed)})`, listed?.time?.archived === 42 && listed?.title === "close me on 2.0");
+            }
             ext.deactivate();
             process.env.FAKE_OC2_VERSION = "3.0.0";
             settings.executable = writeFake("fake-tw3.js", [], `if (!process.argv.includes('--version') || true) require(${JSON.stringify(path.join(__dirname, "fixtures", "fake-opencode2.js"))})(process.argv);\n`);
@@ -8644,7 +8704,16 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
             const at210 = performance.now();
             const bigOut210 = filter210(big210, 50);
             const ms210 = performance.now() - at210;
-            add(`GT 1 MB unclosed context releases past 64 KiB in < 200ms (${ms210.toFixed(1)}ms)`, bigOut210 === big210 && ms210 < 200);
+            // Growth plus a cap, as NF and FK (0.0.228): a fixed budget measured the machine.
+            add(`GT 1 MB unclosed context releases past 64 KiB in < 2.5s (${ms210.toFixed(1)}ms)`, bigOut210 === big210 && ms210 < 2500);
+            const gtMedianMs = (kb) => {
+                const text = "<workspace-context>" + "x".repeat(kb * 1024);
+                const runs = [0, 1, 2].map(() => { const t = performance.now(); filter210(text, 50); return performance.now() - t; });
+                return runs.sort((x, y) => x - y)[1];
+            };
+            const gtSmall = gtMedianMs(256);
+            const gtLarge = gtMedianMs(1024);
+            add(`GT the leak gate grows linearly: x4 input, x${(gtLarge / Math.max(gtSmall, 0.5)).toFixed(1)} time (${gtSmall.toFixed(0)}→${gtLarge.toFixed(0)}ms, < x10)`, gtLarge / Math.max(gtSmall, 0.5) < 10);
             const eg = ext.__test.createEchoGate(["what does the cart total do"]);
             const egOut = [eg.push("what does ", "p1"), eg.push("the cart total do", "p1"), eg.push("The total is 3.", "p2"), eg.flush()];
             add(`GT the echo gate drops a prompt said back in deltas (${JSON.stringify(egOut)})`, egOut.join("") === "The total is 3." && egOut[0] === "" && egOut[1] === "");

@@ -139,6 +139,8 @@ async function recordV2(bin) {
         }
     }, [{ action: "shell", resource: "*", effect: "ask" }]);
     await turn("subagent", "[[probe:task@explore:text]] delegate");
+    // A provider rate limit twice, then the answer: what 2.x says while it waits.
+    await turn("retry", "[[probe:ratelimit:2]] hi");
     let interrupted = false;
     await turn("interrupt", "[[probe:slow]] stream", async (srv, sid, frames) => {
         if (!interrupted && frames.some((f) => f.includes('"type":"session.text.delta"'))) {

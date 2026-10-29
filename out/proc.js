@@ -39,6 +39,7 @@ exports.expandShimVar = expandShimVar;
 exports.readShimTarget = readShimTarget;
 exports.resolveExecutable = resolveExecutable;
 exports.executableStamp = executableStamp;
+exports.dataHomeEnv = dataHomeEnv;
 exports.spawnOpenCode = spawnOpenCode;
 exports.runCapture = runCapture;
 exports.killTree = killTree;
@@ -221,12 +222,19 @@ function executableStamp(exe, forget = false) {
     })
         .join("|");
 }
+function dataHomeEnv() {
+    const raw = (0, core_1.config)().get("dataHome", "").trim();
+    if (!raw) {
+        return {};
+    }
+    return { XDG_DATA_HOME: /^~(?=$|[\\/])/.test(raw) ? path.join(os.homedir(), raw.slice(1)) : raw };
+}
 function spawnOpenCode(executable, args, cwd) {
     const resolved = resolveExecutable(executable);
     const full = resolved.prefixArgs.length ? [...resolved.prefixArgs, ...args] : args;
     core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] $ ${resolved.target} ${full.join(" ")}`);
     const enforced = (0, enforce_1.enforcedConfigContent)(process.env.OPENCODE_CONFIG_CONTENT, (0, enforce_1.executableMajor)(executable));
-    const env = { ...process.env, ...(cwd ? { PWD: cwd } : {}), ...(enforced ? { OPENCODE_CONFIG_CONTENT: enforced } : {}) };
+    const env = { ...process.env, ...dataHomeEnv(), ...(cwd ? { PWD: cwd } : {}), ...(enforced ? { OPENCODE_CONFIG_CONTENT: enforced } : {}) };
     if (resolved.viaCmd) {
         const line = `"${[resolved.target, ...full].map(quoteCmdArg).join(" ")}"`;
         return (0, node_child_process_1.spawn)(resolved.command, ["/d", "/s", "/c", line], {

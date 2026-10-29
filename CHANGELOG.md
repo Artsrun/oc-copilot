@@ -3,6 +3,31 @@
 Full release history, newest first; releases before the last one are condensed
 to their summary and headlines. The README ships the last five.
 
+### 0.0.230
+
+OpenCode 2.2.0 against the 2.x adapter, a data folder of the bridge's own, a
+status bar that follows a run, and a 2.x hang fixed. (The Copilot-harness work
+planned for this round, P1 in `docs/v230-plan.md`, is not in it.)
+
+- **Fixed: a 2.x run that failed before its prompt was delivered hung until
+  Stop** (`sessionPrompt`, `oc-api.ts`). OpenCode 2.0.18 failed a turn with
+  "Instruction initialization blocked by unavailable sources: core/instructions"
+  (live, 2026-10-29): the error was logged, but the wait ended only on an idle
+  after delivery, so three turns ran 19–272 s until Stop. A failed run's idle now
+  ends it, and the error reaches chat (179 ms; hung 8 s before). Checks `TW`.
+- **OpenCode 2.2.0** (REFS 0.0.230): `wire-v2.json` re-recorded on 2.2.0 — no
+  frame type or field differs from 2.0.29's. Close in `/sessions` sends 2.x's own
+  `archived: true` (2.1+, read back; 2.0.x ignores it and keeps the bridge's mark)
+  and no longer erases the session's title (a metadata PATCH replaces the object,
+  both versions). `session.retry.scheduled` (a provider 429, recorded) shows as
+  `Provider retry N` on the live line. Checks `TW`.
+- **New: `dataHome`** (docs/data-folder-design.md): `XDG_DATA_HOME` for every
+  process `spawnOpenCode` starts; a new value lifts a remembered 2.x clash and
+  stops the managed server. The refusals name the setting. Checks `SE`.
+- **New: the status bar follows a run** (`$(sync~spin) OpenCode · plan · 1m 20s`,
+  at the chat line's milestones), then names the context (`ctx 42%`). Checks `ST`.
+- **Gate: the last fixed timing budget** (`GT … < 200ms`) is growth plus a cap.
+
 ### 0.0.229
 
 The worktrees `/worktree` leaves behind can be found, read and cleared.

@@ -41,6 +41,7 @@ const models_1 = require("./models");
 const commands_1 = require("./commands");
 const compose_1 = require("./compose");
 const session_1 = require("./session");
+const net_1 = require("./net");
 const worktree_1 = require("./worktree");
 const BASE_SCHEME = "ocb-base";
 function registerCommands(context) {
@@ -146,6 +147,11 @@ function registerCommands(context) {
     }), vscode.workspace.onDidChangeConfiguration?.((event) => {
         if (event.affectsConfiguration("opencodeCopilotBridge")) {
             (0, session_1.refreshStatus)();
+        }
+        if (event.affectsConfiguration("opencodeCopilotBridge.dataHome")) {
+            (0, net_1.forgetDataFolderClashes)();
+            (0, net_1.stopServer)();
+            core_1.logChannel.appendLine("dataHome changed: the managed server stops; the next message starts one on the new folder");
         }
     }) ?? { dispose: () => undefined }, vscode.workspace.registerTextDocumentContentProvider?.(BASE_SCHEME, {
         provideTextDocumentContent: async (uri) => {

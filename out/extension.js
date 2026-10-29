@@ -105,6 +105,7 @@ exports.__test = {
     safeSessionId: runs_1.safeSessionId,
     api: oc_api_1.api,
     serverMajor: oc_api_1.serverMajor,
+    knownServerBase: net_1.knownServerBase,
     readShimTarget: proc_1.readShimTarget,
     tokenizeCmdLine: proc_1.tokenizeCmdLine,
     expandShimVar: proc_1.expandShimVar,

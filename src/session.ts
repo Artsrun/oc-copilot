@@ -166,7 +166,8 @@ export function threadScopeActive(context: vscode.ChatContext | undefined): bool
     return config().get<string>("sessionScope", "thread") !== "workspace" && Array.isArray(history);
 }
 
-export function refreshStatus(cwd?: string): void {
+// `context`: after a turn, "ctx 42%" (or "ctx 63k" when the window is not known).
+export function refreshStatus(cwd?: string, context?: string): void {
     const folder = cwd ?? resolveFolder()?.folder.uri.fsPath;
     if (!folder) {
         return;
@@ -178,6 +179,9 @@ export function refreshStatus(cwd?: string): void {
     }
     if (state.id) {
         parts.push(`${state.turns} turn${state.turns === 1 ? "" : "s"}`);
+    }
+    if (context) {
+        parts.push(context);
     }
     const head = state.id
         ? `Session \`${state.id}\` · ${state.turns} turn(s)`

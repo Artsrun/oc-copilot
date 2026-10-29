@@ -154,13 +154,20 @@ const v2 = (base) => {
             const created = data(await send("POST", url("/session"), { location: { directory: cwd }, permissions: rules, metadata: { title: body.title } }, timeoutMs));
             return { id: String(created?.id) };
         },
-        sessionPatch: (cwd, id, body, timeoutMs) => {
+        sessionPatch: async (cwd, id, body, timeoutMs) => {
             const archived = body.time?.archived;
-            const patch = {
-                ...(Array.isArray(body.permission) ? { permissions: (0, enforce_1.toV2Rules)(body.permission) } : {}),
-                ...(typeof archived === "number" ? { metadata: { ocbArchived: archived } } : {})
-            };
-            return send("PATCH", url(`/session/${safeSessionId(id)}`), patch, timeoutMs);
+            if (Array.isArray(body.permission)) {
+                await send("PATCH", url(`/session/${safeSessionId(id)}`), { permissions: (0, enforce_1.toV2Rules)(body.permission) }, timeoutMs);
+            }
+            if (typeof archived !== "number") {
+                return undefined;
+            }
+            await send("PATCH", url(`/session/${safeSessionId(id)}`), { archived: true }, timeoutMs);
+            const now = data(await get(url(`/session/${safeSessionId(id)}`), timeoutMs));
+            if (typeof now?.time?.archived === "number") {
+                return undefined;
+            }
+            return send("PATCH", url(`/session/${safeSessionId(id)}`), { metadata: { ...(now?.metadata ?? {}), ocbArchived: archived } }, timeoutMs);
         },
         sessionDelete: (cwd, id, timeoutMs) => send("DELETE", url(`/session/${safeSessionId(id)}`), undefined, timeoutMs),
         sessionFork: async (cwd, id, timeoutMs) => v1Session(data(await send("POST", url(`/session/${safeSessionId(id)}/fork`), {}, timeoutMs)) ?? {}),
@@ -176,6 +183,7 @@ const v2 = (base) => {
                 await send("POST", url(`/session/${safeSessionId(id)}/model`), { model: { id: b.model.modelID, providerID: b.model.providerID, ...(typeof b.variant === "string" ? { variant: b.variant } : {}) } }, 5000);
             }
             const delivered = new Set();
+            let failed = false;
             let inbox;
             let model = {};
             let tokens;
@@ -198,7 +206,10 @@ const v2 = (base) => {
                 else if (ev.type === "message.part.updated" && part.sessionID === id && part.type === "text" && typeof part.id === "string" && part.text) {
                     texts.set(part.id, String(part.text));
                 }
-                else if (ev.type === "session.idle" && p.sessionID === id && inbox && delivered.has(inbox)) {
+                else if (ev.type === "session.error" && p.sessionID === id) {
+                    failed = true;
+                }
+                else if (ev.type === "session.idle" && p.sessionID === id && inbox && (delivered.has(inbox) || failed)) {
                     const t = tokens;
                     return {
                         info: {

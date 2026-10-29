@@ -5,6 +5,7 @@ import { getModelCatalog, setDefaultModel } from "./models";
 import { diagnose, pickWorktree, quickActions } from "./commands";
 import { chatQuery, composeParallel, insertIntoChat } from "./compose";
 import { refreshStatus, setActiveSession } from "./session";
+import { forgetDataFolderClashes, stopServer } from "./net";
 import { baseText, changedFiles, removeWorktree, worktreeDiff } from "./worktree";
 
 // Read-only documents: a worktree file as its base commit has it.
@@ -167,6 +168,13 @@ export function registerCommands(context: vscode.ExtensionContext): void {
         vscode.workspace.onDidChangeConfiguration?.((event) => {
             if (event.affectsConfiguration("opencodeCopilotBridge")) {
                 refreshStatus();
+            }
+            // Another data folder: this window's server runs on the old one, and a
+            // remembered 2.x clash may not hold there. An adopted server keeps its own.
+            if (event.affectsConfiguration("opencodeCopilotBridge.dataHome")) {
+                forgetDataFolderClashes();
+                stopServer();
+                logChannel.appendLine("dataHome changed: the managed server stops; the next message starts one on the new folder");
             }
         }) ?? { dispose: () => undefined },
         // The left side of Show full diff: a file as the worktree's base commit has it.

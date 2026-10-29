@@ -241,9 +241,9 @@ check on 2.0.29 and 2.0.32, the nightly probe's ten rows on the others):
   both versions). The bridge's overrides go in 2.x's format, and a plan turn is
   sent only when the server lists them for `plan`; otherwise nothing is sent.
 - **Not yet:** MCP tools on read-only turns (2.x reaches them through Code
-  Mode's `execute`, which stays denied), answering OpenCode's questions, and
-  **Close** in `/sessions` keeps the session listed in OpenCode's own apps
-  (2.x has no archive call; the bridge marks it hidden for itself).
+  Mode's `execute`, which stays denied) and answering OpenCode's questions.
+  **Close** in `/sessions` archives the session in OpenCode itself from 2.1 on;
+  2.0.x has no archive, so there the bridge hides it for itself.
 
 - **Your own permission rules.** OpenCode 2 reads `permission:` in
   `.opencode/agents/<name>.md` frontmatter, but ignores 1.x's
@@ -257,8 +257,8 @@ check on 2.0.29 and 2.0.32, the nightly probe's ten rows on the others):
 Both majors use the same data folder (`~/.local/share/opencode`). A folder
 that 1.x started keeps its history when `opencode2` is turned on or off. One
 that OpenCode 2 created cannot be opened by 1.x at all (1.19.3: "Database is
-not empty and has no session table", measured): give the 1.x its own folder by
-starting VS Code with `XDG_DATA_HOME` set (PowerShell:
+not empty and has no session table", measured): give the 1.x its own folder with
+the `dataHome` setting, or by starting VS Code with `XDG_DATA_HOME` set (PowerShell:
 `$env:XDG_DATA_HOME = "$HOME\.opencode1\data"; code .`, with every VS Code
 window closed first).
 
@@ -494,6 +494,7 @@ All under `opencodeCopilotBridge.`.
 | Setting | Default | What it does |
 | --- | --- | --- |
 | `executable` | `opencode` | OpenCode executable name or path; `~/` is your home folder. |
+| `dataHome` | `""` | OpenCode's data folder (`XDG_DATA_HOME`) for every process the bridge starts; `~/` is your home folder. Empty: VS Code's own environment. Gives a 1.x its own folder when OpenCode 2 created the default one (see *OpenCode 2*); changing it stops this window's server. |
 | `pure` | `false` | Run with `--pure` (no external MCP plugins) for a faster cold start. |
 | `devAgent` | `build` | Agent `/dev` runs, always passed as `--agent`. |
 | `planAgent` | `plan` | Agent for read-only turns and `/parallel` lanes, used once OpenCode lists it (see *Read-only turns*). |
@@ -541,6 +542,20 @@ All under `opencodeCopilotBridge.`.
 
 The last five releases; the full history is `CHANGELOG.md` in the repository.
 
+### 0.0.230
+
+- **A 2.x run that fails at the start no longer hangs.** OpenCode 2.0.18
+  failed a turn on unavailable instruction files before delivering it; the
+  error was logged and the turn waited until Stop. It now ends with the error.
+- **OpenCode 2.2.0**: wire format checked against 2.0.29 (unchanged), **Close**
+  in `/sessions` archives in OpenCode itself from 2.1 on (and no longer erases
+  the session's title in its own apps), and a provider rate limit shows on the
+  live line as on 1.x.
+- **`dataHome`** setting: OpenCode's data folder for every process the bridge
+  starts. The status bar names a running turn and its time, then the context
+  share. Timing checks measure growth, not a fixed budget.
+  Checks `TW`, `SE`, `ST`, `GT`.
+
 ### 0.0.229
 
 - **OpenCode: Worktrees** (palette and Quick Actions): the worktrees
@@ -585,14 +600,3 @@ The last five releases; the full history is `CHANGELOG.md` in the repository.
   branch, and OpenCode set up each new folder from scratch. Now the next
   message continues the worktree and its OpenCode session; **New worktree**
   (or any new chat, or `/new`) starts a fresh one.
-### 0.0.225
-
-- **A data folder OpenCode 2 created now fails at once.** After the first
-  failure, each message is refused before anything starts (it took 9 s of
-  retries per message), with Retry and Ping. `/ping` names the cause and lets
-  the next message check again.
-- `/ping` and Diagnose say why the server is not running, and a model list
-  served from the stale cache is a warning, not a tick.
-- Less noise: no colour codes in the debug log, no "New chat" note before the
-  answer (it is in the log), no `glob: {}` row while a tool call is still
-  being written.

@@ -145,7 +145,7 @@ async function openTurn(t: Turn): Promise<Live> {
         `${continuing ? "Continuing" : "Starting"} the OpenCode ${agentLabel} session` +
         (useServer ? " via server" : attachUrl ? " via server (attached)" : " via cli") +
         (model ? ` (${model})` : "");
-    const beat = startHeartbeat(response, opening, timeoutMs, cwd);
+    const beat = startHeartbeat(response, opening, timeoutMs, cwd, agentLabel);
     // `src/cart.ts:42` in the answer becomes a pill that opens the file.
     const linker = createFileLinker(cwd);
     return { beat, linker, preRun, timed, attachUrl, opening };
@@ -644,7 +644,7 @@ async function finishTurn(t: Turn, live: Live, outcome: Outcome): Promise<vscode
             })
         );
     }
-    refreshStatus(cwd);
+    refreshStatus(cwd, contextTokens ? (contextLimit ? `ctx ${Math.round((100 * contextTokens) / contextLimit)}%` : `ctx ${Math.round(contextTokens / 1000)}k`) : undefined);
     return {
         metadata: {
             kind,

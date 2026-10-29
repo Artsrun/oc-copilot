@@ -50,7 +50,7 @@ async function openTurn(t) {
     const opening = `${continuing ? "Continuing" : "Starting"} the OpenCode ${agentLabel} session` +
         (useServer ? " via server" : attachUrl ? " via server (attached)" : " via cli") +
         (model ? ` (${model})` : "");
-    const beat = (0, chat_boot_1.startHeartbeat)(response, opening, timeoutMs, cwd);
+    const beat = (0, chat_boot_1.startHeartbeat)(response, opening, timeoutMs, cwd, agentLabel);
     const linker = (0, context_1.createFileLinker)(cwd);
     return { beat, linker, preRun, timed, attachUrl, opening };
 }
@@ -436,7 +436,7 @@ async function finishTurn(t, live, outcome) {
             nextEffort: (0, models_1.higherEffort)(sizedBy, sentVariant)
         }));
     }
-    (0, session_1.refreshStatus)(cwd);
+    (0, session_1.refreshStatus)(cwd, contextTokens ? (contextLimit ? `ctx ${Math.round((100 * contextTokens) / contextLimit)}%` : `ctx ${Math.round(contextTokens / 1000)}k`) : undefined);
     return {
         metadata: {
             kind,

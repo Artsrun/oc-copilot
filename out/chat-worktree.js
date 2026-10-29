@@ -192,7 +192,7 @@ async function handleWorktree(p) {
             core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] worktree run goes cold: ${error}`);
         }
     }
-    const beat = (0, chat_boot_1.startHeartbeat)(response, `Working in ${wt.branch}`, tPlan.timeoutMs, wt.path);
+    const beat = (0, chat_boot_1.startHeartbeat)(response, `Working in ${wt.branch}`, tPlan.timeoutMs, wt.path, "worktree");
     if (resumed && !token.isCancellationRequested) {
         const summary = (0, runs_1.compactionInFlight)(resumed);
         if (summary) {
@@ -264,6 +264,7 @@ async function handleWorktree(p) {
     await beat.stop(token.isCancellationRequested);
     metrics.cancelled = token.isCancellationRequested;
     (0, session_1.notifyIfSlow)(metrics, "worktree", cwd);
+    (0, session_1.refreshStatus)(cwd);
     core_1.logChannel.appendLine((0, format_1.metricsLogLine)(metrics));
     if (token.isCancellationRequested) {
         core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] ${(0, followups_1.mark)("stop")} worktree run stopped by the user; ${wt.path} is kept`);

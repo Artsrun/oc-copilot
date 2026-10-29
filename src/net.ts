@@ -378,8 +378,8 @@ export const plainError = (text: string): string => text.replace(/\x1b\[[0-9;]*m
 
 // 1.x on an opencode.db that OpenCode 2 created refuses it on serve, run, agent
 // list and models alike (1.19.3, REFS 0.0.224): a turn spent 9 s re-spawning
-// into it. The folder is this process's XDG_DATA_HOME, so nothing in the window
-// can change it: remembered per executable file, like a refusal, until `/ping`.
+// into it. The folder is `dataHome`, else this process's XDG_DATA_HOME:
+// remembered per executable file, like a refusal, until `/ping` or a new `dataHome`.
 const DATA_CLASH = /Database is not empty and has no session table/i;
 const dataClash = new Map<string, { file: string; error: Error }>();
 
@@ -393,7 +393,7 @@ export function noteDataFolderClash(executable: string, output: string): Error |
     const error = Object.assign(
         new Error(
             "Nothing was run: OpenCode 1 cannot open its data folder — its `opencode.db` was created by OpenCode 2, without 1.x's `session` table. " +
-            "Give 1.x its own folder: close VS Code and start it with `XDG_DATA_HOME` set (PowerShell: `$env:XDG_DATA_HOME = \"$HOME\\.opencode1\\data\"; code .`), " +
+            "Give 1.x its own folder: set `opencodeCopilotBridge.dataHome` (e.g. `~/.opencode1/data`), or start VS Code with `XDG_DATA_HOME` set, " +
             "or turn on `opencodeCopilotBridge.opencode2`. `/ping` checks again."
         ),
         { code: "EOPENCODEDATA" }
@@ -417,6 +417,9 @@ export function dataFolderRefusal(executable: string): Error | undefined {
 
 /** `/ping`: the next message checks the data folder again. */
 export const forgetDataFolderClash = (executable: string): boolean => dataClash.delete(executable);
+
+/** A new `dataHome`: every executable's data folder is checked again. */
+export const forgetDataFolderClashes = (): void => dataClash.clear();
 
 // The last managed-server start that failed, readable, for `/ping` and Diagnose.
 let serveFailure: string | undefined;

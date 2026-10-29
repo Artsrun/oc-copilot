@@ -20,7 +20,7 @@ function exitProblem(executable, stderr, code) {
     }
     if ((0, net_1.noteDataFolderClash)(executable, clean)) {
         return "OpenCode 1 cannot open its data folder: its opencode.db was created by OpenCode 2, without 1.x's session table. " +
-            "Give 1.x its own folder (start VS Code with XDG_DATA_HOME set, e.g. ~/.opencode1/data), or turn on opencode2.";
+            "Give 1.x its own folder (the dataHome setting, or start VS Code with XDG_DATA_HOME set, e.g. ~/.opencode1/data), or turn on opencode2.";
     }
     const lines = clean.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
     const at = lines.findIndex((l) => !/^errors?:?$/i.test(l) && /error|unrecognized|not recognized|unknown|not found|denied|failed|cannot|invalid/i.test(l));

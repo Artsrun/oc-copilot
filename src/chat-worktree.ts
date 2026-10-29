@@ -9,7 +9,7 @@ import { createEchoGate, createLeakGate, metricsLogLine } from "./format";
 import { WORKTREE_TURN, rememberFollowups, startHeartbeat, suggestFollowups } from "./chat-boot";
 import { buildChatContext, contextNotice, createFileLinker, emitAnswerParts, emitReferences, parseChatPrompt, referenceLogLine, stepUris } from "./context";
 import { cachedModelInfo, effortFor, modelRefProblem, modelResolver } from "./models";
-import { notifyIfSlow } from "./session";
+import { notifyIfSlow, refreshStatus } from "./session";
 import { Worktree, createWorktree, listWorktrees, reopenWorktree, uncommittedPaths, worktreeChanges, worktreeDiff, worktreeLabel } from "./worktree";
 
 // What the next `/worktree` turn of this chat needs to continue: `threadWorktree`
@@ -206,7 +206,7 @@ export async function handleWorktree(p: {
         }
     }
 
-    const beat = startHeartbeat(response, `Working in ${wt.branch}`, tPlan.timeoutMs, wt.path);
+    const beat = startHeartbeat(response, `Working in ${wt.branch}`, tPlan.timeoutMs, wt.path, "worktree");
     // A continued session may be summarizing (autocompact below): a prompt sent
     // now would queue behind it, and one nobody watches is stopped first.
     if (resumed && !token.isCancellationRequested) {
@@ -285,6 +285,8 @@ export async function handleWorktree(p: {
     await beat.stop(token.isCancellationRequested);
     metrics.cancelled = token.isCancellationRequested;
     notifyIfSlow(metrics, "worktree", cwd);
+    // The bar named this run while it went (the heartbeat): back to the chat's own.
+    refreshStatus(cwd);
     logChannel.appendLine(metricsLogLine(metrics));
     if (token.isCancellationRequested) {
         // Nothing reaches the chat after Stop; the worktree stays for `git worktree list`.

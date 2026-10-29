@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.PREWARM_DELAY_MS = exports.currentServerGeneration = exports.lastServeFailure = exports.forgetDataFolderClash = exports.isDataFolderClash = exports.plainError = exports.isNotOpenCode1 = exports.openCode1Refusal = exports.isIdentityUnknown = exports.serverVersion = exports.TESTED_OPENCODE2 = exports.TESTED_OPENCODE = exports.openCode2Allowed = exports.serverAuth = void 0;
+exports.PREWARM_DELAY_MS = exports.currentServerGeneration = exports.lastServeFailure = exports.forgetDataFolderClashes = exports.forgetDataFolderClash = exports.isDataFolderClash = exports.plainError = exports.isNotOpenCode1 = exports.openCode1Refusal = exports.isIdentityUnknown = exports.serverVersion = exports.TESTED_OPENCODE2 = exports.TESTED_OPENCODE = exports.openCode2Allowed = exports.serverAuth = void 0;
 exports.withDirectory = withDirectory;
 exports.httpRequestJson = httpRequestJson;
 exports.httpGetJson = httpGetJson;
@@ -303,7 +303,7 @@ function noteDataFolderClash(executable, output) {
         return undefined;
     }
     const error = Object.assign(new Error("Nothing was run: OpenCode 1 cannot open its data folder — its `opencode.db` was created by OpenCode 2, without 1.x's `session` table. " +
-        "Give 1.x its own folder: close VS Code and start it with `XDG_DATA_HOME` set (PowerShell: `$env:XDG_DATA_HOME = \"$HOME\\.opencode1\\data\"; code .`), " +
+        "Give 1.x its own folder: set `opencodeCopilotBridge.dataHome` (e.g. `~/.opencode1/data`), or start VS Code with `XDG_DATA_HOME` set, " +
         "or turn on `opencodeCopilotBridge.opencode2`. `/ping` checks again."), { code: "EOPENCODEDATA" });
     if (!dataClash.has(executable)) {
         core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] ${executable}: OpenCode 1 cannot open its data folder (created by OpenCode 2); nothing more is started until /ping`);
@@ -321,6 +321,8 @@ function dataFolderRefusal(executable) {
 }
 const forgetDataFolderClash = (executable) => dataClash.delete(executable);
 exports.forgetDataFolderClash = forgetDataFolderClash;
+const forgetDataFolderClashes = () => dataClash.clear();
+exports.forgetDataFolderClashes = forgetDataFolderClashes;
 let serveFailure;
 const lastServeFailure = () => serveFailure;
 exports.lastServeFailure = lastServeFailure;

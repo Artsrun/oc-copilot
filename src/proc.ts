@@ -7,7 +7,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { platform } from "node:process";
 
-import { logChannel, stamp } from "./core";
+import { config, logChannel, stamp } from "./core";
 import { enforcedConfigContent, executableMajor } from "./enforce";
 
 export interface ResolvedExe {
@@ -221,6 +221,17 @@ export function executableStamp(exe: string, forget = false): string {
         .join("|");
 }
 
+// `dataHome`: OpenCode's data folder (`XDG_DATA_HOME`) for every process the
+// bridge starts, so a 1.x keeps a folder of its own beside 2.x's
+// (docs/data-folder-design.md). `~/` is the home folder; empty is the host's.
+export function dataHomeEnv(): { XDG_DATA_HOME?: string } {
+    const raw = config().get<string>("dataHome", "").trim();
+    if (!raw) {
+        return {};
+    }
+    return { XDG_DATA_HOME: /^~(?=$|[\\/])/.test(raw) ? path.join(os.homedir(), raw.slice(1)) : raw };
+}
+
 export function spawnOpenCode(
     executable: string,
     args: string[],
@@ -239,7 +250,7 @@ export function spawnOpenCode(
     // Read-only turns are read-only by permission in every process started here
     // (./enforce): one place, so serve, run, agent list and an ACP child agree.
     const enforced = enforcedConfigContent(process.env.OPENCODE_CONFIG_CONTENT, executableMajor(executable));
-    const env = { ...process.env, ...(cwd ? { PWD: cwd } : {}), ...(enforced ? { OPENCODE_CONFIG_CONTENT: enforced } : {}) };
+    const env = { ...process.env, ...dataHomeEnv(), ...(cwd ? { PWD: cwd } : {}), ...(enforced ? { OPENCODE_CONFIG_CONTENT: enforced } : {}) };
     if (resolved.viaCmd) {
         // Node escapes quotes with backslashes, which cmd.exe does not understand,
         // so the command line is built by hand and passed verbatim. The extra outer

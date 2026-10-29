@@ -143,7 +143,7 @@ const v1Session = (s: V2Session): { id: string; title?: string; parentID?: strin
     id: String(s.id),
     ...(typeof s.metadata?.title === "string" ? { title: s.metadata.title } : {}),
     ...(typeof s.parentID === "string" ? { parentID: s.parentID } : {}),
-    // 2.x has no archive call: the bridge's Close marks metadata (2.0.29 PATCH takes metadata and permissions only).
+    // 2.1+ archives itself (`time.archived`); on 2.0.x the bridge marks metadata (sessionPatch).
     time: { ...s.time, ...(typeof s.metadata?.ocbArchived === "number" ? { archived: s.metadata.ocbArchived } : {}) }
 });
 
@@ -215,13 +215,25 @@ const v2 = (base: string): ServerApi => {
             const created = data<V2Session>(await send("POST", url("/session"), { location: { directory: cwd }, permissions: rules, metadata: { title: body.title } }, timeoutMs));
             return { id: String(created?.id) };
         },
-        sessionPatch: (cwd, id, body, timeoutMs) => {
+        // Close: `archived: true` archives on 2.1+ (2.2.0: `time.archived` set, the
+        // list's `archived=false` hides it), and 2.0.x answers 204 and ignores it
+        // (2.0.18). So it is read back; unarchived, the bridge's own mark goes in
+        // metadata, merged — a metadata PATCH replaces the whole object, and the
+        // session lost its title (both versions measured, REFS 0.0.230).
+        sessionPatch: async (cwd, id, body, timeoutMs) => {
             const archived = (body.time as { archived?: unknown } | undefined)?.archived;
-            const patch = {
-                ...(Array.isArray(body.permission) ? { permissions: toV2Rules(body.permission) } : {}),
-                ...(typeof archived === "number" ? { metadata: { ocbArchived: archived } } : {})
-            };
-            return send("PATCH", url(`/session/${safeSessionId(id)}`), patch, timeoutMs);
+            if (Array.isArray(body.permission)) {
+                await send("PATCH", url(`/session/${safeSessionId(id)}`), { permissions: toV2Rules(body.permission) }, timeoutMs);
+            }
+            if (typeof archived !== "number") {
+                return undefined;
+            }
+            await send("PATCH", url(`/session/${safeSessionId(id)}`), { archived: true }, timeoutMs);
+            const now = data<V2Session>(await get(url(`/session/${safeSessionId(id)}`), timeoutMs));
+            if (typeof now?.time?.archived === "number") {
+                return undefined;
+            }
+            return send("PATCH", url(`/session/${safeSessionId(id)}`), { metadata: { ...(now?.metadata ?? {}), ocbArchived: archived } }, timeoutMs);
         },
         sessionDelete: (cwd, id, timeoutMs) => send("DELETE", url(`/session/${safeSessionId(id)}`), undefined, timeoutMs),
         sessionFork: async (cwd, id, timeoutMs) => v1Session(data<V2Session>(await send("POST", url(`/session/${safeSessionId(id)}/fork`), {}, timeoutMs)) ?? {}),
@@ -241,6 +253,9 @@ const v2 = (base: string): ServerApi => {
                 await send("POST", url(`/session/${safeSessionId(id)}/model`), { model: { id: b.model.modelID, providerID: b.model.providerID, ...(typeof b.variant === "string" ? { variant: b.variant } : {}) } }, 5000);
             }
             const delivered = new Set<string>();
+            // A run that failed ends at its idle even undelivered: 2.0.18 failed on
+            // unavailable instruction files before delivering, and the wait never ended.
+            let failed = false;
             let inbox: string | undefined;
             let model: { providerID?: unknown; modelID?: unknown } = {};
             let tokens: Record<string, unknown> | undefined;
@@ -260,7 +275,9 @@ const v2 = (base: string): ServerApi => {
                     }
                 } else if (ev.type === "message.part.updated" && part.sessionID === id && part.type === "text" && typeof part.id === "string" && part.text) {
                     texts.set(part.id, String(part.text));
-                } else if (ev.type === "session.idle" && p.sessionID === id && inbox && delivered.has(inbox)) {
+                } else if (ev.type === "session.error" && p.sessionID === id) {
+                    failed = true;
+                } else if (ev.type === "session.idle" && p.sessionID === id && inbox && (delivered.has(inbox) || failed)) {
                     const t = tokens as { input?: number; output?: number; reasoning?: number } | undefined;
                     return {
                         info: {

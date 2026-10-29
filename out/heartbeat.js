@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.SETTLE_MS = exports.CHILD_MAX_ROWS = exports.GROUP_MAX_ROWS = exports.stepLabel = exports.supportsTaskProgress = exports.SUBAGENT_EVERY_MS = exports.REASONING_EVERY_MS = exports.HEARTBEAT_MILESTONES_S = void 0;
+exports.elapsedLabel = exports.SETTLE_MS = exports.CHILD_MAX_ROWS = exports.GROUP_MAX_ROWS = exports.stepLabel = exports.supportsTaskProgress = exports.SUBAGENT_EVERY_MS = exports.REASONING_EVERY_MS = exports.HEARTBEAT_MILESTONES_S = void 0;
 exports.nextMilestone = nextMilestone;
 exports.finishedTask = finishedTask;
 exports.startHeartbeat = startHeartbeat;
@@ -93,7 +93,12 @@ const childRows = (kids) => {
         ? [...rows.slice(0, exports.CHILD_MAX_ROWS - 1), `${kids?.agent} › ${rows.length - exports.CHILD_MAX_ROWS + 1} more`]
         : rows;
 };
-function startHeartbeat(response, initial, timeoutMs, cwd) {
+const elapsedLabel = (ms) => {
+    const s = Math.round(ms / 1000);
+    return s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`;
+};
+exports.elapsedLabel = elapsedLabel;
+function startHeartbeat(response, initial, timeoutMs, cwd, status) {
     const everyMs = (0, core_1.config)().get("progressHeartbeatMs", 1000);
     const accordion = (0, core_1.config)().get("groupProgress", true) && (0, exports.supportsTaskProgress)(response);
     const started = Date.now();
@@ -105,6 +110,12 @@ function startHeartbeat(response, initial, timeoutMs, cwd) {
     let sub = "";
     let lastSubAt = 0;
     let dueS = exports.HEARTBEAT_MILESTONES_S[0];
+    let statusDueS = exports.HEARTBEAT_MILESTONES_S[0];
+    const showStatus = () => {
+        if (status && !stopped) {
+            (0, core_1.setStatus)(`$(sync~spin) OpenCode · ${status} · ${(0, exports.elapsedLabel)(Date.now() - started)}`, `Running the OpenCode ${status} agent`);
+        }
+    };
     const label = () => {
         const now = sub || ([...running].pop() ?? phase);
         const elapsed = Math.round((Date.now() - started) / 1000);
@@ -122,8 +133,13 @@ function startHeartbeat(response, initial, timeoutMs, cwd) {
     let timer;
     if (everyMs > 0) {
         timer = setInterval(() => {
-            if ((Date.now() - started) / 1000 >= dueS) {
+            const elapsedS = (Date.now() - started) / 1000;
+            if (elapsedS >= dueS) {
                 emit();
+            }
+            if (elapsedS >= statusDueS) {
+                statusDueS = nextMilestone(elapsedS);
+                showStatus();
             }
         }, Math.max(250, everyMs));
         timer.unref?.();

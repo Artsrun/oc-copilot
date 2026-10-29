@@ -3,7 +3,7 @@
 // never throws, one pill badger per turn) and the live thought line.
 import * as vscode from "vscode";
 import * as path from "node:path";
-import { config, logChannel, secs, stamp, truncate } from "./core";
+import { config, logChannel, secs, setStatus, stamp, truncate } from "./core";
 import { StepRecord, SubagentStep } from "./metrics";
 import { createBadger, mark } from "./followups";
 
@@ -144,7 +144,16 @@ const childRows = (kids: { agent: string; rows: Set<string> } | undefined): stri
         : rows;
 };
 
-export function startHeartbeat(response: vscode.ChatResponseStream, initial: string, timeoutMs: number, cwd?: string): Heartbeat {
+/** "1m 20s", "45s": how long a run has gone, for the status bar. */
+export const elapsedLabel = (ms: number): string => {
+    const s = Math.round(ms / 1000);
+    return s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`;
+};
+
+// `status`: the status bar names the running turn (`plan`, `dev`, `worktree`)
+// and its time at the same milestones as the chat line: the bar is out of the
+// chat's view, so a long run stays visible while the chat is closed.
+export function startHeartbeat(response: vscode.ChatResponseStream, initial: string, timeoutMs: number, cwd?: string, status?: string): Heartbeat {
     const everyMs = config().get<number>("progressHeartbeatMs", 1000);
     const accordion = config().get<boolean>("groupProgress", true) && supportsTaskProgress(response);
     const started = Date.now();
@@ -158,6 +167,12 @@ export function startHeartbeat(response: vscode.ChatResponseStream, initial: str
     let sub = "";
     let lastSubAt = 0;
     let dueS = HEARTBEAT_MILESTONES_S[0];
+    let statusDueS = HEARTBEAT_MILESTONES_S[0];
+    const showStatus = (): void => {
+        if (status && !stopped) {
+            setStatus(`$(sync~spin) OpenCode · ${status} · ${elapsedLabel(Date.now() - started)}`, `Running the OpenCode ${status} agent`);
+        }
+    };
 
     const label = (): string => {
         // A subagent's tool is the newer news than the parent's `task` row it runs under.
@@ -179,8 +194,13 @@ export function startHeartbeat(response: vscode.ChatResponseStream, initial: str
     let timer: NodeJS.Timeout | undefined;
     if (everyMs > 0) {
         timer = setInterval(() => {
-            if ((Date.now() - started) / 1000 >= dueS) {
+            const elapsedS = (Date.now() - started) / 1000;
+            if (elapsedS >= dueS) {
                 emit();
+            }
+            if (elapsedS >= statusDueS) {
+                statusDueS = nextMilestone(elapsedS);
+                showStatus();
             }
         }, Math.max(250, everyMs));
         timer.unref?.();

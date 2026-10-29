@@ -2,7 +2,7 @@
   "name": "opencode-copilot-bridge",
   "displayName": "OpenCode Copilot Bridge",
   "description": "Delegate research, planning, and development to OpenCode from GitHub Copilot Chat.",
-  "version": "0.0.229",
+  "version": "0.0.230",
   "publisher": "local",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -25,6 +25,7 @@
       "description": "A chat turn spawns the configured OpenCode executable and reaches the configured server, so a workspace that is not trusted must not be able to choose either.",
       "restrictedConfigurations": [
         "opencodeCopilotBridge.executable",
+        "opencodeCopilotBridge.dataHome",
         "opencodeCopilotBridge.serverHostname",
         "opencodeCopilotBridge.serverPort",
         "opencodeCopilotBridge.enforceReadOnly",
@@ -269,6 +270,12 @@
             "type": "string",
             "default": "opencode",
             "description": "OpenCode 1.x executable name or path; ~/ is your home folder. OpenCode 2 is not driven yet: keep a 1.x for the bridge (README, OpenCode 2)."
+          },
+          "opencodeCopilotBridge.dataHome": {
+            "type": "string",
+            "default": "",
+            "scope": "machine",
+            "description": "OpenCode's data folder (XDG_DATA_HOME) for every process the bridge starts; ~/ is your home folder. Empty: VS Code's own environment. Give an OpenCode 1.x its own folder when OpenCode 2 created the default one. Changing it stops this window's server."
           },
           "opencodeCopilotBridge.pure": {
             "type": "boolean",

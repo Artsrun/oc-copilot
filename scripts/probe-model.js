@@ -14,6 +14,7 @@
 //   exec:<base64 JS>      call execute (2.x Code Mode)
 //   call:<name>           call the tool named <name>, or `<server>_<name>` (MCP), with {}
 //   slow                  stream one chunk every 250 ms for 20 s (cancel tests)
+//   ratelimit:<n>         answer HTTP 429 (Retry-After: 2) to the first <n> calls, then text
 // After a tool result it answers "Done. The tool said: <result>".
 //
 //   node scripts/probe-model.js [port] [log.jsonl]          standalone
@@ -92,6 +93,7 @@ function argsFor(tool, action) {
 /** Start the model on 127.0.0.1. `calls`: every request, newest last. */
 function startScriptedModel({ port = 0, log } = {}) {
     const calls = [];
+    const rateLimited = new Map(); // ratelimit action → calls so far
     const chunk = (delta, finish, usage) => ({
         id: `probe-${calls.length}`,
         object: "chat.completion.chunk",
@@ -130,6 +132,17 @@ function startScriptedModel({ port = 0, log } = {}) {
                 res.end(JSON.stringify({ error: { message: `no route ${req.url}` } }));
                 return;
             }
+            // A provider rate limit, as the client sees one: 429 with Retry-After.
+            const limited = sc.kind === "action" ? sc.action.match(/^ratelimit:(\d+)$/) : null;
+            if (limited) {
+                rateLimited.set(sc.action, (rateLimited.get(sc.action) ?? 0) + 1);
+                if (rateLimited.get(sc.action) <= Number(limited[1])) {
+                    record.status = 429;
+                    res.writeHead(429, { "content-type": "application/json", "retry-after": "2" });
+                    res.end(JSON.stringify({ error: { message: "Rate limit reached for scripted (probe)", type: "rate_limit_error" } }));
+                    return;
+                }
+            }
             let chunks;
             let delay = 5;
             if (sc.kind === "after-tool") {
@@ -142,8 +155,8 @@ function startScriptedModel({ port = 0, log } = {}) {
                 if (verb === "slow") {
                     chunks = textChunks("slow ".repeat(80));
                     delay = 250;
-                } else if (verb === "text" || !tool) {
-                    chunks = textChunks(verb === "text" ? "Hello from the scripted model." : `No ${verb} tool offered (tools: ${record.tools.join(",")}).`);
+                } else if (verb === "text" || verb === "ratelimit" || !tool) {
+                    chunks = textChunks(verb === "text" || verb === "ratelimit" ? "Hello from the scripted model." : `No ${verb} tool offered (tools: ${record.tools.join(",")}).`);
                 } else {
                     chunks = toolChunks(tool.name, argsFor(tool, sc.action));
                 }

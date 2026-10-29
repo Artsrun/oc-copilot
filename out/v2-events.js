@@ -97,6 +97,12 @@ function v2Translator() {
                 const failed = ev("session.error", { sessionID, error: { name, message, data: { message } } });
                 return type === "session.execution.failed" ? [failed, ev("session.idle", { sessionID })] : [failed];
             }
+            case "session.retry.scheduled": {
+                const error = (d.error ?? {});
+                return sessionID
+                    ? [ev("session.status", { sessionID, status: { type: "retry", attempt: d.attempt, message: typeof error.message === "string" ? error.message : "", next: d.at } })]
+                    : [];
+            }
             case "session.execution.succeeded":
             case "session.execution.interrupted":
                 return sessionID ? [ev("session.idle", { sessionID })] : [];

@@ -5,6 +5,47 @@ actually measured, so nobody re-derives it.
 
 ---
 
+## 0.0.230: OpenCode 2.2.0 against 2.0.29's wire, archive, retries (2026-10-29)
+
+**Dated 2026-10-29. Fixed in 0.0.230.** Windows 11, `@opencode/cli` 2.2.0 (a
+scratch prefix) and the installed 2.0.18, each served with an isolated home.
+
+**The wire did not change shape.** `record-wire-fixtures.js --v2` on 2.2.0
+against `scripts/fixtures/wire-v2.json` (2.0.29), every frame's type and field
+paths compared: no type added or gone, no field added or gone, in the text,
+permission, subagent and interrupt turns. Frame counts equal (15, 27, 37, 14);
+two turns order `session.usage.updated` and `session.renamed` differently.
+The 2.1.0 changelog's renames (`providerState` → `native`, `session.compacted`
+gone) touch nothing these turns send or the bridge reads. The fixture is now
+2.2.0's, with a fifth turn:
+
+**A provider backoff is `session.retry.scheduled`.** The scripted model
+answers HTTP 429 (`Retry-After: 2`) to `[[probe:ratelimit:N]]`. With N = 5:
+three `session.retry.scheduled` frames (attempts 2, 3, 4) over 12 s, each
+`{sessionID, assistantMessageID, attempt, at, error: {type:
+"provider.rate-limit", message, status: 429, retryAfterMs: 2000}}`; `at` is
+when the next try starts. With N = 2 (the fixture): one, then the answer, in
+2.6 s. The bridge read none of it (`v2-events.ts`); now it is 1.x's
+`session.status` retry, and the live line names it.
+
+**Archive.** One session per body, `PATCH /api/session/:id`, then `GET`:
+
+| Body | 2.2.0 | 2.0.18 |
+| --- | --- | --- |
+| `{ "archived": true }` | 204, `time.archived` set | 204, nothing changes |
+| `{ "archived": <ms> }` | 400 "Expected boolean \| null" | 204, nothing changes |
+| `{ "time": { "archived": <ms> } }` | 204, nothing changes | 204, nothing changes |
+| `{ "metadata": { "archived": <ms> } }` | 204, metadata **replaced**: the title is gone | the same |
+
+The list: 2.2.0 includes archived sessions by default; `?archived=false`
+leaves them out, `?archived=true` lists only them. 2.0.18 ignores the query.
+So Close on 2.x since 0.0.222 (`metadata: { ocbArchived }`) erased the
+session's title in OpenCode's own apps on both versions. Close now sends
+`archived: true`, reads the session back, and only when it is not archived
+writes the bridge's mark into the existing metadata.
+
+---
+
 ## 0.0.228: two timing checks measured the machine (2026-10-28)
 
 **Dated 2026-10-28. Fixed in 0.0.228.** Windows 11, Node 22.23.2, on battery

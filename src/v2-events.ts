@@ -111,6 +111,14 @@ export function v2Translator(): (frame: Frame) => Event[] {
                 const failed = ev("session.error", { sessionID, error: { name, message, data: { message } } });
                 return type === "session.execution.failed" ? [failed, ev("session.idle", { sessionID })] : [failed];
             }
+            // A provider backoff (2.2.0, recorded with a scripted 429): 1.x's
+            // `session.status` retry, so the live line names it on both majors.
+            case "session.retry.scheduled": {
+                const error = (d.error ?? {}) as { message?: unknown };
+                return sessionID
+                    ? [ev("session.status", { sessionID, status: { type: "retry", attempt: d.attempt, message: typeof error.message === "string" ? error.message : "", next: d.at } })]
+                    : [];
+            }
             case "session.execution.succeeded":
             case "session.execution.interrupted":
                 return sessionID ? [ev("session.idle", { sessionID })] : [];
