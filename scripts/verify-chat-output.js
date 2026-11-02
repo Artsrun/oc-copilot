@@ -9339,6 +9339,29 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         for (const [k, v] of saved231.commands) registeredCommands.set(k, v);
         gitScanProvider = saved231.provider;
         delete settings.defaultToCopilotHarness;
+
+        // 0.0.235 HR (M3): VS Code shows the Local session target only while
+        // chat.editor.localAgent.enabled is not false (1.144.0 bundle), and @opencode
+        // answers only there: say it outside chat, once, where the setting is.
+        const toasts235 = [];
+        vscodeStub.window.showWarningMessage = (text, ...items) => (toasts235.push([String(text), items]), Promise.resolve(undefined));
+        settings["editor.localAgent.enabled"] = false;
+        const activate235 = () => {
+            const ctx = { ...ctx231, subscriptions: [] };
+            ext.activate(ctx);
+            for (const d of ctx.subscriptions) d.dispose?.();
+        };
+        activate235();
+        const first235 = toasts235.length;
+        activate235();
+        add(`HR Local hidden: one warning names chat.editor.localAgent.enabled, with Open Settings (${JSON.stringify(toasts235[0] ?? null).slice(0, 160)})`,
+            first235 === 1 && /chat\.editor\.localAgent\.enabled/.test(toasts235[0]?.[0] ?? "") && /@opencode/.test(toasts235[0]?.[0] ?? "") && (toasts235[0]?.[1] ?? []).includes("Open Settings"));
+        add("HR …said once: the next window does not repeat it", toasts235.length === 1);
+        doc231 = "";
+        await registeredCommands.get("opencodeCopilotBridge.diagnose")?.();
+        add("HR Diagnose: @opencode is registered, but VS Code offers no Local session", /\| chat harness \| \S+ @opencode is registered, but chat\.editor\.localAgent\.enabled is off/.test(doc231));
+        delete settings["editor.localAgent.enabled"];
+        vscodeStub.window.showWarningMessage = saved231.warn;
         delete vscodeStub.workspace.openTextDocument;
         delete vscodeStub.window.showTextDocument;
     }

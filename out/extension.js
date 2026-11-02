@@ -60,6 +60,7 @@ const natural_1 = require("./natural");
 const commands_registry_1 = require("./commands-registry");
 const worktree_1 = require("./worktree");
 const git_scan_mcp_1 = require("./git-scan-mcp");
+const LOCAL_NOTICE_KEY = "opencode.localSessionNotice";
 function activate(context) {
     (0, core_1.setExtensionContext)(context);
     (0, core_1.setLogChannel)(vscode.window.createOutputChannel("OpenCode"));
@@ -80,6 +81,14 @@ function activate(context) {
         void vscode.window.showWarningMessage?.("OpenCode: this VS Code offers no chat participants, so @opencode cannot run. The palette commands and gitScan still work; OpenCode: Diagnose says why.");
     }
     else {
+        const local = (0, session_1.localSessionProblem)();
+        if (local && context.globalState?.get(LOCAL_NOTICE_KEY) !== local) {
+            void context.globalState?.update(LOCAL_NOTICE_KEY, local);
+            void vscode.window.showWarningMessage?.(`OpenCode: ${local}, and @opencode answers only there. Turn the setting on, or see OpenCode: Diagnose.`, "Open Settings")?.then((pick) => pick && vscode.commands.executeCommand("workbench.action.openSettings", "chat.editor.localAgent.enabled"));
+        }
+        else if (!local && context.globalState?.get(LOCAL_NOTICE_KEY)) {
+            void context.globalState?.update(LOCAL_NOTICE_KEY, undefined);
+        }
         try {
             context.subscriptions.push(participant(context, session_1.INLINE_PARTICIPANT_ID, (r, c, s, t) => (0, chat_1.handleChat)(r, c, s, t, { inline: true })));
         }

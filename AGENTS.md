@@ -145,7 +145,9 @@ does not run the suite.
 
 CI runs the same gate (`.github/workflows/ship.yml`: Linux, Windows, macOS, every
 push and pull request) and, nightly, the real-binary probes, one job per
-OpenCode version (`probes.yml`: 1.19.0, 1.19.5, 2.0.29 and 2.2.5 must pass, the latest 2.x may fail).
+OpenCode version (`probes.yml`: 1.19.0, 1.19.5, 2.0.29 and 2.2.5 must pass, the latest 2.x may fail),
+and the chat participant API (`api-watch.yml`: `scripts/check-vscode-api.js` on
+`vscode.d.ts`'s main branch, and a typecheck against the newest `@types/vscode`).
 
 - The suite takes well over 30 s; do not judge it by a 30 s timeout.
 - It **aborts on the first exception**: fix crashes first, then red checks.
@@ -434,6 +436,10 @@ history belongs in `CHANGELOG.md`, not in the source.
   session only. Registering it can throw on a host without the API, so it is
   guarded: activation must still register the commands and gitScan, and
   Diagnose names the harness settings (`harnessNote`, `getParticipantProblem`, `HR`).
+  With `chat.editor.localAgent.enabled` false VS Code offers no Local session
+  (1.144.0 bundle), Send stays disabled and no turn of ours runs: activation says
+  so once, outside chat (`localSessionProblem`). Nightly, `api-watch.yml` fails
+  when `createChatParticipant` gains `@deprecated` or this code stops typechecking.
 - **A quick pick filters its list by what is typed** — the composer's model
   items are `alwaysShow`, or typing a task would hide every model.
 

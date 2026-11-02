@@ -5,6 +5,29 @@ actually measured, so nobody re-derives it.
 
 ---
 
+## 0.0.235: M3 — Local hidden, and the participant API watched (2026-11-02)
+
+**Dated 2026-11-02. Shipped in 0.0.235.** Read, not run in a VS Code window.
+
+**When VS Code shows Local** (the 1.144.0 linux-x64 bundle, `workbench.desktop.
+main.js`, read 0.0.232): `chat.editor.localAgent.enabled` defaults to `true`
+(`experiment: startup`), and the Local target is visible while it is not false
+unless policy forces Local on. Local is policy-disabled when the managed
+`temporaryAllowLocalHarness` is false, or when managed `sandbox.enabled` or a
+non-empty `permissions.deny` applies without the `temporaryDefaultToLocalHarness`
+policy. Those are read through VS Code's managed-settings service; whether an
+extension's `getConfiguration` sees them was not measured, so the notice reads
+only `chat.editor.localAgent.enabled`.
+
+**The tripwire.** `scripts/check-vscode-api.js` on `vscode.d.ts` from main
+(1.146.0 dev, 753,651 chars): all five declarations present, none deprecated.
+Made to go red first: one `@deprecated` added to `createChatParticipant`'s doc
+→ "FAIL … deprecated", exit 1; `ChatFollowupProvider` renamed → exit 1. Live
+fetch of main: unchanged. `@types/vscode` latest is 1.144.0 (installed 1.138.0):
+`tsc --noEmit` passes against it, and it carries no `@deprecated` there either.
+
+---
+
 ## 0.0.234: the first turn's MCP tools on 2.2.x come from a folder request (2026-11-02)
 
 **Dated 2026-11-02. Fixed in 0.0.234.** Linux, the scripted model, 2.2.5 and

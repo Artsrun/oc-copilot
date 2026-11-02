@@ -48,7 +48,10 @@ administrator can switch that off.
 **OpenCode: Diagnose** shows whether `@opencode` is registered and what those
 two settings are, and the OpenCode log names them at activation. A VS Code
 without the participant API still gets the palette commands and gitScan, with
-one warning that `@opencode` cannot run.
+one warning that `@opencode` cannot run. With `chat.editor.localAgent.enabled`
+off, VS Code offers no Local session: the extension says so once, outside chat
+(Send stays disabled for `@opencode`, so no reply of ours could), with a button
+to the setting.
 
 ### Inline chat (Ctrl+I)  <!-- claim:inline-participant -->
 
@@ -561,6 +564,13 @@ All under `opencodeCopilotBridge.`.
 
 The last five releases; the full history is `CHANGELOG.md` in the repository.
 
+### 0.0.235
+
+- **Told when VS Code hides the Local chat session.** `@opencode` answers only
+  in Local sessions; with `chat.editor.localAgent.enabled` off there are none,
+  and nothing in chat can say so. One warning outside chat now does, with a
+  button to the setting, and Diagnose shows it. Checks `HR`.
+
 ### 0.0.234
 
 - **OpenCode 2.2: the first message after VS Code starts has its MCP tools.**
@@ -596,18 +606,4 @@ The last five releases; the full history is `CHANGELOG.md` in the repository.
   `@opencode` threw and stopped activation, which took the palette commands
   and gitScan down with it. They now register, and one warning says why
   `@opencode` cannot run. Checks `HR`.
-
-### 0.0.230
-
-- **A 2.x run that fails at the start no longer hangs.** OpenCode 2.0.18
-  failed a turn on unavailable instruction files before delivering it; the
-  error was logged and the turn waited until Stop. It now ends with the error.
-- **OpenCode 2.2.0**: wire format checked against 2.0.29 (unchanged), **Close**
-  in `/sessions` archives in OpenCode itself from 2.1 on (and no longer erases
-  the session's title in its own apps), and a provider rate limit shows on the
-  live line as on 1.x.
-- **`dataHome`** setting: OpenCode's data folder for every process the bridge
-  starts. The status bar names a running turn and its time, then the context
-  share. Timing checks measure growth, not a fixed budget.
-  Checks `TW`, `SE`, `ST`, `GT`.
 

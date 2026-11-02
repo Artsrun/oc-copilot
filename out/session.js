@@ -36,6 +36,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.OWN_PARTICIPANTS = exports.INLINE_PARTICIPANT_ID = exports.PARTICIPANT_ID = void 0;
 exports.setParticipantProblem = setParticipantProblem;
 exports.getParticipantProblem = getParticipantProblem;
+exports.localSessionProblem = localSessionProblem;
 exports.harnessNote = harnessNote;
 exports.getActiveSession = getActiveSession;
 exports.setActiveSession = setActiveSession;
@@ -60,6 +61,10 @@ function setParticipantProblem(problem) {
 }
 function getParticipantProblem() {
     return participantProblem;
+}
+function localSessionProblem() {
+    const enabled = vscode.workspace.getConfiguration?.("chat")?.get("editor.localAgent.enabled");
+    return enabled === false ? "chat.editor.localAgent.enabled is off, so VS Code offers no Local chat session" : "";
 }
 function harnessNote() {
     const chat = vscode.workspace.getConfiguration?.("chat");

@@ -35,6 +35,15 @@ export function getParticipantProblem(): string {
     return participantProblem;
 }
 
+// Why VS Code offers no Local session here, or "". The 1.144.0 bundle shows the
+// Local target while `chat.editor.localAgent.enabled` is not false (its default is
+// true, experiment-controlled). Managed sandbox or permissions settings disable it
+// too; this check does not read those (HR).
+export function localSessionProblem(): string {
+    const enabled = vscode.workspace.getConfiguration?.("chat")?.get<unknown>("editor.localAgent.enabled");
+    return enabled === false ? "chat.editor.localAgent.enabled is off, so VS Code offers no Local chat session" : "";
+}
+
 // The host's own harness settings, read only: whether a new chat starts where
 // @opencode can answer. "unset" before VS Code 1.142 named them.
 export function harnessNote(): string {

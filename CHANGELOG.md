@@ -3,6 +3,28 @@
 Full release history, newest first; releases before the last one are condensed
 to their summary and headlines. The README ships the last five.
 
+### 0.0.235
+
+M3 of the harness work: say outside chat when `@opencode` cannot be reached,
+and watch the participant API nightly.
+
+- **Local hidden, said once** (`localSessionProblem`, `session.ts`): the 1.144.0
+  bundle shows the Local session target while `chat.editor.localAgent.enabled`
+  is not false. With it false, Send stays disabled for `@opencode` and no turn
+  of ours runs, so activation shows one warning naming the setting (Open
+  Settings), remembered per reason in `globalState`; Diagnose's `chat harness`
+  row names it. Managed sandbox or permissions settings also disable Local; this
+  does not read them. Checks `HR` (red first: 3).
+- **`api-watch.yml`, nightly:** `scripts/check-vscode-api.js` fails when
+  `vscode.d.ts` on main drops `createChatParticipant`, `ChatParticipant`,
+  `ChatResponseStream`, `ChatFollowupProvider` or `ChatRequestHandler`, or gives
+  one `@deprecated`; then a typecheck against the newest `@types/vscode`.
+  Measured: main as read 2026-11-02 unchanged; a copy with one `@deprecated`
+  and a copy with a renamed interface each fail (exit 1); `tsc --noEmit` passes
+  against `@types/vscode` 1.144.0.
+- Not in this version: freezing the participant (bug fixes only) waits for
+  Jan's answer (Q2).
+
 ### 0.0.234
 
 The first turn after VS Code starts has the folder's MCP tools on OpenCode 2.2.
