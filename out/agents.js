@@ -36,6 +36,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.isPermissionRule = void 0;
 exports.parseAgentList = parseAgentList;
 exports.configStamp = configStamp;
+exports.prewarmFolder = prewarmFolder;
 exports.listAgents = listAgents;
 exports.planAgentSetting = planAgentSetting;
 exports.resolvePlanAgent = resolvePlanAgent;
@@ -187,6 +188,15 @@ function configStamp(cwd) {
         stat(process.env.OPENCODE_CONFIG);
     }
     return digest(parts.join("\n"));
+}
+function prewarmFolder() {
+    const cwd = (0, core_1.resolveFolder)()?.folder.uri.fsPath;
+    return (0, net_1.prewarmServer)()?.then(async (base) => {
+        if (base && cwd) {
+            await listAgents(cwd, base, "plan");
+        }
+        return base;
+    });
 }
 async function listAgents(cwd, base, want) {
     const key = base

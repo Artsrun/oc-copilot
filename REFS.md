@@ -5,6 +5,154 @@ actually measured, so nobody re-derives it.
 
 ---
 
+## 0.0.235: M3 — Local hidden, and the participant API watched (2026-11-02)
+
+**Dated 2026-11-02. Shipped in 0.0.235.** Read, not run in a VS Code window.
+
+**When VS Code shows Local** (the 1.144.0 linux-x64 bundle, `workbench.desktop.
+main.js`, read 0.0.232): `chat.editor.localAgent.enabled` defaults to `true`
+(`experiment: startup`), and the Local target is visible while it is not false
+unless policy forces Local on. Local is policy-disabled when the managed
+`temporaryAllowLocalHarness` is false, or when managed `sandbox.enabled` or a
+non-empty `permissions.deny` applies without the `temporaryDefaultToLocalHarness`
+policy. Those are read through VS Code's managed-settings service; whether an
+extension's `getConfiguration` sees them was not measured, so the notice reads
+only `chat.editor.localAgent.enabled`.
+
+**The tripwire.** `scripts/check-vscode-api.js` on `vscode.d.ts` from main
+(1.146.0 dev, 753,651 chars): all five declarations present, none deprecated.
+Made to go red first: one `@deprecated` added to `createChatParticipant`'s doc
+→ "FAIL … deprecated", exit 1; `ChatFollowupProvider` renamed → exit 1. Live
+fetch of main: unchanged. `@types/vscode` latest is 1.144.0 (installed 1.138.0):
+`tsc --noEmit` passes against it, and it carries no `@deprecated` there either.
+
+---
+
+## 0.0.234: the first turn's MCP tools on 2.2.x come from a folder request (2026-11-02)
+
+**Dated 2026-11-02. Fixed in 0.0.234.** Linux, the scripted model, 2.2.5 and
+2.0.29 from scratch prefixes, the probe's MCP config (gitScan, a writer).
+
+A fresh 2.2.5 server, then plan calling gitScan (0.0.233 measured: `GET
+/api/mcp` + 1000 ms ran, a plain 3 s or 8 s wait did not). With `listAgents`
+for the folder first (`GET /api/agent`, what prewarm now sends): + 0 ms none
+(two runs), + 500, 1500 and 3000 ms ran. So any folder request starts its MCP
+servers, and their tools reach a turn 0.5–1 s later.
+
+`prewarmFolder` (`agents.ts`) runs `prewarmServer`, then `listAgents` for the
+folder; activation schedules it. `probe-opencode2.js`, a fresh server and 1 s
+before the first turn: 2.2.5 without the read gitScan not offered, with it ran;
+2.0.29 not offered both ways (no MCP by name before 2.2.0); 23 of 23 on each.
+The suite's `PV` fake records agent requests: red first (`[]`), green after.
+The scheduling tripwire passed in the red run only because it reads
+`src/extension.ts`, which was already edited.
+
+---
+
+## 0.0.233: before 2.2.0 the agent list loads in stages (2026-11-02)
+
+**Dated 2026-11-02. Fixed in 0.0.233.** Linux, the scripted model, each
+version installed into a scratch prefix and removed after.
+
+**Bisect** (fresh server, `GET /api/agent?location[directory]=`, plan's rules
+judged as the bridge does): 2.0.29 7 rules, unverified · 2.1.2 7 · 2.1.4 7 ·
+**2.2.0 40, enforced** · 2.2.1 40 · 2.2.5 40. Last bad 2.1.4, first good 2.2.0.
+
+**The mechanism, polled every 50 ms from the server's start** (three runs each,
+the MCP config of the probe included):
+
+| Version | `GET /agent` stages |
+| --- | --- |
+| 2.0.29 | `[]` at 164–204 ms · 7 agents, plan 7 rules (stock) at 441–473 ms · plan 39 at 686–720 ms |
+| 2.1.4 | `[]` at 139–149 ms · plan 7 at 345–394 ms · plan 39 at 549–623 ms |
+| 2.2.0 | plan 40 at 855–964 ms, the first answer |
+| 2.2.5 | plan 40 at 851–1071 ms, the first answer |
+
+The load starts with the folder's first request: with no request, a 3 s wait
+changed nothing; a session list or create first changed nothing either, and
+the build turn of 0.0.232's experiment only gave the load time to finish.
+`oc-api`'s 2.x `agents` took the first non-empty list, the stock stage, which
+`judgeReadOnly` calls `unverified`: the default plan turn was refused, and
+by the code (not run), the listing stayed cached for `LISTED_TTL_MS` (60 s),
+so a Retry within that minute was refused too.
+Only ever the safe way: the stock stage has plan's own writing rules.
+
+**Fix:** below 2.2.0, or with no version, `agents` reads until the list has
+been the same for `AGENTS_SETTLE_MS` (1000 ms, ~3.5 times the longest stock
+stage measured), once per server start and folder; 2.2.0+ reads once.
+After it, the bisect's own check on a fresh server: 2.0.29 and 2.1.4 plan 39
+rules, `enforced`. `probe-opencode2.js` 21 of 21 on 2.0.29, 2.1.4, 2.2.0 and
+2.2.5, "plan as the first turn on a fresh server: sent" on each;
+`probe-readonly.js` 9 of 9 on 2.2.5. The suite's fake 2.x now serves the stages
+below 2.2.0: `TW` went red first (2 checks: 3 reads, refused), green after.
+
+**MCP by name starts at 2.2.0 too** (2.0.29, 2.1.4: plan offered none; 2.2.0,
+2.2.5: the `readOnlyTools` one). **And on 2.2.x the first turn after a start is
+offered no MCP tool.** A folder's first request starts its MCP servers, and
+their tools reach a turn 0.5–1 s later (2.2.5, plan calling gitScan: first turn
+none; after `GET /api/mcp` + 0 or 500 ms none, + 1000 or 2000 ms ran; no
+request and a 3 s or 8 s wait: none). Prewarm only starts the server, so a
+user's first turn has no MCP tools either. Not fixed here: prewarm could read
+the folder's agent list (it starts the folder, and settles the list below 2.2.0).
+
+---
+
+## 0.0.232: OpenCode 1.19.5 and 2.2.5, probe rows, 2.0.x listing (2026-11-02)
+
+**Dated 2026-11-02. Shipped in 0.0.232.** Linux, Node 22.22.0, the scripted
+model, binaries installed into a scratch prefix (`npm i --prefix`): opencode-ai
+1.19.5, @opencode/cli 2.2.5 and 2.0.29.
+
+**Ranges.** 1.19.5: `probe-readonly.js` 48 of 48; `record-wire-fixtures.js
+--v1` on 1.19.5 against `wire-v1.json` (1.19.0): 42 frames each, 0 field
+differences. 2.2.5: `probe-readonly.js` 9 of 9 over ACP; `--v2` against
+`wire-v2.json` (2.2.0): 5 turns, 25 event types, 0 differences (the frames are
+JSON strings: a diff must parse each). `wire-v2.json` is now 2.2.5's.
+
+**The ACP `git status` row was a wrong expectation.** `acp · plan · git
+status` expected "runs" inside `acp(true, …)`, where the overrides deny `bash`
+and `shell`; it was a copy of the adopted-server row (`probe-readonly.js`,
+the server the probe starts without overrides, where plan's shell is open).
+2.2.5 got "unclear (no tool result)": plan is offered `git-scan_gitScan, glob,
+grep, read, skill, subagent, webfetch, websearch`. A scratch control, the same
+step with `enforceReadOnly` false: **runs** (544 ms). The scripted model calls
+`shell` on 2.x when offered (`probe-model.js`), so no naming cause. 2.2.5 also
+runs a call to a tool named `bash` as `shell` (changelog); an enforced plan is
+offered neither, so it cannot reach a read-only turn.
+
+**MCP on read-only turns differs by 2.x version.** 2.2.5 offers plan the
+`readOnlyTools` MCP tool by name (gitScan ran) and not `w_touch`, which is not
+listed; listed, `w_touch` wrote. 2.0.29 offers plan no MCP tool by name
+(Code Mode's `execute` holds them and is denied). Build on 2.2.5 is offered
+no MCP tool by name; on 1.19.5 it is (`w_touch` wrote).
+
+**2.0.29 lists a fresh server's agents with their built-in rules.** (The cause
+given below is wrong; 0.0.233 measured it: a staged load, not a missing run.) The
+`serve` process held the right `OPENCODE_CONFIG_CONTENT` (read from
+`/proc/<pid>/environ`: `agents.plan.permissions`, `* deny` first), yet `GET
+/agent` gave plan 7 built-in rules, judged `unverified`, and the plan turn was
+refused before sending. After one build turn: 39 rules, `enforced`. A session
+list or a session create first: still 7. `debugLog` and a 3 s wait: no change.
+2.2.5: sent, every way. So on 2.0.x a plan turn first after a server start is
+refused, and a Retry is refused again until some turn has run; nothing unsafe
+is sent. Not fixed here: before `opencode2` is on by default (M2), either the
+2.x minimum moves to a version that lists at once (bisect 2.0.29–2.2.5), or a
+start makes 2.0.x load its agents some other way.
+
+**One unreproduced identity timeout.** The first 2.2.5 probe run's first turn
+was refused: `--version` did not answer within 6 s; the next check took 503
+ms. Ten cold and warm `--version` runs afterwards: 128–189 ms.
+
+**Probe rows added** (`probe-opencode2.js`, measured on 2.2.5, 2.0.29 and
+1.19.5): plan cannot read outside the folder or `.env`, directly or through
+`explore`, with a plan read inside as the control; `/dev` reads, writes and
+runs outside the folder (`known ·`: not sandboxed; OpenCode 2 allows
+`external_directory` by default, migrate-v1); the MCP rows above; the fresh
+server row above. "plan → explore · git status runs" asserted a subagent
+answered, not that the command ran: renamed to what it checks.
+
+---
+
 ## 0.0.231: the Copilot harness and the participant API (2026-10-29)
 
 **Dated 2026-10-29. Phase 0 shipped in 0.0.231.** Read, not measured in a live

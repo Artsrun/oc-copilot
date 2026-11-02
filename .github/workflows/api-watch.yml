@@ -1,0 +1,30 @@
+# The chat participant API @opencode is built on, nightly and on demand (M3).
+# VS Code's docs call participants deprecated (the Copilot harness has none);
+# these jobs fail the day the API itself changes: a declaration gone, a new
+# @deprecated tag on vscode.d.ts's main branch, or this code no longer
+# typechecking against the newest released @types/vscode. Nothing ships from here.
+name: api-watch
+on:
+  schedule:
+    - cron: "41 4 * * *"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  chat-api:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: vscode.d.ts on main still declares the participant API, not deprecated
+        run: node scripts/check-vscode-api.js
+      - name: Typecheck against the newest released @types/vscode
+        run: |
+          npm i --no-save --no-audit --no-fund @types/vscode@latest
+          node -e 'console.log("@types/vscode", require("./node_modules/@types/vscode/package.json").version)'
+          npx tsc --noEmit -p .

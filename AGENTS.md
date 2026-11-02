@@ -145,7 +145,9 @@ does not run the suite.
 
 CI runs the same gate (`.github/workflows/ship.yml`: Linux, Windows, macOS, every
 push and pull request) and, nightly, the real-binary probes, one job per
-OpenCode version (`probes.yml`: 1.19.0, 2.0.29 and 2.2.0 must pass, the latest 2.x may fail).
+OpenCode version (`probes.yml`: 1.19.0, 1.19.5, 2.0.29 and 2.2.5 must pass, the latest 2.x may fail),
+and the chat participant API (`api-watch.yml`: `scripts/check-vscode-api.js` on
+`vscode.d.ts`'s main branch, and a typecheck against the newest `@types/vscode`).
 
 - The suite takes well over 30 s; do not judge it by a 30 s timeout.
 - It **aborts on the first exception**: fix crashes first, then red checks.
@@ -175,7 +177,7 @@ A probe measures one thing on this machine and prints it. Paste its output.
 | `scripts/probe-subtask-lanes.js` | Against a real server: whether a `subtask` part runs a project-local subagent (#21659), before lanes move to server-side delegation. |
 | `scripts/probe-readonly.js` | Against a real binary, through `out/` (`runOpenCode`, `ensureServer`, `createServerSession`): can a read-only turn write — cold run, managed serve, an adopted one, another window's; 2.x over ACP. One line per row; control rows must be `CREATED`. `npm run compile` first. |
 | `scripts/probe-acp.js` | `opencode acp` over JSON-RPC: handshake, prompt, cancel, load; the transcript as JSONL. Also the ACP client `probe-readonly.js` uses. |
-| `scripts/probe-opencode2.js` | With `opencode2`, against a real 2.x through `out/`: text turn, plan writes (absent ×3), `/dev` and enforcement-off controls (`CREATED`), a subagent, Stop, `/sessions`. |
+| `scripts/probe-opencode2.js` | With `opencode2`, against a real 2.x through `out/`: text turn, plan writes (absent ×3), `/dev` and enforcement-off controls (`CREATED`), a subagent, Stop, `/sessions`; reads outside the folder and `.env` (refused), `/dev` outside (known), MCP only via `readOnlyTools`, plan first on a fresh server. Expectations that differ by version name the version measured. |
 | `scripts/record-wire-fixtures.js` | Records a real 1.x and 2.x server's frames per scripted turn into `scripts/fixtures/wire-v*.json`, the `TW` fakes' input. |
 | `scripts/probe-model.js` | The scripted OpenAI-compatible model both use (`[[probe:<action>]]`): every tool attempt certain, no provider, no cost. |
 
@@ -310,9 +312,20 @@ history belongs in `CHANGELOG.md`, not in the source.
   also end in catch-all denies. A marker alone from an older server proves
   nothing. Evidence is scoped to its endpoint, directory and selected agent (`RE`).
 - **MCP tools are named `<server>_<tool>` on 1.x** (`git-scan_gitScan`); the
-  overrides deny them unless `readOnlyTools` lists them. On 2.x MCP tools live
+  overrides deny them unless `readOnlyTools` lists them. On 2.0.x MCP tools live
   inside Code Mode's `execute`, which can POST anywhere and create worktrees:
-  denied on read-only turns, so 2.x read-only turns have no MCP tools.
+  denied on read-only turns, so before 2.2.0 read-only turns have no MCP tools.
+  From 2.2.0 plan is offered a `readOnlyTools` MCP tool by name, and no other
+  (2.0.29, 2.1.4 none; 2.2.0, 2.2.5 by name; `probe-opencode2.js`). A folder's
+  MCP servers start with its first request, and their tools reach a turn 0.5–1 s
+  later: prewarm reads the folder's agents for that (`prewarmFolder`, `PV`).
+- **Before 2.2.0 a folder's agent list loads in stages**, started by its first
+  `GET /agent`: `[]`, then the stock rules alone for ~200–280 ms, then with the
+  injected overrides (2.0.29: plan 7 → 39 rules; bisected: 2.1.4 the last, 2.2.0
+  the first that answers loaded). Taking the first non-empty list judged plan
+  `unverified` and refused the default first turn — never the unsafe way. So
+  those versions are read until the list holds for `AGENTS_SETTLE_MS`, once per
+  server start and folder (`TW`, REFS 0.0.233).
 - **Nobody can answer OpenCode's prompts from a chat turn**: sessions the bridge
   creates deny question/plan_enter/plan_exit, and every ask of the session and its
   subagents is answered (`HQ`).
@@ -423,6 +436,10 @@ history belongs in `CHANGELOG.md`, not in the source.
   session only. Registering it can throw on a host without the API, so it is
   guarded: activation must still register the commands and gitScan, and
   Diagnose names the harness settings (`harnessNote`, `getParticipantProblem`, `HR`).
+  With `chat.editor.localAgent.enabled` false VS Code offers no Local session
+  (1.144.0 bundle), Send stays disabled and no turn of ours runs: activation says
+  so once, outside chat (`localSessionProblem`). Nightly, `api-watch.yml` fails
+  when `createChatParticipant` gains `@deprecated` or this code stops typechecking.
 - **A quick pick filters its list by what is typed** — the composer's model
   items are `alwaysShow`, or typing a task would hide every model.
 

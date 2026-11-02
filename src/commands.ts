@@ -6,7 +6,7 @@ import { mark } from "./followups";
 import { resolveExecutable, runCapture } from "./proc";
 import { dataFolderRefusal, knownServerBase, lastServeFailure, majorVersionNote } from "./net";
 import { api } from "./oc-api";
-import { getActiveSession, getParticipantProblem, harnessNote } from "./session";
+import { getActiveSession, getParticipantProblem, harnessNote, localSessionProblem } from "./session";
 import { catalogAge, getModelCatalog } from "./models";
 import { discoverOpenCodeEnv, summariseEnv } from "./env";
 import { ListedWorktree, listWorktrees, removeWorktree, worktreeChanges, worktreeLabel } from "./worktree";
@@ -102,12 +102,15 @@ export async function diagnose(): Promise<void> {
     lines.push("", "## Runtime", "", "| Check | Result |", "| --- | --- |");
     lines.push(row("vscode", `${vscode.version ?? "?"} · ${vscode.env?.appName ?? "?"}`));
     const problem = getParticipantProblem();
+    const local = localSessionProblem();
     lines.push(
         row(
             "chat harness",
             problem
                 ? `${mark("fail")} @opencode not registered: ${truncate(problem, 80).replace(/\|/g, "\\|")} — this host has no chat participants; palette commands and gitScan still work`
-                : "@opencode answers in a **Local** session only: the Copilot harness has no chat participants (README, *Copilot harness*)"
+                : local
+                    ? `${mark("fail")} @opencode is registered, but ${local}: turn the setting on (README, *Copilot harness*)`
+                    : "@opencode answers in a **Local** session only: the Copilot harness has no chat participants (README, *Copilot harness*)"
         )
     );
     lines.push(row("harness settings", harnessNote()));

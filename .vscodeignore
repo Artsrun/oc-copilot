@@ -52,6 +52,7 @@ scripts/probe-acp.js
 scripts/probe-model.js
 scripts/probe-opencode2.js
 scripts/record-wire-fixtures.js
+scripts/check-vscode-api.js
 scripts/fixtures/**
 scripts/update.js
 scripts/verify-chat-output.js

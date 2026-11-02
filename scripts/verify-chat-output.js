@@ -6505,14 +6505,18 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         // v212: 1.18.35 → 1.19.0 was diffed and a 1.19.0 server measured (REFS).
         v5.version = "1.19.0";
         const vn190 = await v5Turn("explain the cart for vn 1.19");
-        v5.version = "1.19.2";
+        // 0.0.232: 1.19.5 measured (probe-readonly 48 rows, wire 0 differences from 1.19.0; REFS).
+        v5.version = "1.19.5";
+        const vn195 = await v5Turn("explain the cart for vn 1.19.5");
+        v5.version = "1.19.6";
         const vn1 = await v5Turn("explain the cart for vn new");
         const vn2 = await v5Turn("explain the cart for vn again");
         v5.version = undefined;
         add("VN a version inside the tested range says nothing", !/outside the versions/.test(vn0.md));
         add("VN 1.18.35 says nothing", !/outside the versions/.test(vn35.md) && /answered by/.test(vn35.md));
-        add("VN 1.19.0, the newest diffed and measured, says nothing", !/outside the versions/.test(vn190.md) && /answered by/.test(vn190.md));
-        add("VN …one outside it says so once per window, and the turn runs", /OpenCode 1\.19\.2 is outside the versions this bridge was tested with \(1\.18\.27–1\.19\.0\)/.test(vn1.md) && /answered by/.test(vn1.md) && !/outside the versions/.test(vn2.md));
+        add("VN 1.19.0 says nothing", !/outside the versions/.test(vn190.md) && /answered by/.test(vn190.md));
+        add("VN 1.19.5, the newest measured, says nothing", !/outside the versions/.test(vn195.md) && /answered by/.test(vn195.md));
+        add("VN …one outside it says so once per window, and the turn runs", /OpenCode 1\.19\.6 is outside the versions this bridge was tested with \(1\.18\.27–1\.19\.5\)/.test(vn1.md) && /answered by/.test(vn1.md) && !/outside the versions/.test(vn2.md));
 
 
         // demux hands unattributed events to every subscriber, and v184 counted
@@ -8507,8 +8511,8 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
             const tw7 = stream();
             await global.__handler({ prompt: "explain the cart on three [[probe:text]]" }, { history: [] }, tw7.response, tw7.token);
             const tw7Chat = plain(tw7.chatMarkdown.join(""));
-            add(`TW a 3.x with opencode2 runs on the 2.x adapter and says it is outside the tested 2.0.18–2.2.0${/Hello from the scripted model/.test(tw7Chat) ? "" : ` [chat: ${tw7Chat.slice(0, 400)}]`}`,
-                /Hello from the scripted model\./.test(tw7Chat) && /3\.0\.0 is outside the versions this bridge was tested with \(2\.0\.18–2\.2\.0\)/.test(tw7Chat));
+            add(`TW a 3.x with opencode2 runs on the 2.x adapter and says it is outside the tested 2.0.18–2.2.5${/Hello from the scripted model/.test(tw7Chat) ? "" : ` [chat: ${tw7Chat.slice(0, 400)}]`}`,
+                /Hello from the scripted model\./.test(tw7Chat) && /3\.0\.0 is outside the versions this bridge was tested with \(2\.0\.18–2\.2\.5\)/.test(tw7Chat));
             add("TW …its own `--version` was read (3.0.0), not a cached 2.x identity",
                 logLines.slice(tw7Log).some((l) => /fake-tw3\.js --version/.test(l)) && logLines.slice(tw7Log).some((l) => /CLI identity verified/.test(l)));
             ext.deactivate();
@@ -8516,9 +8520,16 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
             // (REFS): the top of that range runs without the outside-the-range line.
             process.env.FAKE_OC2_VERSION = "2.0.18";
             settings.executable = writeFake("fake-tw22.js", [], `if (!process.argv.includes('--version') || true) require(${JSON.stringify(path.join(__dirname, "fixtures", "fake-opencode2.js"))})(process.argv);\n`);
+            fs.rmSync(twRecord, { force: true });
             const tw22 = stream();
             await global.__handler({ prompt: "explain the cart on 2.2 [[probe:text]]" }, { history: [] }, tw22.response, tw22.token);
             const tw22Chat = plain(tw22.chatMarkdown.join(""));
+            // 0.0.233: before 2.2.0 the agent list loads in stages (`[]`, stock rules, then the
+            // overrides; the fake models 2.0.29's timing). The bridge took the stock stage and
+            // refused the default (plan) first turn; it now reads until the list settles.
+            const tw22Lists = twReqs().filter((r) => r.method === "GET" && r.path === "/api/agent").length;
+            add(`TW 2.0.18 lists agents in stages: the first plan turn reads past the stock stage and is sent (${tw22Lists} reads)`,
+                tw22Lists >= 4 && /Hello from the scripted model\./.test(tw22Chat) && !/Nothing was sent/.test(tw22Chat));
             add(`TW 2.0.18 runs inside the tested range: no outside-the-range line${/Hello from the scripted model/.test(tw22Chat) ? "" : ` [chat: ${tw22Chat.slice(0, 300)}]`}`,
                 /Hello from the scripted model\./.test(tw22Chat) && !/outside the versions/.test(tw22Chat));
             {
@@ -8529,6 +8540,18 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
                 const listed = (await v2api.sessionsRaw(work, 3000)).find((x) => x.id === made.id);
                 add(`TW Close on 2.0.18 falls back to the bridge's mark and keeps the title (${JSON.stringify(listed)})`, listed?.time?.archived === 42 && listed?.title === "close me on 2.0");
             }
+            ext.deactivate();
+            // 0.0.232: 2.2.5 measured (probe-opencode2 10 rows, wire 0 differences from 2.2.0; REFS): the top of the range is quiet.
+            process.env.FAKE_OC2_VERSION = "2.2.5";
+            settings.executable = writeFake("fake-tw225.js", [], `if (!process.argv.includes('--version') || true) require(${JSON.stringify(path.join(__dirname, "fixtures", "fake-opencode2.js"))})(process.argv);\n`);
+            fs.rmSync(twRecord, { force: true });
+            const tw225 = stream();
+            await global.__handler({ prompt: "explain the cart on 2.2.5 [[probe:text]]" }, { history: [] }, tw225.response, tw225.token);
+            const tw225Chat = plain(tw225.chatMarkdown.join(""));
+            const tw225Lists = twReqs().filter((r) => r.method === "GET" && r.path === "/api/agent").length;
+            add(`TW 2.2.5 answers the first agent request loaded: one read, no settling wait (${tw225Lists} reads)`, tw225Lists === 1);
+            add(`TW 2.2.5 runs inside the tested range: no outside-the-range line${/Hello from the scripted model/.test(tw225Chat) ? "" : ` [chat: ${tw225Chat.slice(0, 300)}]`}`,
+                /Hello from the scripted model\./.test(tw225Chat) && !/outside the versions/.test(tw225Chat));
             ext.deactivate();
             process.env.FAKE_OC2_VERSION = "3.0.0";
             settings.executable = writeFake("fake-tw3.js", [], `if (!process.argv.includes('--version') || true) require(${JSON.stringify(path.join(__dirname, "fixtures", "fake-opencode2.js"))})(process.argv);\n`);
@@ -8984,6 +9007,7 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
             ext.deactivate();
             const pvSaved = { exe: settings.executable, port: settings.serverPort, t: settings.transport, poll: settings.serverStartupPollMs, pre: settings.prewarmServer };
             const pvSpawns = path.join(work, "pv-spawns.txt");
+            const pvAgents = path.join(work, "pv-agents.txt");
             const pvFake = writeFake(
                 "fake-pv-serve.js",
                 [],
@@ -8993,6 +9017,7 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
                 "  const t0 = Date.now();\n" +
                 "  require('http').createServer((q, s) => {\n" +
                 "    if (Date.now() - t0 < 1900) return; // booting: accepts, never answers\n" +
+                "    if (q.url.startsWith('/agent')) fs.appendFileSync(" + JSON.stringify(pvAgents) + ", q.url + '\\n');\n" +
                 "    s.setHeader('content-type', 'application/json');\n" +
                 "    const agents = Object.entries(JSON.parse(process.env.OPENCODE_CONFIG_CONTENT || '{}').agent || {}).map(([name, a]) => ({ name, permission: Object.entries(a.permission).flatMap(([permission, value]) => typeof value === 'string' ? [{permission, pattern: '*', action: value}] : Object.entries(value).map(([pattern, action]) => ({permission, pattern, action}))) }));\n" +
                 "    s.end(q.url.startsWith('/global/health') ? JSON.stringify({ healthy: true, version: '1.18.34' }) : q.url.startsWith('/agent') ? JSON.stringify(agents) : q.url.startsWith('/session') ? '[]' : '{}');\n" +
@@ -9024,6 +9049,11 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
                 typeof pvBase === "string" && /^http:\/\/127\.0\.0\.1:\d+$/.test(pvBase) && logLines.slice(pvLog).some((l) => l.includes(`prewarming the OpenCode server for ${work}`))
             );
             add(`PV a turn mid-boot joins that start: one spawn (saw ${pvSpawned})`, pvSpawned === 1 && /No OpenCode sessions in/.test(pvTurn.chatMarkdown.join("")));
+            // 0.0.234: reading a folder's agents starts its MCP servers on 2.x, whose tools
+            // reach a turn 0.5–1 s later (2.2.5): prewarm reads them, off the turn path.
+            const pvListed = fs.existsSync(pvAgents) ? fs.readFileSync(pvAgents, "utf8").trim().split("\n").filter(Boolean) : [];
+            add(`PV …then reads the folder's agent list, before any turn asks (${JSON.stringify(pvListed.slice(0, 2))})`,
+                pvListed.some((u) => u.includes(`directory=${encodeURIComponent(work)}`)));
             add("PV …and is told it waits on a boot", pvTurn.progress.some((t) => /Starting the OpenCode server/.test(t)));
             const pvOcc = lastEnv("fake-pv-serve.js").occ;
             // The overrides are the ones it started with: a subagent listed later is not read-only there until a restart.
@@ -9039,7 +9069,7 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
             add(
                 "PV activation schedules it after startup, off the activation path",
                 pvPkg.activationEvents.includes("onStartupFinished") &&
-                /setTimeout\(\(\) => void prewarmServer\(\), PREWARM_DELAY_MS\)/.test(fs.readFileSync(path.join(repoDir, "src", "extension.ts"), "utf8"))
+                /setTimeout\(\(\) => void prewarmFolder\(\), PREWARM_DELAY_MS\)/.test(fs.readFileSync(path.join(repoDir, "src", "extension.ts"), "utf8"))
             );
             ext.deactivate();
             delete vscodeStub.workspace.isTrusted;
@@ -9309,6 +9339,29 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         for (const [k, v] of saved231.commands) registeredCommands.set(k, v);
         gitScanProvider = saved231.provider;
         delete settings.defaultToCopilotHarness;
+
+        // 0.0.235 HR (M3): VS Code shows the Local session target only while
+        // chat.editor.localAgent.enabled is not false (1.144.0 bundle), and @opencode
+        // answers only there: say it outside chat, once, where the setting is.
+        const toasts235 = [];
+        vscodeStub.window.showWarningMessage = (text, ...items) => (toasts235.push([String(text), items]), Promise.resolve(undefined));
+        settings["editor.localAgent.enabled"] = false;
+        const activate235 = () => {
+            const ctx = { ...ctx231, subscriptions: [] };
+            ext.activate(ctx);
+            for (const d of ctx.subscriptions) d.dispose?.();
+        };
+        activate235();
+        const first235 = toasts235.length;
+        activate235();
+        add(`HR Local hidden: one warning names chat.editor.localAgent.enabled, with Open Settings (${JSON.stringify(toasts235[0] ?? null).slice(0, 160)})`,
+            first235 === 1 && /chat\.editor\.localAgent\.enabled/.test(toasts235[0]?.[0] ?? "") && /@opencode/.test(toasts235[0]?.[0] ?? "") && (toasts235[0]?.[1] ?? []).includes("Open Settings"));
+        add("HR …said once: the next window does not repeat it", toasts235.length === 1);
+        doc231 = "";
+        await registeredCommands.get("opencodeCopilotBridge.diagnose")?.();
+        add("HR Diagnose: @opencode is registered, but VS Code offers no Local session", /\| chat harness \| \S+ @opencode is registered, but chat\.editor\.localAgent\.enabled is off/.test(doc231));
+        delete settings["editor.localAgent.enabled"];
+        vscodeStub.window.showWarningMessage = saved231.warn;
         delete vscodeStub.workspace.openTextDocument;
         delete vscodeStub.window.showTextDocument;
     }

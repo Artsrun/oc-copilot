@@ -9,7 +9,7 @@ import type * as vscode from "vscode";
 
 import { delay, logChannel, stamp } from "./core";
 import { toV1Rules, toV2Rules } from "./enforce";
-import { connectSse, httpGetJson, httpPostJson, httpRequestJson, serverAuth, serverVersion, withDirectory } from "./net";
+import { connectSse, currentServerGeneration, httpGetJson, httpPostJson, httpRequestJson, serverAuth, serverVersion, withDirectory } from "./net";
 
 // A session id is untrusted (stdout, server, replayed metadata). In a URL path
 // `..` walks to another endpoint; in argv a leading `-` is a flag. Every site
@@ -159,6 +159,19 @@ const v1Messages = (list: unknown): unknown[] =>
                 parts: (Array.isArray(m.content) ? m.content : []).filter((c: { type?: unknown }) => c?.type === "text" || c?.type === "reasoning")
             });
 
+// Before 2.2.0 a folder's agents load in stages, started by its first request:
+// `[]`, then the stock rules alone for ~200–280 ms, then with the injected
+// overrides (2.0.29, 2.1.4 measured; 2.2.0 and 2.2.5 answer the first request
+// loaded). The stock stage judged "unverified" and refused the first plan turn,
+// so those versions are read until the list has not changed for AGENTS_SETTLE_MS, once
+// per server start and folder (REFS 0.0.233).
+const AGENTS_SETTLE_MS = 1000;
+const agentsSettled = new Set<string>();
+const loadsAgentsAtOnce = (base: string): boolean => {
+    const v = serverVersion(base)?.match(/^v?(\d+)\.(\d+)\./);
+    return Boolean(v) && (Number(v?.[1]) > 2 || (Number(v?.[1]) === 2 && Number(v?.[2]) >= 2));
+};
+
 const v2 = (base: string): ServerApi => {
     const auth = (): Record<string, string> => serverAuth(base) ?? {};
     const url = (path: string, query: Record<string, string | number | undefined> = {}): string => {
@@ -177,15 +190,30 @@ const v2 = (base: string): ServerApi => {
             const info = await httpGetJson<{ version?: unknown }>(url("/info"), timeoutMs, auth());
             return { healthy: typeof info?.version === "string", version: info?.version };
         },
-        // A folder's agents load lazily: 400 ms after boot the list was `[]` (2.0.29).
+        // A folder's agents load lazily: 400 ms after boot the list was `[]` (2.0.29),
+        // and before 2.2.0 the first non-empty list is not the last (AGENTS_SETTLE_MS).
         agents: async (cwd, timeoutMs) => {
             const until = Date.now() + timeoutMs;
+            const key = `${base}\0${currentServerGeneration()}\0${cwd}`;
+            const settle = !agentsSettled.has(key) && !loadsAgentsAtOnce(base);
             let found: Array<Record<string, unknown>> = [];
-            while (!found.length && Date.now() < until) {
+            let seen = "";
+            let since = 0;
+            while (Date.now() < until) {
                 found = data<Array<Record<string, unknown>>>(await get(at("/agent", cwd), timeoutMs)) ?? [];
-                if (!found.length) {
-                    await delay(150);
+                if (found.length && !settle) {
+                    break;
                 }
+                if (found.length) {
+                    const now = JSON.stringify(found);
+                    if (now !== seen) {
+                        [seen, since] = [now, Date.now()];
+                    } else if (Date.now() - since >= AGENTS_SETTLE_MS) {
+                        agentsSettled.add(key);
+                        break;
+                    }
+                }
+                await delay(150);
             }
             return found.map((a) => ({ name: a.id, mode: a.mode, hidden: a.hidden === true, permission: toV1Rules(a.permissions) }));
         },

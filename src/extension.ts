@@ -2,7 +2,7 @@ import * as vscode from "vscode";
 
 import { logChannel, resolveFolder, setExtensionContext, setLogChannel, stamp } from "./core";
 import { expandShimVar, readShimTarget, resolveExecutable, tokenizeCmdLine } from "./proc";
-import { PREWARM_DELAY_MS, httpGetJson, httpPostJson, knownServerBase, lastServeLine, prewarmServer, setStartupDeadline, stopServer, withDirectory } from "./net";
+import { PREWARM_DELAY_MS, httpGetJson, httpPostJson, knownServerBase, lastServeLine, setStartupDeadline, stopServer, withDirectory } from "./net";
 import { api, serverMajor } from "./oc-api";
 import { toolFilePath } from "./metrics";
 import { discoverOpenCodeEnv, openCodeConfigModel, readJsonc, summariseEnv } from "./env";
@@ -14,6 +14,7 @@ import {
     getParticipantProblem,
     handoffChain,
     harnessNote,
+    localSessionProblem,
     notifyIfSlow,
     resolveSessionState,
     setParticipantProblem,
@@ -23,7 +24,7 @@ import { contextNote, effortFor, getModelCatalog, higherEffort, modelLabel, pars
 import { compactSession, emitKeyedDelta, isMissingSessionError, isMissingSessionRun, noteTask, partDeltaOf, providerRetryOf, safeSessionId, sessionPath, sessionRoot, setReplyConfirmWait, stepDetail, readOnlyReach, turnPermission } from "./runs";
 import { coldEnforcement, enforcedConfigContent, readOnlyLeaks } from "./enforce";
 import { laneProblem } from "./compose";
-import { laneAgentProblem, parseAgentList } from "./agents";
+import { laneAgentProblem, parseAgentList, prewarmFolder } from "./agents";
 import { CHILD_MAX_ROWS, GROUP_MAX_ROWS, KIND_COMMAND_NAMES, LANE_ANSWER_CAP, LANE_STORE_CAP, SETTLE_MS, chatStream, commandAliases, outcomeOf, recallLanes, rememberLanes, resolveAlias, retryLanesPrompt, ROUTED_COMMANDS, followupsFor, resetChipBackoff, nextMilestone, splitLanes, startHeartbeat, stepLabel, supportsTaskProgress, suggestFollowups, thoughtLine, SLASH_COMMANDS } from "./chat-boot";
 import { handleChat } from "./chat";
 import { badge, chipOf, createBadger, followupsProblems } from "./followups";
@@ -38,6 +39,8 @@ import { registerGitScan } from "./git-scan-mcp";
 // registration (including the follow-up chips keyed on the turn's metadata), the
 // __test handle the suite reads, and shutdown; the chat turn, control commands
 // and rendering helpers live in ./chat, ./chat-commands and ./chat-boot.
+
+const LOCAL_NOTICE_KEY = "opencode.localSessionNotice";
 
 export function activate(context: vscode.ExtensionContext): void {
     setExtensionContext(context);
@@ -62,6 +65,18 @@ export function activate(context: vscode.ExtensionContext): void {
             "OpenCode: this VS Code offers no chat participants, so @opencode cannot run. The palette commands and gitScan still work; OpenCode: Diagnose says why."
         );
     } else {
+        // Out-of-view news, said once per reason (HR): with Local hidden, Send stays
+        // disabled for @opencode and no chat turn of ours ever runs to say it.
+        const local = localSessionProblem();
+        if (local && context.globalState?.get<string>(LOCAL_NOTICE_KEY) !== local) {
+            void context.globalState?.update(LOCAL_NOTICE_KEY, local);
+            void vscode.window.showWarningMessage?.(
+                `OpenCode: ${local}, and @opencode answers only there. Turn the setting on, or see OpenCode: Diagnose.`,
+                "Open Settings"
+            )?.then((pick) => pick && vscode.commands.executeCommand("workbench.action.openSettings", "chat.editor.localAgent.enabled"));
+        } else if (!local && context.globalState?.get<string>(LOCAL_NOTICE_KEY)) {
+            void context.globalState?.update(LOCAL_NOTICE_KEY, undefined);
+        }
         // claim:inline-participant — @opencode in inline chat (Ctrl+I). It needs the
         // chatParticipantAdditions proposal; registering it must never take the
         // panel participant down.
@@ -76,7 +91,7 @@ export function activate(context: vscode.ExtensionContext): void {
     registerCommands(context);
     registerGitScan(context);
     // claim:prewarm-server — off the activation path, cancelled on deactivate.
-    const prewarm = setTimeout(() => void prewarmServer(), PREWARM_DELAY_MS);
+    const prewarm = setTimeout(() => void prewarmFolder(), PREWARM_DELAY_MS);
     prewarm.unref?.();
     context.subscriptions.push({ dispose: () => clearTimeout(prewarm) });
 }
@@ -193,7 +208,8 @@ export const __test = {
     setReplyConfirmWait,
     resetChipBackoff,
     CHILD_MAX_ROWS,
-    prewarmServer,
+    // What activation schedules: the server, then the folder's agent list.
+    prewarmServer: prewarmFolder,
     createLeakGate,
     CONTEXT_HOLD_BYTES,
     createEchoGate,

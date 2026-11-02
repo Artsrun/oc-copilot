@@ -41,6 +41,7 @@ const { runOpenCode } = out("run-cli.js");
 const { ensureServer, stopServer } = out("net.js");
 const { listSessions, sessionExcerpt } = out("sessions.js");
 const { compactSession } = out("server-session.js");
+const { runCapture } = out("proc.js");
 
 (async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "ocb-probe-oc2-"));
@@ -60,9 +61,34 @@ const { compactSession } = out("server-session.js");
     });
     delete process.env.OPENCODE_CONFIG_CONTENT;
     const model = await startScriptedModel({});
-    fs.writeFileSync(path.join(project, "opencode.json"), JSON.stringify(projectConfig(model.url), null, 1));
+    // MCP (0.0.232): gitScan is in `readOnlyTools`; `w_touch` is not, and writes a file when called.
+    // Written before the first server starts: a running server reads its config once.
+    const mcpTarget = path.join(project, "w-mcp.txt");
+    const writerMcp = path.join(root, "mcp-writer.js");
+    fs.writeFileSync(writerMcp,
+        "const fs = require('fs'); const out = process.argv[2];\n" +
+        "const reply = (id, result) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id, result }) + '\\n');\n" +
+        "require('readline').createInterface({ input: process.stdin }).on('line', (l) => { let r; try { r = JSON.parse(l); } catch { return; } if (r.id === undefined) return;\n" +
+        "  if (r.method === 'initialize') reply(r.id, { protocolVersion: r.params?.protocolVersion || '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'w', version: '1' } });\n" +
+        "  else if (r.method === 'tools/list') reply(r.id, { tools: [{ name: 'touch', description: 'Create a marker file', inputSchema: { type: 'object', properties: {} } }] });\n" +
+        "  else if (r.method === 'tools/call') { fs.writeFileSync(out, 'written'); reply(r.id, { content: [{ type: 'text', text: 'touched' }] }); }\n" +
+        "  else reply(r.id, {}); });\n");
+    fs.writeFileSync(path.join(project, "opencode.json"), JSON.stringify({
+        ...projectConfig(model.url),
+        mcp: {
+            "git-scan": { type: "local", command: [process.execPath, path.join(__dirname, "..", "out", "git-scan-server.js"), project], enabled: true },
+            w: { type: "local", command: [process.execPath, writerMcp, mcpTarget], enabled: true }
+        }
+    }, null, 1));
 
     const rows = [];
+    // Expectations that differ by version name what was measured on each (REFS 0.0.232).
+    const version = (await runCapture(exe, ["--version"], project, 15000)).trim();
+    const [vMajor, vMinor] = (version.match(/(\d+)\.(\d+)\.\d+/) || []).slice(1).map(Number);
+    // MCP tools by name: 1.x, and 2.x from 2.2.0 (2.0.29 and 2.1.4 keep them in Code Mode's
+    // `execute`; 2.2.0 and 2.2.5 offer an allowed one by name; REFS 0.0.233).
+    const mcpByName = vMajor === 1 || vMajor > 2 || (vMajor === 2 && vMinor >= 2);
+    console.log(`opencode ${version}`);
     const target = (n) => {
         const file = path.join(project, `w-${n}.txt`);
         fs.rmSync(file, { force: true });
@@ -104,8 +130,8 @@ const { compactSession } = out("server-session.js");
             `model=${r.metrics.model} tokens=${r.metrics.tokens.input}/${r.metrics.tokens.output} error=${r.metrics.error ?? "-"} text=${JSON.stringify(r.text.slice(0, 60))}`];
     });
     const base = await ensureServer(project);
-    const version = log.find((l) => /answered after/.test(l)) ? "up" : "?";
-    console.log(`     server ${base} (${version})`);
+    const serverState = log.find((l) => /answered after/.test(l)) ? "up" : "?";
+    console.log(`     server ${base} (${serverState})`);
     await row("plan · shell echo > file", "absent", async () => {
         const f = target(1);
         const r = await turn(`[[probe:bash:${echoTo(f)}]] go`, { agent: "plan", readOnly: true });
@@ -133,9 +159,11 @@ const { compactSession } = out("server-session.js");
         const r = await turn(`[[probe:write:${f}]] go`, { autoApprove: true });
         return [wrote(f), `steps=${r.steps.join(",") || "-"}`];
     });
-    await row("plan → explore · git status runs (subagent row)", "runs", async () => {
+    // A subagent starts and its parent answers. Whether the child's `git status` ran is not
+    // measured here: the scripted model says "Done." either way (0.0.232).
+    await row("plan → explore · a subagent starts and answers", "answered", async () => {
         const r = await turn("[[probe:task@explore:bash:git status]] look", { agent: "plan", readOnly: true });
-        return [r.metrics.subagents?.count >= 1 && /Done\./.test(r.text) ? "runs" : "no", `subagents=${r.metrics.subagents?.count ?? 0} text=${JSON.stringify(r.text.slice(0, 80))}`];
+        return [r.metrics.subagents?.count >= 1 && /Done\./.test(r.text) ? "answered" : "no", `subagents=${r.metrics.subagents?.count ?? 0} text=${JSON.stringify(r.text.slice(0, 80))}`];
     });
     await row("Stop · a streaming turn returns within 1.5 s", "stopped", async () => {
         let cancel;
@@ -154,6 +182,75 @@ const { compactSession } = out("server-session.js");
         const ex = list[0] ? await sessionExcerpt(base, project, list[0].id) : {};
         return [list.length >= 1 && ex.ask ? "listed" : "no", `sessions=${list.length} ask=${JSON.stringify((ex.ask ?? "").slice(0, 40))} answer=${JSON.stringify((ex.answer ?? "").slice(0, 40))}`];
     });
+    // 0.0.232: reach outside the folder, on both majors (1.19.5 and 2.2.5 measured the same).
+    // A "refused" row only shows the secret never reached the answer; the "read" controls
+    // show the probe sees a read that worked.
+    const outside = path.join(root, "outside");
+    fs.mkdirSync(outside);
+    const secret = path.join(outside, "secret.txt");
+    fs.writeFileSync(secret, "OUTSIDE-SECRET-7Q\n");
+    fs.writeFileSync(path.join(project, ".env"), "ENV-SECRET-9Z\n");
+    const saw = (r, t) => (r.text.includes(t) ? "read" : "refused");
+    // A tool that was not offered is named in the model's reply: keep the whole list.
+    const note = (r) => `steps=${r.steps.join(",") || "-"} text=${JSON.stringify(r.text.slice(0, /tool offered/.test(r.text) ? 400 : 90))}`;
+    const plan = (action) => turn(`[[probe:${action}]] go`, { agent: "plan", readOnly: true });
+    const dev = (action) => turn(`[[probe:${action}]] go`, { autoApprove: true });
+    await row("control: plan · read README inside", "read", async () => { const r = await plan(`read:${path.join(project, "README")}`); return [/probe/.test(r.text) ? "read" : "refused", note(r)]; });
+    await row("plan · read a file OUTSIDE the folder", "refused", async () => { const r = await plan(`read:${secret}`); return [saw(r, "OUTSIDE-SECRET"), note(r)]; });
+    await row("plan → explore · read a file OUTSIDE the folder", "refused", async () => { const r = await plan(`task@explore:read:${secret}`); return [saw(r, "OUTSIDE-SECRET"), note(r)]; });
+    await row("plan · read .env inside the folder", "refused", async () => { const r = await plan(`read:${path.join(project, ".env")}`); return [saw(r, "ENV-SECRET"), note(r)]; });
+    // /dev is not sandboxed: OpenCode 2 allows `external_directory` by default (migrate-v1), and
+    // the bridge answers 1.x's asks on /dev. Recorded so a change either way shows up.
+    await row("known · /dev · read a file OUTSIDE the folder", "read", async () => { const r = await dev(`read:${secret}`); return [saw(r, "OUTSIDE-SECRET"), note(r)]; });
+    await row("known · /dev · write OUTSIDE the folder", "CREATED", async () => { const f = path.join(outside, "w.txt"); const r = await dev(`write:${f}`); return [wrote(f), note(r)]; });
+    await row("known · /dev · shell OUTSIDE the folder", "CREATED", async () => { const f = path.join(outside, "s.txt"); const r = await dev(`bash:${echoTo(f)}`); return [wrote(f), note(r)]; });
+    // MCP on read-only turns (2.2.3 moved MCP use out of `integration.use`): only `readOnlyTools` runs.
+    const mcpGot = (r, ran) => (ran ? ran : /No call tool offered/.test(r.text) ? "not offered" : "no");
+    await row("plan · the gitScan MCP tool (readOnlyTools)", mcpByName ? "runs" : "not offered", async () => { const r = await plan("call:gitScan"); return [mcpGot(r, /Working tree|Branch/i.test(r.text) && "runs"), note(r)]; });
+    await row("plan · an MCP tool outside readOnlyTools writes nothing", "absent", async () => { fs.rmSync(mcpTarget, { force: true }); const r = await plan("call:touch"); return [wrote(mcpTarget), note(r)]; });
+    // The control changes one thing: the same tool listed in readOnlyTools (overrides are per
+    // process, so a new server). On 2.2.5 build is not offered MCP tools by name at all.
+    // Before 2.2.0 a folder's agent list loads in stages (`[]`, stock rules, then the
+    // overrides); the bridge reads until it settles, so plan first on a fresh server is
+    // sent on every version (2.0.29, 2.1.4 bisected; REFS 0.0.233).
+    stopServer();
+    await row("plan as the first turn on a fresh server", "sent", async () => {
+        try {
+            const r = await plan("text");
+            return [/Hello from the scripted model/.test(r.text) ? "sent" : "no answer", note(r)];
+        } catch (error) {
+            return [/Nothing was sent/.test(error.message) ? "refused, nothing sent" : "error", error.message.slice(0, 120)];
+        }
+    });
+    stopServer();
+    settings.readOnlyTools = ["git-scan_gitScan", "w_touch"];
+    // 2.x starts a folder's MCP servers on its first request, and their tools reach a turn
+    // 0.5–1 s later: the first turn on a fresh server is offered none, and a wait with no
+    // request changes nothing (2.2.5: after GET /api/mcp, 500 ms none, 1000 ms offered).
+    if (vMajor >= 2) {
+        const mcpBase = await ensureServer(project);
+        await fetch(`${mcpBase}/api/mcp?location%5Bdirectory%5D=${encodeURIComponent(project)}`, { headers: out("net.js").serverAuth(mcpBase) ?? {} }).catch(() => undefined);
+        await new Promise((r) => setTimeout(r, 2000));
+    }
+    await row("control: plan · the same MCP tool, listed in readOnlyTools", mcpByName ? "CREATED" : "not offered", async () => {
+        fs.rmSync(mcpTarget, { force: true });
+        const r = await plan("call:touch");
+        return [fs.existsSync(mcpTarget) ? "CREATED" : mcpGot(r, false), note(r)];
+    });
+    delete settings.readOnlyTools;
+    // 0.0.234: prewarm reads the folder's agent list (prewarmFolder), which starts its MCP
+    // servers. The first message comes after it: 1 s stands for that gap here (2.2.5: 0.5 s
+    // was enough; a wait with no request starts nothing). The pair isolates the read.
+    const firstTurnMcp = async (readList) => {
+        stopServer();
+        const warmed = await out("net.js").warmServer(project);
+        if (readList && warmed) await out("agents.js").listAgents(project, warmed, "plan");
+        await new Promise((r) => setTimeout(r, 1000));
+        const r = await plan("call:gitScan");
+        return [mcpGot(r, /Working tree|Branch/i.test(r.text) && "runs"), note(r)];
+    };
+    await row("control: first turn, no agent list read before it · gitScan", vMajor === 1 ? "runs" : "not offered", () => firstTurnMcp(false));
+    await row("prewarm: first turn after the folder's agent list was read · gitScan", mcpByName ? "runs" : "not offered", () => firstTurnMcp(true));
     stopServer();
     settings.enforceReadOnly = false;
     await row("control: enforceReadOnly off · plan shell echo > file", "CREATED", async () => {

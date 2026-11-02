@@ -50,10 +50,21 @@ module.exports = (argv) => {
         general: [R("*", "allow")]
     };
     const modes = { build: "primary", plan: "primary", explore: "subagent", general: "subagent" };
-    const agentInfo = (id) => ({
+    const agentInfo = (id, stockOnly = false) => ({
         id, name: id, mode: modes[id], hidden: false,
-        permissions: [...stock[id], ...(process.env.FAKE_OC2_DROP === "1" ? [] : occ.agents?.[id]?.permissions ?? []), R("browser", "deny")]
+        permissions: [...stock[id], ...(stockOnly || process.env.FAKE_OC2_DROP === "1" ? [] : occ.agents?.[id]?.permissions ?? []), R("browser", "deny")]
     });
+    // Before 2.2.0 a folder's agents load in stages, started by its first request: `[]`, then
+    // the stock rules alone for ~200–280 ms, then with the injected ones (2.0.29, 2.1.4
+    // measured). 2.2.0+ answers the first request with the loaded list (REFS 0.0.233).
+    const STAGED = (([a, b]) => a === 2 && b < 2)(VERSION.split(".").map(Number));
+    const firstAsked = new Map();
+    const agentList = (dir) => {
+        if (!STAGED) return Object.keys(stock).map((id) => agentInfo(id));
+        if (!firstAsked.has(dir)) firstAsked.set(dir, Date.now());
+        const age = Date.now() - firstAsked.get(dir);
+        return age < 200 ? [] : Object.keys(stock).map((id) => agentInfo(id, age < 450));
+    };
 
     const sessions = new Map();
     const clients = new Set();
@@ -114,7 +125,7 @@ module.exports = (argv) => {
                 res.on("close", () => clients.delete(res));
                 return;
             }
-            if (p === "/agent") return send(200, { location: { directory: u.searchParams.get("location[directory]") }, data: Object.keys(stock).map(agentInfo) });
+            if (p === "/agent") return send(200, { location: { directory: u.searchParams.get("location[directory]") }, data: agentList(u.searchParams.get("location[directory]")) });
             const agent = p.match(/^\/agent\/([^/]+)$/);
             if (agent) return stock[agent[1]] ? send(200, { data: agentInfo(agent[1]) }) : send(404, { _tag: "AgentNotFoundError" });
             if (p === "/model") return send(200, { data: [{ id: "scripted", modelID: "scripted", providerID: "probe", name: "Scripted", limit: { context: 64000, output: 4096 }, variants: [{ id: "high" }], enabled: true }] });

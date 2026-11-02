@@ -3,6 +3,96 @@
 Full release history, newest first; releases before the last one are condensed
 to their summary and headlines. The README ships the last five.
 
+### 0.0.235
+
+M3 of the harness work: say outside chat when `@opencode` cannot be reached,
+and watch the participant API nightly.
+
+- **Local hidden, said once** (`localSessionProblem`, `session.ts`): the 1.144.0
+  bundle shows the Local session target while `chat.editor.localAgent.enabled`
+  is not false. With it false, Send stays disabled for `@opencode` and no turn
+  of ours runs, so activation shows one warning naming the setting (Open
+  Settings), remembered per reason in `globalState`; Diagnose's `chat harness`
+  row names it. Managed sandbox or permissions settings also disable Local; this
+  does not read them. Checks `HR` (red first: 3).
+- **`api-watch.yml`, nightly:** `scripts/check-vscode-api.js` fails when
+  `vscode.d.ts` on main drops `createChatParticipant`, `ChatParticipant`,
+  `ChatResponseStream`, `ChatFollowupProvider` or `ChatRequestHandler`, or gives
+  one `@deprecated`; then a typecheck against the newest `@types/vscode`.
+  Measured: main as read 2026-11-02 unchanged; a copy with one `@deprecated`
+  and a copy with a renamed interface each fail (exit 1); `tsc --noEmit` passes
+  against `@types/vscode` 1.144.0.
+- Not in this version: freezing the participant (bug fixes only) waits for
+  Jan's answer (Q2).
+
+### 0.0.234
+
+The first turn after VS Code starts has the folder's MCP tools on OpenCode 2.2.
+
+- **Prewarm reads the folder's agent list** (`prewarmFolder`, `agents.ts`):
+  activation schedules the server's start and then `listAgents` for the
+  folder. On 2.x a folder's MCP servers start with its first request and their
+  tools reach a turn 0.5–1 s later; prewarm made no such request, so the first
+  turn had none. On 2.2.5: `listAgents`, then a plan turn calling gitScan,
+  after 0 ms none (twice), after 500, 1500 or 3000 ms it ran. Below 2.2.0 the
+  same read settles the staged agent list off the turn path (0.0.233). Checks
+  `PV` (red first: no agent request after the start; the scheduling tripwire).
+- **Probe rows** (`probe-opencode2.js`): the first turn on a fresh server, with
+  and without the agent list read before it, each after 1 s.
+
+### 0.0.233
+
+The first plan turn on OpenCode 2.0.x and 2.1.x is sent again.
+
+- **Fixed: before 2.2.0 the default first turn after a server start was
+  refused.** Those versions load a folder's agent list in stages: `[]`, then
+  the stock rules alone for ~200–280 ms, then with the bridge's overrides
+  (2.0.29, 2.1.4 measured). The bridge took the first non-empty list, judged
+  plan `unverified` and sent nothing. Bisected: 2.1.4 the last affected, 2.2.0
+  the first that answers loaded. Below 2.2.0 the list is now read until it holds
+  for `AGENTS_SETTLE_MS` (1 s), once per server start and folder; 2.2.0+ reads
+  once. The fake 2.x models the stages: `TW` went red first (2 checks), green
+  after. REFS 0.0.233.
+- **0.0.232's cause was wrong:** it is not "until the server has run a turn";
+  that turn only gave the staged load time to finish.
+- **Probes:** "plan as the first turn on a fresh server" expects "sent" on every
+  version; the MCP rows split at 2.2.0, where plan is first offered MCP tools by
+  name (2.1.4 was not); the `readOnlyTools` control waits for the folder's MCP
+  servers. `probe-opencode2.js` 21 of 21 on 2.0.29, 2.1.4, 2.2.0, 2.2.5.
+- **Found, not fixed:** on 2.2.x the first turn after a server start is offered
+  no MCP tool (gitScan included): they arrive 0.5–1 s after the folder's first
+  request, and prewarm makes none (REFS 0.0.233).
+
+### 0.0.232
+
+OpenCode 1.19.5 and 2.2.5 become the tested tops, on probe runs and wire diffs
+(REFS 0.0.232), and the probes stop asserting what the bridge forbids.
+
+- **Tested ranges: 1.18.27–1.19.5 and 2.0.18–2.2.5** (`TESTED_OPENCODE`,
+  `TESTED_OPENCODE2`). `probe-readonly.js` 48 of 48 on 1.19.5; wire frames
+  recorded on 1.19.5 and 2.2.5 match the 1.19.0 and 2.2.0 fixtures field for
+  field (0 differences); `wire-v2.json` is now 2.2.5's. Checks `VN`, `TW`.
+- **Probe fixed, not relaxed: `acp · plan · git status` expected "runs"** under
+  enforced read-only, where plan has no shell by design (`ENFORCED_DENY_TOOLS`).
+  Proven with a control: the same step runs with `enforceReadOnly` off. The row
+  is now a plan `read`, the tools-offered row fails on `bash`/`shell` too (and on
+  an empty list), and the control stays. `probe-readonly.js` 9 of 9 on 2.2.5.
+- **New probe rows** (`probe-opencode2.js`): plan cannot read outside the folder
+  or `.env`, directly or through `explore`; `/dev` can read, write and run outside
+  it (recorded as known, not sandboxed); an MCP tool runs on a plan turn only when
+  `readOnlyTools` lists it, with a control that lists the writer. A row that
+  claimed "git status runs" in a subagent now says what it checks.
+- **Found, not fixed: on 2.0.x a plan turn first after a server start is
+  refused.** 2.0.29 lists a fresh server's agents with their built-in rules
+  for a moment (0.0.233: a staged load), so the read-only rules cannot be
+  verified and nothing is sent; 2.2.5 lists them at once. MCP differs too: 2.2.5 offers plan a
+  `readOnlyTools` MCP tool by name, 2.0.29 none. The probe rows expect each
+  version's measured behaviour (REFS 0.0.232); the fix is due before `opencode2`
+  is on by default.
+- **Nightly probes** (`probes.yml`): 1.19.0, 1.19.5, 2.0.29 and 2.2.5 pinned;
+  `probe-readonly.js` runs on 2.2.5 too, which caught nothing before because it
+  never ran on 2.x.
+
 ### 0.0.231
 
 VS Code's Copilot harness, the default for new chats from 1.142, has no chat

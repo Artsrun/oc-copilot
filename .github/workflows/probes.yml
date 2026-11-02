@@ -19,13 +19,21 @@ jobs:
             package: opencode-ai@1.19.0
             probe: scripts/probe-readonly.js
             optional: false
+          - cell: opencode 1.19.5 (pinned)
+            package: opencode-ai@1.19.5
+            probe: scripts/probe-readonly.js
+            optional: false
           - cell: opencode 2.0.29 (pinned)
             package: "@opencode/cli@2.0.29"
             probe: scripts/probe-opencode2.js
             optional: false
-          - cell: opencode 2.2.0 (pinned)
-            package: "@opencode/cli@2.2.0"
+          - cell: opencode 2.2.5 (pinned)
+            package: "@opencode/cli@2.2.5"
             probe: scripts/probe-opencode2.js
+            optional: false
+          - cell: opencode 2.2.5 (pinned) · read-only over ACP
+            package: "@opencode/cli@2.2.5"
+            probe: scripts/probe-readonly.js
             optional: false
           - cell: opencode 2 latest
             package: "@opencode/cli@latest"

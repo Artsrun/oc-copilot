@@ -195,8 +195,8 @@ function setStartupDeadline(ms) {
     startupDeadlineMs = ms ?? STARTUP_DEADLINE_MS;
 }
 const SLOW_START_MS = 1500;
-exports.TESTED_OPENCODE = { min: "1.18.27", max: "1.19.0" };
-exports.TESTED_OPENCODE2 = { min: "2.0.18", max: "2.2.0" };
+exports.TESTED_OPENCODE = { min: "1.18.27", max: "1.19.5" };
+exports.TESTED_OPENCODE2 = { min: "2.0.18", max: "2.2.5" };
 const serverVersions = new Map();
 const serverVersion = (base) => serverVersions.get(base);
 exports.serverVersion = serverVersion;

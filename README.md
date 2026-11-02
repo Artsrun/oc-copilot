@@ -48,7 +48,10 @@ administrator can switch that off.
 **OpenCode: Diagnose** shows whether `@opencode` is registered and what those
 two settings are, and the OpenCode log names them at activation. A VS Code
 without the participant API still gets the palette commands and gitScan, with
-one warning that `@opencode` cannot run.
+one warning that `@opencode` cannot run. With `chat.editor.localAgent.enabled`
+off, VS Code offers no Local session: the extension says so once, outside chat
+(Send stays disabled for `@opencode`, so no reply of ours could), with a button
+to the setting.
 
 ### Inline chat (Ctrl+I)  <!-- claim:inline-participant -->
 
@@ -178,6 +181,8 @@ OpenCode's server (started on demand). Debug: the output channel logs
 - **The server is up before you ask** <!-- claim:prewarm-server -->: a trusted
   window starts (or adopts) the OpenCode server a few seconds after VS Code
   starts (`prewarmServer`), so the first message does not wait for its boot.
+  It then reads the folder's agents, which also starts the folder's MCP
+  servers: on OpenCode 2.2 the first message has its MCP tools (gitScan too).
 - **Files open on click** <!-- claim:file-links -->: a workspace file the answer
   names in inline code (`src/cart.ts:42`) becomes a pill that opens it at that
   line; an accordion row that read or edited one file opens it too.
@@ -244,8 +249,8 @@ the 1.x has your credentials; if not, log it in as your organization says.
 #### Experimental: `opencode2`  <!-- claim:opencode-2-api -->
 
 With `opencodeCopilotBridge.opencode2` on, an `opencode` whose `--version`
-says 2.x is driven through its HTTP API instead (tested on 2.0.18 to 2.2.0: every
-check on 2.0.29 and 2.0.32, the nightly probe's ten rows on the others):
+says 2.x is driven through its HTTP API instead (tested on 2.0.18 to 2.2.5: every
+check on 2.0.29 and 2.0.32, the nightly probes on the others):
 
 - **One server, this window's own.** Every turn — plan, `/dev`, lanes,
   `/worktree`, `transport: cli` too — goes through the `opencode serve` the
@@ -516,7 +521,7 @@ All under `opencodeCopilotBridge.`.
 | `devAgent` | `build` | Agent `/dev` runs, always passed as `--agent`. |
 | `planAgent` | `plan` | Agent for read-only turns and `/parallel` lanes, used once OpenCode lists it (see *Read-only turns*). |
 | `readOnlySubagents` | `["explore"]` | Literal subagent names a read-only turn may start via `task`; trimmed and deduplicated, `*` and `?` rejected. With `enforceReadOnly` only agents with verified shell-free permissions are available. |
-| `opencode2` | `false` | Experimental: drive OpenCode 2 through its HTTP API (tested on 2.0.18–2.2.0) instead of refusing it — every turn through this window's own server, read-only turns only when it lists the bridge's rules (see *OpenCode 2*). |
+| `opencode2` | `false` | Experimental: drive OpenCode 2 through its HTTP API (tested on 2.0.18–2.2.5) instead of refusing it — every turn through this window's own server, read-only turns only when it lists the bridge's rules (see *OpenCode 2*). |
 | `enforceReadOnly` | `true` | Read-only turns read-only by permission in every OpenCode process the bridge starts: no edits or shell, `readOnlyTools`, read-only subagents (see *Read-only turns*). `/dev` is unchanged. Off: 0.0.214, read-only by instruction. |
 | `readOnlyTools` | `["git-scan_gitScan"]` | With `enforceReadOnly`, the MCP tools a read-only turn may use, by OpenCode permission name (`<server>_<tool>`, wildcards allowed). A name that would allow a tool that writes, runs commands or starts subagents is left out. 1.x only. |
 | `attachDevToServer` | `true` | With transport `auto`, `/dev` attaches to the warm server instead of booting OpenCode per turn. |
@@ -559,6 +564,38 @@ All under `opencodeCopilotBridge.`.
 
 The last five releases; the full history is `CHANGELOG.md` in the repository.
 
+### 0.0.235
+
+- **Told when VS Code hides the Local chat session.** `@opencode` answers only
+  in Local sessions; with `chat.editor.localAgent.enabled` off there are none,
+  and nothing in chat can say so. One warning outside chat now does, with a
+  button to the setting, and Diagnose shows it. Checks `HR`.
+
+### 0.0.234
+
+- **OpenCode 2.2: the first message after VS Code starts has its MCP tools.**
+  OpenCode starts a folder's MCP servers on its first request, and their tools
+  arrive about a second later, so a first message had none (gitScan included).
+  The server prewarm now also reads the folder's agents, which starts them. On
+  2.0 and 2.1 it settles the agent list ahead of the first message. Checks `PV`.
+
+### 0.0.233
+
+- **OpenCode 2.0 and 2.1: the first message after the server starts is sent
+  again.** Those versions load their agent list in steps, and the bridge read
+  it before the read-only rules were in, then refused the turn as unverified.
+  It now waits for the list to settle (about a second, once per server start).
+  OpenCode 2.2 and later are unaffected. Checks `TW`.
+
+### 0.0.232
+
+- **Tested with OpenCode 1.19.5 and 2.2.5.** Both checked by the read-only
+  probes and against recorded wire traffic (no format changes since 1.19.0 and
+  2.2.0), so neither shows the "outside the tested versions" note any more.
+- **The nightly checks cover more:** plan cannot read outside the folder or
+  `.env`; an MCP tool runs on a plan turn only when `readOnlyTools` lists it;
+  `/dev` is not sandboxed and can work outside the folder. Checks `VN`, `TW`.
+
 ### 0.0.231
 
 - **`@opencode` in the Copilot harness.** VS Code's Copilot harness, the
@@ -569,55 +606,4 @@ The last five releases; the full history is `CHANGELOG.md` in the repository.
   `@opencode` threw and stopped activation, which took the palette commands
   and gitScan down with it. They now register, and one warning says why
   `@opencode` cannot run. Checks `HR`.
-
-### 0.0.230
-
-- **A 2.x run that fails at the start no longer hangs.** OpenCode 2.0.18
-  failed a turn on unavailable instruction files before delivering it; the
-  error was logged and the turn waited until Stop. It now ends with the error.
-- **OpenCode 2.2.0**: wire format checked against 2.0.29 (unchanged), **Close**
-  in `/sessions` archives in OpenCode itself from 2.1 on (and no longer erases
-  the session's title in its own apps), and a provider rate limit shows on the
-  live line as on 1.x.
-- **`dataHome`** setting: OpenCode's data folder for every process the bridge
-  starts. The status bar names a running turn and its time, then the context
-  share. Timing checks measure growth, not a fixed budget.
-  Checks `TW`, `SE`, `ST`, `GT`.
-
-### 0.0.229
-
-- **OpenCode: Worktrees** (palette and Quick Actions): the worktrees
-  `/worktree` made here, each with what it holds, and Show changes, Open,
-  Remove — plus **Remove all without changes**.
-- **Show full diff opens VS Code's multi-file diff**, a row per file against
-  the worktree's base; nothing is written to show it.
-- `/worktree` with no task lists the worktrees it made. Checks `WT14`–`WT17`, `QA`.
-
-### 0.0.228
-
-- **`/worktree` turns read what a chat turn reads**: `model:` and `effort:`
-  (they went to the model as words and named the branch), the `effort`
-  setting, attachments (dropped without a word; an attached file your checkout
-  has changed is named), and the vague-prompt check (`/worktree fix` made a
-  branch, a folder and a paid run).
-- **A worktree chat's session has books**: `/session` names the worktree and
-  its session, `/compact` compacts it, a slow run gets the completion toast,
-  touched files come back as references, file pills open the worktree's copy,
-  and the session is compacted when it grows large. **Review** is offered
-  under a worktree edit and reviews the worktree.
-- OpenCode 2 tested on 2.0.18–2.2.0; the gate's timing checks no longer fail
-  on battery. Checks `WT9`–`WT13`, `CP`, `TW`, `NF`, `FK`, `LB`.
-
-### 0.0.227
-
-- **A review gets Fix chips whatever its layout.** Findings ranked High,
-  Medium, P1 and the like, as bullets, tags, a Severity column, an HTML list or
-  a numbered list, now offer **Fix High: …** for the worst one, **Fix High (2)**
-  for its group and **Fix all**; before, only a numbered list got chips. A
-  severity word in a sentence is not read as one, and Low alone gets none.
-- **`/worktree` says what it leaves behind**: a new worktree starts from your
-  last commit, and a dirty checkout is told how many uncommitted changes it
-  does not have.
-- **Chips under `/worktree`**: the answer's own editing chips, sent back to
-  the same worktree. Checks `NF`, `WT8`, `WT9`.
 
