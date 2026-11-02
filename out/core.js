@@ -48,6 +48,7 @@ exports.delay = delay;
 exports.ensureStatusItem = ensureStatusItem;
 exports.setStatus = setStatus;
 exports.refUri = refUri;
+exports.underRoot = underRoot;
 exports.relTo = relTo;
 exports.folderOf = folderOf;
 exports.resolveFolder = resolveFolder;
@@ -56,6 +57,7 @@ exports.rememberFolder = rememberFolder;
 exports.isMultiRoot = isMultiRoot;
 exports.untilStop = untilStop;
 const vscode = __importStar(require("vscode"));
+const fs = __importStar(require("node:fs"));
 const path = __importStar(require("node:path"));
 function setLogChannel(channel) {
     exports.logChannel = channel;
@@ -151,10 +153,25 @@ function refUri(value) {
     }
     return undefined;
 }
+const realOr = (p) => {
+    try {
+        return fs.realpathSync.native(p);
+    }
+    catch {
+        return p;
+    }
+};
+function underRoot(root, file) {
+    const inside = (rel) => rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
+    let rel = path.relative(root, file);
+    if (!inside(rel)) {
+        rel = path.relative(realOr(root), realOr(file));
+    }
+    return inside(rel) ? rel.split(path.sep).join("/") : "";
+}
 function relTo(cwd, uri) {
     try {
-        const rel = path.relative(cwd, uri.fsPath);
-        return rel && !rel.startsWith("..") ? rel.split(path.sep).join("/") : uri.fsPath;
+        return underRoot(cwd, uri.fsPath) || uri.fsPath;
     }
     catch {
         return uri.fsPath;

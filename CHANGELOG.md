@@ -3,6 +3,23 @@
 Full release history, newest first; releases before the last one are condensed
 to their summary and headlines. The README ships the last five.
 
+### 0.0.236
+
+A file attached to a `/worktree` turn through a symlinked path reaches the run.
+
+- **Fixed: `WT11` was red on macOS and Windows CI** (every `ship` run on `main`
+  since at least 0.0.228). `/worktree` maps an attachment to its repo path
+  against `git rev-parse --show-toplevel`, which prints the resolved path, while
+  the attachment keeps the path it was opened by: macOS's temp dir is `/var/…`,
+  git says `/private/var/…`, and the file read as outside the repo. A user's
+  symlinked checkout hit the same. `underRoot` (`core.ts`) tries the path as
+  given, then with both sides resolved (`fs.realpathSync.native`); `relTo` and
+  the `/worktree` check use it. Reproduced on Linux with `TMPDIR` through a
+  symlink (exactly the two `WT11` checks red); green with the fix. New `WT18`
+  opens the window through a link on every OS: red first (2: the task listed
+  `/tmp/ocb-wt18-link-…/tracked.txt`, no stale note), green after (1320). Windows'
+  short `RUNNER~1` temp path is expected to resolve the same way: CI confirms.
+
 ### 0.0.235
 
 M3 of the harness work: say outside chat when `@opencode` cannot be reached,

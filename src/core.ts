@@ -1,6 +1,7 @@
 // Bottom of the dependency graph. Nothing in here may import another bridge
 // module, so every other cluster can depend on it without risking a cycle.
 import * as vscode from "vscode";
+import * as fs from "node:fs";
 import * as path from "node:path";
 
 // Exported `let` compiles to a live property read on the module object under
@@ -148,10 +149,29 @@ export function refUri(value: unknown): vscode.Uri | undefined {
     return undefined;
 }
 
+const realOr = (p: string): string => {
+    try {
+        return fs.realpathSync.native(p);
+    } catch {
+        return p;
+    }
+};
+
+/** `file` relative to `root`, with `/`, or "" when it is outside. Tried as given, then
+ * with both resolved: git names a repository by its real path (macOS `/private/var`,
+ * Windows long names), VS Code a file by the path it was opened by (`WT11`). */
+export function underRoot(root: string, file: string): string {
+    const inside = (rel: string): boolean => rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
+    let rel = path.relative(root, file);
+    if (!inside(rel)) {
+        rel = path.relative(realOr(root), realOr(file));
+    }
+    return inside(rel) ? rel.split(path.sep).join("/") : "";
+}
+
 export function relTo(cwd: string, uri: vscode.Uri): string {
     try {
-        const rel = path.relative(cwd, uri.fsPath);
-        return rel && !rel.startsWith("..") ? rel.split(path.sep).join("/") : uri.fsPath;
+        return underRoot(cwd, uri.fsPath) || uri.fsPath;
     } catch {
         return uri.fsPath;
     }

@@ -1,6 +1,5 @@
-import * as path from "node:path";
 import * as vscode from "vscode";
-import { config, logChannel, own, secs, stamp, untilStop } from "./core";
+import { config, logChannel, own, secs, stamp, underRoot, untilStop } from "./core";
 import { mark } from "./followups";
 import { dataFolderRefusal, ensureCliIdentity, ensureServer, isDataFolderClash, isNotOpenCode1, openCode1Refusal } from "./net";
 import { abortServerRun, compactSession, compactionInFlight, contextOverflowing, createServerSession, isMissingSessionRun, runOpenCode, sessionBusy } from "./runs";
@@ -164,10 +163,7 @@ export async function handleWorktree(p: {
     if (notSent) {
         response.markdown(`> ${mark("warn")} ${notSent}\n\n`);
     }
-    const inRepo = ctx.uris
-        .map((u) => path.relative(wt.root, u.fsPath))
-        .filter((rel) => rel && !rel.startsWith("..") && !path.isAbsolute(rel))
-        .map((rel) => rel.split(path.sep).join("/"));
+    const inRepo = ctx.uris.map((u) => underRoot(wt.root, u.fsPath)).filter(Boolean);
     if (inRepo.length) {
         const changed = new Set(await uncommittedPaths(wt.root));
         const stale = [...new Set(inRepo.filter((rel) => changed.has(rel)))];
