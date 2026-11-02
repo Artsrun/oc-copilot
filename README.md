@@ -559,6 +559,14 @@ All under `opencodeCopilotBridge.`.
 
 The last five releases; the full history is `CHANGELOG.md` in the repository.
 
+### 0.0.233
+
+- **OpenCode 2.0 and 2.1: the first message after the server starts is sent
+  again.** Those versions load their agent list in steps, and the bridge read
+  it before the read-only rules were in, then refused the turn as unverified.
+  It now waits for the list to settle (about a second, once per server start).
+  OpenCode 2.2 and later are unaffected. Checks `TW`.
+
 ### 0.0.232
 
 - **Tested with OpenCode 1.19.5 and 2.2.5.** Both checked by the read-only
@@ -601,19 +609,4 @@ The last five releases; the full history is `CHANGELOG.md` in the repository.
 - **Show full diff opens VS Code's multi-file diff**, a row per file against
   the worktree's base; nothing is written to show it.
 - `/worktree` with no task lists the worktrees it made. Checks `WT14`–`WT17`, `QA`.
-
-### 0.0.228
-
-- **`/worktree` turns read what a chat turn reads**: `model:` and `effort:`
-  (they went to the model as words and named the branch), the `effort`
-  setting, attachments (dropped without a word; an attached file your checkout
-  has changed is named), and the vague-prompt check (`/worktree fix` made a
-  branch, a folder and a paid run).
-- **A worktree chat's session has books**: `/session` names the worktree and
-  its session, `/compact` compacts it, a slow run gets the completion toast,
-  touched files come back as references, file pills open the worktree's copy,
-  and the session is compacted when it grows large. **Review** is offered
-  under a worktree edit and reviews the worktree.
-- OpenCode 2 tested on 2.0.18–2.2.0; the gate's timing checks no longer fail
-  on battery. Checks `WT9`–`WT13`, `CP`, `TW`, `NF`, `FK`, `LB`.
 

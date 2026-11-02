@@ -3,6 +3,29 @@
 Full release history, newest first; releases before the last one are condensed
 to their summary and headlines. The README ships the last five.
 
+### 0.0.233
+
+The first plan turn on OpenCode 2.0.x and 2.1.x is sent again.
+
+- **Fixed: before 2.2.0 the default first turn after a server start was
+  refused.** Those versions load a folder's agent list in stages: `[]`, then
+  the stock rules alone for ~200–280 ms, then with the bridge's overrides
+  (2.0.29, 2.1.4 measured). The bridge took the first non-empty list, judged
+  plan `unverified` and sent nothing. Bisected: 2.1.4 the last affected, 2.2.0
+  the first that answers loaded. Below 2.2.0 the list is now read until it holds
+  for `AGENTS_SETTLE_MS` (1 s), once per server start and folder; 2.2.0+ reads
+  once. The fake 2.x models the stages: `TW` went red first (2 checks), green
+  after. REFS 0.0.233.
+- **0.0.232's cause was wrong:** it is not "until the server has run a turn";
+  that turn only gave the staged load time to finish.
+- **Probes:** "plan as the first turn on a fresh server" expects "sent" on every
+  version; the MCP rows split at 2.2.0, where plan is first offered MCP tools by
+  name (2.1.4 was not); the `readOnlyTools` control waits for the folder's MCP
+  servers. `probe-opencode2.js` 21 of 21 on 2.0.29, 2.1.4, 2.2.0, 2.2.5.
+- **Found, not fixed:** on 2.2.x the first turn after a server start is offered
+  no MCP tool (gitScan included): they arrive 0.5–1 s after the folder's first
+  request, and prewarm makes none (REFS 0.0.233).
+
 ### 0.0.232
 
 OpenCode 1.19.5 and 2.2.5 become the tested tops, on probe runs and wire diffs
@@ -24,8 +47,8 @@ OpenCode 1.19.5 and 2.2.5 become the tested tops, on probe runs and wire diffs
   claimed "git status runs" in a subagent now says what it checks.
 - **Found, not fixed: on 2.0.x a plan turn first after a server start is
   refused.** 2.0.29 lists a fresh server's agents with their built-in rules
-  until it has run a turn, so the read-only rules cannot be verified and nothing
-  is sent; 2.2.5 lists them at once. MCP differs too: 2.2.5 offers plan a
+  for a moment (0.0.233: a staged load), so the read-only rules cannot be
+  verified and nothing is sent; 2.2.5 lists them at once. MCP differs too: 2.2.5 offers plan a
   `readOnlyTools` MCP tool by name, 2.0.29 none. The probe rows expect each
   version's measured behaviour (REFS 0.0.232); the fix is due before `opencode2`
   is on by default.

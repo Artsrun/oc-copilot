@@ -101,6 +101,12 @@ const v1Messages = (list) => (Array.isArray(list) ? list : [])
         info: { role: "assistant", providerID: m.model?.providerID, modelID: m.model?.id },
         parts: (Array.isArray(m.content) ? m.content : []).filter((c) => c?.type === "text" || c?.type === "reasoning")
     });
+const AGENTS_SETTLE_MS = 1000;
+const agentsSettled = new Set();
+const loadsAgentsAtOnce = (base) => {
+    const v = (0, net_1.serverVersion)(base)?.match(/^v?(\d+)\.(\d+)\./);
+    return Boolean(v) && (Number(v?.[1]) > 2 || (Number(v?.[1]) === 2 && Number(v?.[2]) >= 2));
+};
 const v2 = (base) => {
     const auth = () => (0, net_1.serverAuth)(base) ?? {};
     const url = (path, query = {}) => {
@@ -119,12 +125,27 @@ const v2 = (base) => {
         },
         agents: async (cwd, timeoutMs) => {
             const until = Date.now() + timeoutMs;
+            const key = `${base}\0${(0, net_1.currentServerGeneration)()}\0${cwd}`;
+            const settle = !agentsSettled.has(key) && !loadsAgentsAtOnce(base);
             let found = [];
-            while (!found.length && Date.now() < until) {
+            let seen = "";
+            let since = 0;
+            while (Date.now() < until) {
                 found = data(await get(at("/agent", cwd), timeoutMs)) ?? [];
-                if (!found.length) {
-                    await (0, core_1.delay)(150);
+                if (found.length && !settle) {
+                    break;
                 }
+                if (found.length) {
+                    const now = JSON.stringify(found);
+                    if (now !== seen) {
+                        [seen, since] = [now, Date.now()];
+                    }
+                    else if (Date.now() - since >= AGENTS_SETTLE_MS) {
+                        agentsSettled.add(key);
+                        break;
+                    }
+                }
+                await (0, core_1.delay)(150);
             }
             return found.map((a) => ({ name: a.id, mode: a.mode, hidden: a.hidden === true, permission: (0, enforce_1.toV1Rules)(a.permissions) }));
         },

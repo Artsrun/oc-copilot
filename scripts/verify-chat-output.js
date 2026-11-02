@@ -8520,9 +8520,16 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
             // (REFS): the top of that range runs without the outside-the-range line.
             process.env.FAKE_OC2_VERSION = "2.0.18";
             settings.executable = writeFake("fake-tw22.js", [], `if (!process.argv.includes('--version') || true) require(${JSON.stringify(path.join(__dirname, "fixtures", "fake-opencode2.js"))})(process.argv);\n`);
+            fs.rmSync(twRecord, { force: true });
             const tw22 = stream();
             await global.__handler({ prompt: "explain the cart on 2.2 [[probe:text]]" }, { history: [] }, tw22.response, tw22.token);
             const tw22Chat = plain(tw22.chatMarkdown.join(""));
+            // 0.0.233: before 2.2.0 the agent list loads in stages (`[]`, stock rules, then the
+            // overrides; the fake models 2.0.29's timing). The bridge took the stock stage and
+            // refused the default (plan) first turn; it now reads until the list settles.
+            const tw22Lists = twReqs().filter((r) => r.method === "GET" && r.path === "/api/agent").length;
+            add(`TW 2.0.18 lists agents in stages: the first plan turn reads past the stock stage and is sent (${tw22Lists} reads)`,
+                tw22Lists >= 4 && /Hello from the scripted model\./.test(tw22Chat) && !/Nothing was sent/.test(tw22Chat));
             add(`TW 2.0.18 runs inside the tested range: no outside-the-range line${/Hello from the scripted model/.test(tw22Chat) ? "" : ` [chat: ${tw22Chat.slice(0, 300)}]`}`,
                 /Hello from the scripted model\./.test(tw22Chat) && !/outside the versions/.test(tw22Chat));
             {
@@ -8537,9 +8544,12 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
             // 0.0.232: 2.2.5 measured (probe-opencode2 10 rows, wire 0 differences from 2.2.0; REFS): the top of the range is quiet.
             process.env.FAKE_OC2_VERSION = "2.2.5";
             settings.executable = writeFake("fake-tw225.js", [], `if (!process.argv.includes('--version') || true) require(${JSON.stringify(path.join(__dirname, "fixtures", "fake-opencode2.js"))})(process.argv);\n`);
+            fs.rmSync(twRecord, { force: true });
             const tw225 = stream();
             await global.__handler({ prompt: "explain the cart on 2.2.5 [[probe:text]]" }, { history: [] }, tw225.response, tw225.token);
             const tw225Chat = plain(tw225.chatMarkdown.join(""));
+            const tw225Lists = twReqs().filter((r) => r.method === "GET" && r.path === "/api/agent").length;
+            add(`TW 2.2.5 answers the first agent request loaded: one read, no settling wait (${tw225Lists} reads)`, tw225Lists === 1);
             add(`TW 2.2.5 runs inside the tested range: no outside-the-range line${/Hello from the scripted model/.test(tw225Chat) ? "" : ` [chat: ${tw225Chat.slice(0, 300)}]`}`,
                 /Hello from the scripted model\./.test(tw225Chat) && !/outside the versions/.test(tw225Chat));
             ext.deactivate();

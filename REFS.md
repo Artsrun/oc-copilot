@@ -5,6 +5,54 @@ actually measured, so nobody re-derives it.
 
 ---
 
+## 0.0.233: before 2.2.0 the agent list loads in stages (2026-11-02)
+
+**Dated 2026-11-02. Fixed in 0.0.233.** Linux, the scripted model, each
+version installed into a scratch prefix and removed after.
+
+**Bisect** (fresh server, `GET /api/agent?location[directory]=`, plan's rules
+judged as the bridge does): 2.0.29 7 rules, unverified · 2.1.2 7 · 2.1.4 7 ·
+**2.2.0 40, enforced** · 2.2.1 40 · 2.2.5 40. Last bad 2.1.4, first good 2.2.0.
+
+**The mechanism, polled every 50 ms from the server's start** (three runs each,
+the MCP config of the probe included):
+
+| Version | `GET /agent` stages |
+| --- | --- |
+| 2.0.29 | `[]` at 164–204 ms · 7 agents, plan 7 rules (stock) at 441–473 ms · plan 39 at 686–720 ms |
+| 2.1.4 | `[]` at 139–149 ms · plan 7 at 345–394 ms · plan 39 at 549–623 ms |
+| 2.2.0 | plan 40 at 855–964 ms, the first answer |
+| 2.2.5 | plan 40 at 851–1071 ms, the first answer |
+
+The load starts with the folder's first request: with no request, a 3 s wait
+changed nothing; a session list or create first changed nothing either, and
+the build turn of 0.0.232's experiment only gave the load time to finish.
+`oc-api`'s 2.x `agents` took the first non-empty list, the stock stage, which
+`judgeReadOnly` calls `unverified`: the default plan turn was refused, and
+by the code (not run), the listing stayed cached for `LISTED_TTL_MS` (60 s),
+so a Retry within that minute was refused too.
+Only ever the safe way: the stock stage has plan's own writing rules.
+
+**Fix:** below 2.2.0, or with no version, `agents` reads until the list has
+been the same for `AGENTS_SETTLE_MS` (1000 ms, ~3.5 times the longest stock
+stage measured), once per server start and folder; 2.2.0+ reads once.
+After it, the bisect's own check on a fresh server: 2.0.29 and 2.1.4 plan 39
+rules, `enforced`. `probe-opencode2.js` 21 of 21 on 2.0.29, 2.1.4, 2.2.0 and
+2.2.5, "plan as the first turn on a fresh server: sent" on each;
+`probe-readonly.js` 9 of 9 on 2.2.5. The suite's fake 2.x now serves the stages
+below 2.2.0: `TW` went red first (2 checks: 3 reads, refused), green after.
+
+**MCP by name starts at 2.2.0 too** (2.0.29, 2.1.4: plan offered none; 2.2.0,
+2.2.5: the `readOnlyTools` one). **And on 2.2.x the first turn after a start is
+offered no MCP tool.** A folder's first request starts its MCP servers, and
+their tools reach a turn 0.5–1 s later (2.2.5, plan calling gitScan: first turn
+none; after `GET /api/mcp` + 0 or 500 ms none, + 1000 or 2000 ms ran; no
+request and a 3 s or 8 s wait: none). Prewarm only starts the server, so a
+user's first turn has no MCP tools either. Not fixed here: prewarm could read
+the folder's agent list (it starts the folder, and settles the list below 2.2.0).
+
+---
+
 ## 0.0.232: OpenCode 1.19.5 and 2.2.5, probe rows, 2.0.x listing (2026-11-02)
 
 **Dated 2026-11-02. Shipped in 0.0.232.** Linux, Node 22.22.0, the scripted
@@ -34,7 +82,8 @@ listed; listed, `w_touch` wrote. 2.0.29 offers plan no MCP tool by name
 (Code Mode's `execute` holds them and is denied). Build on 2.2.5 is offered
 no MCP tool by name; on 1.19.5 it is (`w_touch` wrote).
 
-**2.0.29 lists a fresh server's agents with their built-in rules.** The
+**2.0.29 lists a fresh server's agents with their built-in rules.** (The cause
+given below is wrong; 0.0.233 measured it: a staged load, not a missing run.) The
 `serve` process held the right `OPENCODE_CONFIG_CONTENT` (read from
 `/proc/<pid>/environ`: `agents.plan.permissions`, `* deny` first), yet `GET
 /agent` gave plan 7 built-in rules, judged `unverified`, and the plan turn was

@@ -84,7 +84,10 @@ const { runCapture } = out("proc.js");
     const rows = [];
     // Expectations that differ by version name what was measured on each (REFS 0.0.232).
     const version = (await runCapture(exe, ["--version"], project, 15000)).trim();
-    const v20 = /(?:^|\s)v?2\.0\./.test(version);
+    const [vMajor, vMinor] = (version.match(/(\d+)\.(\d+)\.\d+/) || []).slice(1).map(Number);
+    // MCP tools by name: 1.x, and 2.x from 2.2.0 (2.0.29 and 2.1.4 keep them in Code Mode's
+    // `execute`; 2.2.0 and 2.2.5 offer an allowed one by name; REFS 0.0.233).
+    const mcpByName = vMajor === 1 || vMajor > 2 || (vMajor === 2 && vMinor >= 2);
     console.log(`opencode ${version}`);
     const target = (n) => {
         const file = path.join(project, `w-${n}.txt`);
@@ -202,18 +205,16 @@ const { runCapture } = out("proc.js");
     await row("known · /dev · write OUTSIDE the folder", "CREATED", async () => { const f = path.join(outside, "w.txt"); const r = await dev(`write:${f}`); return [wrote(f), note(r)]; });
     await row("known · /dev · shell OUTSIDE the folder", "CREATED", async () => { const f = path.join(outside, "s.txt"); const r = await dev(`bash:${echoTo(f)}`); return [wrote(f), note(r)]; });
     // MCP on read-only turns (2.2.3 moved MCP use out of `integration.use`): only `readOnlyTools` runs.
-    // 2.0.x offers MCP tools only inside Code Mode's `execute`, denied on read-only turns;
-    // 2.2.5 offers an allowed MCP tool to plan by name (2.0.29, 2.2.5 measured).
     const mcpGot = (r, ran) => (ran ? ran : /No call tool offered/.test(r.text) ? "not offered" : "no");
-    await row("plan · the gitScan MCP tool (readOnlyTools)", v20 ? "not offered" : "runs", async () => { const r = await plan("call:gitScan"); return [mcpGot(r, /Working tree|Branch/i.test(r.text) && "runs"), note(r)]; });
+    await row("plan · the gitScan MCP tool (readOnlyTools)", mcpByName ? "runs" : "not offered", async () => { const r = await plan("call:gitScan"); return [mcpGot(r, /Working tree|Branch/i.test(r.text) && "runs"), note(r)]; });
     await row("plan · an MCP tool outside readOnlyTools writes nothing", "absent", async () => { fs.rmSync(mcpTarget, { force: true }); const r = await plan("call:touch"); return [wrote(mcpTarget), note(r)]; });
     // The control changes one thing: the same tool listed in readOnlyTools (overrides are per
     // process, so a new server). On 2.2.5 build is not offered MCP tools by name at all.
-    // 2.0.29 lists a fresh server's agents with their built-in rules until the server has
-    // run a turn (a session list or create does not change it), so plan first is refused
-    // before anything is sent; 2.2.5 lists the injected rules at once.
+    // Before 2.2.0 a folder's agent list loads in stages (`[]`, stock rules, then the
+    // overrides); the bridge reads until it settles, so plan first on a fresh server is
+    // sent on every version (2.0.29, 2.1.4 bisected; REFS 0.0.233).
     stopServer();
-    await row(`known · plan as the first turn on a fresh server`, v20 ? "refused, nothing sent" : "sent", async () => {
+    await row("plan as the first turn on a fresh server", "sent", async () => {
         try {
             const r = await plan("text");
             return [/Hello from the scripted model/.test(r.text) ? "sent" : "no answer", note(r)];
@@ -223,8 +224,15 @@ const { runCapture } = out("proc.js");
     });
     stopServer();
     settings.readOnlyTools = ["git-scan_gitScan", "w_touch"];
-    await turn("[[probe:text]] warm up"); // see the row above: a run first, so 2.0.x lists the rules
-    await row("control: plan · the same MCP tool, listed in readOnlyTools", v20 ? "not offered" : "CREATED", async () => {
+    // 2.x starts a folder's MCP servers on its first request, and their tools reach a turn
+    // 0.5–1 s later: the first turn on a fresh server is offered none, and a wait with no
+    // request changes nothing (2.2.5: after GET /api/mcp, 500 ms none, 1000 ms offered).
+    if (vMajor >= 2) {
+        const mcpBase = await ensureServer(project);
+        await fetch(`${mcpBase}/api/mcp?location%5Bdirectory%5D=${encodeURIComponent(project)}`, { headers: out("net.js").serverAuth(mcpBase) ?? {} }).catch(() => undefined);
+        await new Promise((r) => setTimeout(r, 2000));
+    }
+    await row("control: plan · the same MCP tool, listed in readOnlyTools", mcpByName ? "CREATED" : "not offered", async () => {
         fs.rmSync(mcpTarget, { force: true });
         const r = await plan("call:touch");
         return [fs.existsSync(mcpTarget) ? "CREATED" : mcpGot(r, false), note(r)];
