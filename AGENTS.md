@@ -43,7 +43,7 @@ no bundler, no test runner: plain TypeScript → `out/`, plain Node for the suit
 | `src/env.ts` | What OpenCode loaded: config, plugins, MCP, commands, skills, agents, instruction files. |
 | `src/followups.ts` + `.json` | **Every word a chip or handoff sends**, the marks, pills (`createBadger`), `followupsProblems`. Leaf: imports only its JSON. |
 | `src/natural.ts` | Answer-derived chips: the agent's own offer or either/or, a named step 1, a review's findings by severity (`findingsOf`: headings, item tags, a Severity column, `<li>`), the file it edited, failing tests, Dig deeper — or nothing. `laneItems` is the lanes rule for the chip and for `autoParallel: auto`. |
-| `src/core.ts` | **The foundation**: imports nothing local. `config()`, `logChannel`, text helpers, status bar, folder resolution. |
+| `src/core.ts` | **The foundation**: imports nothing local. `config()`, `logChannel`, text helpers, status bar, folder resolution, `underRoot` (a file's path under a root, links resolved). |
 | `src/extension.ts` | `activate()` (panel + guarded inline participant), the `__test` handle, `deactivate()`. |
 | `src/commands.ts`, `commands-registry.ts` | Palette commands, worktree buttons, config listener. |
 | `src/worktree.ts`, `chat-worktree.ts` | `/worktree`: git via `execFile`, an isolated dev run from HEAD (the uncommitted count is said); a follow-up in the same chat continues its worktree and session (`reopenWorktree` checks what the metadata names); its turns read `model:`, `effort:`, attachments and the vague-prompt gate as a chat turn does, and `/session` and `/compact` reach its session (`threadWorktree`). OpenCode: Worktrees lists them (`listWorktrees`, `pickWorktree` in `commands.ts`); Show full diff is `vscode.changes` with the base side from a read-only `ocb-base:` provider (`changedFiles`, `baseText`). |
@@ -349,6 +349,10 @@ history belongs in `CHANGELOG.md`, not in the source.
   whatever a chat turn reads from the request — `model:`, `effort:`, the
   `effort` setting, attachments, the vague-prompt gate — `handleWorktree` must
   read too, or it reaches the model as words or not at all (0.0.228, `WT10`–`WT12`).
+- **git names a repo by its real path, VS Code a file by the path it was opened
+  by**: through a link (macOS's `/var` → `/private/var`, Windows' `RUNNER~1`, a
+  symlinked checkout) `path.relative` against `--show-toplevel` climbs out with
+  `..`. Map a file under a git root with `underRoot` (`WT11`, `WT18`).
 - **A worktree starts from HEAD**: uncommitted edits stay in the checkout, and
   a task about them ends in "No file changes". A new worktree says the count
   (`WT8`). A chip under a `/worktree` turn carries `command: "worktree"`: a

@@ -5,6 +5,26 @@ actually measured, so nobody re-derives it.
 
 ---
 
+## 0.0.236: git's real path vs VS Code's opened path (`WT11` on macOS/Windows CI) (2026-11-02)
+
+**Dated 2026-11-02. Fixed in 0.0.236.** CI run 41541276057 (PR head `4be521b`)
+and 40913494219 (`main`, `44c0dcd`): macOS and Windows each failed only `WT11
+an attached file reaches the worktree run by its repo path` and `WT11 an
+attached file the checkout has changed is named`; Linux passed all 1318.
+
+`git rev-parse --show-toplevel` prints the resolved path (`/private/var/folders/…`
+on macOS); the suite's `work`, like a VS Code `fsPath`, keeps `/var/folders/…`.
+`path.relative(root, file)` then starts with `..` and the attachment was
+dropped from the task and the stale check. On Linux with `TMPDIR` set to a
+symlink: exactly those two checks failed, nothing else; with `underRoot`, all
+1318 passed (twice; one earlier run missed `ST`'s 3 s tick in its 4 s cap, which
+passed in the next runs and is not on this path). Windows' temp dir is the short
+`C:\Users\RUNNER~1\…` while git prints the long name: expected to resolve the
+same way through `realpathSync.native` (GetFinalPathNameByHandle), confirmed only
+by Windows CI.
+
+---
+
 ## 0.0.235: M3 — Local hidden, and the participant API watched (2026-11-02)
 
 **Dated 2026-11-02. Shipped in 0.0.235.** Read, not run in a VS Code window.

@@ -3953,6 +3953,32 @@ const lbProvider = (global.__participant || {}).followupProvider;
         add("WT11 an attached file the checkout has changed is named: the worktree has the commit's", /`tracked\.txt` has uncommitted changes in your checkout; the worktree has the last commit's version/.test(wt11Chat));
         add("WT11 the attachment comes back as a reference", wt11.refs.some((r) => samePath(r, path.join(work, "tracked.txt"))));
 
+        // WT18 (0.0.236): git names the repo by its real path; VS Code the folder and its
+        // files by the path they were opened by. Opened through a link (macOS's /var →
+        // /private/var, a symlinked checkout), every attachment read as outside the repo:
+        // WT11 was red on macOS and Windows CI. Here the window opens the link.
+        const wt18Link = path.join(os.tmpdir(), `ocb-wt18-link-${process.pid}`);
+        fs.rmSync(wt18Link, { force: true, recursive: true });
+        fs.symlinkSync(work, wt18Link, "junction");
+        const wt18Folders = vscodeStub.workspace.workspaceFolders;
+        vscodeStub.workspace.workspaceFolders = [{ uri: { fsPath: wt18Link, scheme: "file" }, name: path.basename(wt18Link), index: 0 }];
+        fs.writeFileSync(path.join(work, "tracked.txt"), "v2 uncommitted\n");
+        fs.rmSync(path.join(work, "fake-wt10.js.argv"), { force: true }); // WT11's task must not answer for this run
+        const wt18 = stream();
+        await global.__handler({
+            prompt: "explain the tracked file", // not WT11's words: a branch name has 1 s resolution
+            command: "worktree",
+            references: [{ id: "vscode.file", value: { fsPath: path.join(wt18Link, "tracked.txt"), scheme: "file" } }]
+        }, { history: [] }, wt18.response, wt18.token);
+        vscodeStub.workspace.workspaceFolders = wt18Folders;
+        fs.writeFileSync(path.join(work, "tracked.txt"), "v1\n");
+        fs.rmSync(wt18Link, { force: true, recursive: true });
+        const wt18Task = lastArgv("fake-wt10.js").at(-1) ?? "";
+        const wt18Chat = plain(wt18.chatMarkdown.join(""));
+        add(`WT18 a window opened through a link: the attached file reaches the worktree run by its repo path (${JSON.stringify(wt18Task.slice(0, 90) || wt18Chat.slice(0, 120))})`,
+            /^explain the tracked file\n/.test(wt18Task) && /Files the user attached:\n- tracked\.txt\n/.test(wt18Task));
+        add("WT18 …and its uncommitted change is named", /`tracked\.txt` has uncommitted changes in your checkout/.test(wt18Chat));
+
         // WT12 (0.0.228): a bare word made a branch, a folder and a paid run.
         const wt12Dirs = fs.readdirSync(wtParent).length;
         fs.rmSync(path.join(work, "fake-wt10.js.argv"), { force: true });

@@ -564,6 +564,12 @@ All under `opencodeCopilotBridge.`.
 
 The last five releases; the full history is `CHANGELOG.md` in the repository.
 
+### 0.0.236
+
+- **`/worktree` reads a file attached through a symlinked path.** A checkout
+  reached through a link (on macOS, `/var` is one) made an attached file look
+  outside the repo, so the run never got it. Checks `WT11`, `WT18`.
+
 ### 0.0.235
 
 - **Told when VS Code hides the Local chat session.** `@opencode` answers only
@@ -595,15 +601,4 @@ The last five releases; the full history is `CHANGELOG.md` in the repository.
 - **The nightly checks cover more:** plan cannot read outside the folder or
   `.env`; an MCP tool runs on a plan turn only when `readOnlyTools` lists it;
   `/dev` is not sandboxed and can work outside the folder. Checks `VN`, `TW`.
-
-### 0.0.231
-
-- **`@opencode` in the Copilot harness.** VS Code's Copilot harness, the
-  default for new chats from 1.142, has no chat participants. The README says
-  how to stay on a Local session (*Copilot harness*), and **OpenCode: Diagnose**
-  shows whether `@opencode` is registered along with the harness settings.
-- **A VS Code without the participant API keeps the rest.** Registering
-  `@opencode` threw and stopped activation, which took the palette commands
-  and gitScan down with it. They now register, and one warning says why
-  `@opencode` cannot run. Checks `HR`.
 
