@@ -5,6 +5,61 @@ actually measured, so nobody re-derives it.
 
 ---
 
+## 0.0.232: OpenCode 1.19.5 and 2.2.5, probe rows, 2.0.x listing (2026-11-02)
+
+**Dated 2026-11-02. Shipped in 0.0.232.** Linux, Node 22.22.0, the scripted
+model, binaries installed into a scratch prefix (`npm i --prefix`): opencode-ai
+1.19.5, @opencode/cli 2.2.5 and 2.0.29.
+
+**Ranges.** 1.19.5: `probe-readonly.js` 48 of 48; `record-wire-fixtures.js
+--v1` on 1.19.5 against `wire-v1.json` (1.19.0): 42 frames each, 0 field
+differences. 2.2.5: `probe-readonly.js` 9 of 9 over ACP; `--v2` against
+`wire-v2.json` (2.2.0): 5 turns, 25 event types, 0 differences (the frames are
+JSON strings: a diff must parse each). `wire-v2.json` is now 2.2.5's.
+
+**The ACP `git status` row was a wrong expectation.** `acp · plan · git
+status` expected "runs" inside `acp(true, …)`, where the overrides deny `bash`
+and `shell`; it was a copy of the adopted-server row (`probe-readonly.js`,
+the server the probe starts without overrides, where plan's shell is open).
+2.2.5 got "unclear (no tool result)": plan is offered `git-scan_gitScan, glob,
+grep, read, skill, subagent, webfetch, websearch`. A scratch control, the same
+step with `enforceReadOnly` false: **runs** (544 ms). The scripted model calls
+`shell` on 2.x when offered (`probe-model.js`), so no naming cause. 2.2.5 also
+runs a call to a tool named `bash` as `shell` (changelog); an enforced plan is
+offered neither, so it cannot reach a read-only turn.
+
+**MCP on read-only turns differs by 2.x version.** 2.2.5 offers plan the
+`readOnlyTools` MCP tool by name (gitScan ran) and not `w_touch`, which is not
+listed; listed, `w_touch` wrote. 2.0.29 offers plan no MCP tool by name
+(Code Mode's `execute` holds them and is denied). Build on 2.2.5 is offered
+no MCP tool by name; on 1.19.5 it is (`w_touch` wrote).
+
+**2.0.29 lists a fresh server's agents with their built-in rules.** The
+`serve` process held the right `OPENCODE_CONFIG_CONTENT` (read from
+`/proc/<pid>/environ`: `agents.plan.permissions`, `* deny` first), yet `GET
+/agent` gave plan 7 built-in rules, judged `unverified`, and the plan turn was
+refused before sending. After one build turn: 39 rules, `enforced`. A session
+list or a session create first: still 7. `debugLog` and a 3 s wait: no change.
+2.2.5: sent, every way. So on 2.0.x a plan turn first after a server start is
+refused, and a Retry is refused again until some turn has run; nothing unsafe
+is sent. Not fixed here: before `opencode2` is on by default (M2), either the
+2.x minimum moves to a version that lists at once (bisect 2.0.29–2.2.5), or a
+start makes 2.0.x load its agents some other way.
+
+**One unreproduced identity timeout.** The first 2.2.5 probe run's first turn
+was refused: `--version` did not answer within 6 s; the next check took 503
+ms. Ten cold and warm `--version` runs afterwards: 128–189 ms.
+
+**Probe rows added** (`probe-opencode2.js`, measured on 2.2.5, 2.0.29 and
+1.19.5): plan cannot read outside the folder or `.env`, directly or through
+`explore`, with a plan read inside as the control; `/dev` reads, writes and
+runs outside the folder (`known ·`: not sandboxed; OpenCode 2 allows
+`external_directory` by default, migrate-v1); the MCP rows above; the fresh
+server row above. "plan → explore · git status runs" asserted a subagent
+answered, not that the command ran: renamed to what it checks.
+
+---
+
 ## 0.0.231: the Copilot harness and the participant API (2026-10-29)
 
 **Dated 2026-10-29. Phase 0 shipped in 0.0.231.** Read, not measured in a live

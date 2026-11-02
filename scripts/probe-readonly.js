@@ -413,15 +413,20 @@ const capture = (args, cwd) =>
             step("plan", "acp · plan · shell `echo > file`", "absent", "write", 1, write),
             step("plan", "acp · plan → explore · shell `echo > file`", "absent", "write", 2, (f) => `task@explore:${write(f)}`),
             step("plan", "acp · plan → general · write tool", "absent", "write", 3, (f) => `task@general:write:${f}`),
-            step("plan", "acp · plan · `git status`", "runs", "inspect", 0, () => "bash:git status"),
+            // Inspection without a shell: the overrides deny bash and shell (enforce.ts), so
+            // `git status` is not offered here; the enforcement-off control below runs it (0.0.232).
+            step("plan", "acp · plan · read README", "runs", "inspect", 0, () => `read:${path.join(project, "README.md")}`),
             step("plan", "acp · plan · read an attached file outside the folder", "refused", "inspect", 0, () => `read:${outsideFile}`),
             offered,
             step("build", "control · acp · build (/dev) · shell `echo > file`", "CREATED", "write", 4, write)
         ]);
-        const leaks = planTools.filter((t) => ["execute", "write", "edit", "patch", "apply_patch", "question"].includes(t));
-        rows.push({ label: "acp · plan · tools offered", expect: "none that write", got: leaks.length ? `offers ${leaks.join(", ")}` : "none that write" });
-        console.log(`${leaks.length ? "FAIL" : "ok  "} [${version}] acp · plan · tools offered: ${planTools.join(", ")}`);
-        await acp(false, [step("plan", "control · acp · plan · enforceReadOnly false · shell `echo > file`", "CREATED", "write", 5, write)]);
+        const leaks = planTools.filter((t) => ["bash", "shell", "execute", "write", "edit", "patch", "apply_patch", "question"].includes(t));
+        rows.push({ label: "acp · plan · tools offered", expect: "none that write or run", got: !planTools.length ? "none recorded" : leaks.length ? `offers ${leaks.join(", ")}` : "none that write or run" });
+        console.log(`${rows.at(-1).got === rows.at(-1).expect ? "ok  " : "FAIL"} [${version}] acp · plan · tools offered: ${planTools.join(", ")}`);
+        await acp(false, [
+            step("plan", "control · acp · plan · enforceReadOnly false · shell `echo > file`", "CREATED", "write", 5, write),
+            step("plan", "control · acp · plan · enforceReadOnly false · `git status`", "runs", "inspect", 0, () => "bash:git status")
+        ]);
     }
     await model.close();
     const failed = rows.filter((r) => r.got !== r.expect);

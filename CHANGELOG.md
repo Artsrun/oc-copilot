@@ -3,6 +3,36 @@
 Full release history, newest first; releases before the last one are condensed
 to their summary and headlines. The README ships the last five.
 
+### 0.0.232
+
+OpenCode 1.19.5 and 2.2.5 become the tested tops, on probe runs and wire diffs
+(REFS 0.0.232), and the probes stop asserting what the bridge forbids.
+
+- **Tested ranges: 1.18.27–1.19.5 and 2.0.18–2.2.5** (`TESTED_OPENCODE`,
+  `TESTED_OPENCODE2`). `probe-readonly.js` 48 of 48 on 1.19.5; wire frames
+  recorded on 1.19.5 and 2.2.5 match the 1.19.0 and 2.2.0 fixtures field for
+  field (0 differences); `wire-v2.json` is now 2.2.5's. Checks `VN`, `TW`.
+- **Probe fixed, not relaxed: `acp · plan · git status` expected "runs"** under
+  enforced read-only, where plan has no shell by design (`ENFORCED_DENY_TOOLS`).
+  Proven with a control: the same step runs with `enforceReadOnly` off. The row
+  is now a plan `read`, the tools-offered row fails on `bash`/`shell` too (and on
+  an empty list), and the control stays. `probe-readonly.js` 9 of 9 on 2.2.5.
+- **New probe rows** (`probe-opencode2.js`): plan cannot read outside the folder
+  or `.env`, directly or through `explore`; `/dev` can read, write and run outside
+  it (recorded as known, not sandboxed); an MCP tool runs on a plan turn only when
+  `readOnlyTools` lists it, with a control that lists the writer. A row that
+  claimed "git status runs" in a subagent now says what it checks.
+- **Found, not fixed: on 2.0.x a plan turn first after a server start is
+  refused.** 2.0.29 lists a fresh server's agents with their built-in rules
+  until it has run a turn, so the read-only rules cannot be verified and nothing
+  is sent; 2.2.5 lists them at once. MCP differs too: 2.2.5 offers plan a
+  `readOnlyTools` MCP tool by name, 2.0.29 none. The probe rows expect each
+  version's measured behaviour (REFS 0.0.232); the fix is due before `opencode2`
+  is on by default.
+- **Nightly probes** (`probes.yml`): 1.19.0, 1.19.5, 2.0.29 and 2.2.5 pinned;
+  `probe-readonly.js` runs on 2.2.5 too, which caught nothing before because it
+  never ran on 2.x.
+
 ### 0.0.231
 
 VS Code's Copilot harness, the default for new chats from 1.142, has no chat

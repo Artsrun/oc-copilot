@@ -237,10 +237,11 @@ const SLOW_START_MS = 1500;
 // What each server said it is (`/global/health` → `version`, 1.18.34). The
 // bridge leans on behaviour measured on these versions only (REFS); outside
 // them it still runs, and says so once per window and version.
-export const TESTED_OPENCODE = { min: "1.18.27", max: "1.19.0" } as const;
-// 2.0.29 and 2.0.32 through every manual check; 2.0.18, 2.1.4 and 2.2.0 through
-// the probe's ten rows (scripts/probe-opencode2.js, REFS 0.0.227).
-export const TESTED_OPENCODE2 = { min: "2.0.18", max: "2.2.0" } as const;
+// 1.19.5: probe-readonly.js's 48 rows, wire frames as 1.19.0's (REFS 0.0.232).
+export const TESTED_OPENCODE = { min: "1.18.27", max: "1.19.5" } as const;
+// 2.0.29 and 2.0.32 through every manual check; 2.0.18, 2.1.4, 2.2.0 and 2.2.5
+// through the probe's rows (scripts/probe-opencode2.js, REFS 0.0.227, 0.0.232).
+export const TESTED_OPENCODE2 = { min: "2.0.18", max: "2.2.5" } as const;
 const serverVersions = new Map<string, string>();
 /** The version `base` named at `/global/health`, if it named one. */
 export const serverVersion = (base: string): string | undefined => serverVersions.get(base);

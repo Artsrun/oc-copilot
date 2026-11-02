@@ -145,7 +145,7 @@ does not run the suite.
 
 CI runs the same gate (`.github/workflows/ship.yml`: Linux, Windows, macOS, every
 push and pull request) and, nightly, the real-binary probes, one job per
-OpenCode version (`probes.yml`: 1.19.0, 2.0.29 and 2.2.0 must pass, the latest 2.x may fail).
+OpenCode version (`probes.yml`: 1.19.0, 1.19.5, 2.0.29 and 2.2.5 must pass, the latest 2.x may fail).
 
 - The suite takes well over 30 s; do not judge it by a 30 s timeout.
 - It **aborts on the first exception**: fix crashes first, then red checks.
@@ -310,9 +310,16 @@ history belongs in `CHANGELOG.md`, not in the source.
   also end in catch-all denies. A marker alone from an older server proves
   nothing. Evidence is scoped to its endpoint, directory and selected agent (`RE`).
 - **MCP tools are named `<server>_<tool>` on 1.x** (`git-scan_gitScan`); the
-  overrides deny them unless `readOnlyTools` lists them. On 2.x MCP tools live
+  overrides deny them unless `readOnlyTools` lists them. On 2.0.x MCP tools live
   inside Code Mode's `execute`, which can POST anywhere and create worktrees:
-  denied on read-only turns, so 2.x read-only turns have no MCP tools.
+  denied on read-only turns, so 2.0.x read-only turns have no MCP tools. 2.2.5
+  offers plan a `readOnlyTools` MCP tool by name, and no other (2.0.29, 2.2.5
+  measured; `probe-opencode2.js`).
+- **2.0.x lists a fresh server's agents with their built-in rules** until the
+  server has run a turn: the injected overrides do not show in `GET /agent`
+  (7 rules, then 39 after one build turn; a session list or create changes
+  nothing), so a plan turn first after a start is refused before anything is
+  sent. 2.2.5 lists them at once (2.0.29, 2.2.5 measured; REFS 0.0.232).
 - **Nobody can answer OpenCode's prompts from a chat turn**: sessions the bridge
   creates deny question/plan_enter/plan_exit, and every ask of the session and its
   subagents is answered (`HQ`).

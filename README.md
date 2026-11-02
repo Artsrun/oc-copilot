@@ -244,8 +244,8 @@ the 1.x has your credentials; if not, log it in as your organization says.
 #### Experimental: `opencode2`  <!-- claim:opencode-2-api -->
 
 With `opencodeCopilotBridge.opencode2` on, an `opencode` whose `--version`
-says 2.x is driven through its HTTP API instead (tested on 2.0.18 to 2.2.0: every
-check on 2.0.29 and 2.0.32, the nightly probe's ten rows on the others):
+says 2.x is driven through its HTTP API instead (tested on 2.0.18 to 2.2.5: every
+check on 2.0.29 and 2.0.32, the nightly probes on the others):
 
 - **One server, this window's own.** Every turn — plan, `/dev`, lanes,
   `/worktree`, `transport: cli` too — goes through the `opencode serve` the
@@ -516,7 +516,7 @@ All under `opencodeCopilotBridge.`.
 | `devAgent` | `build` | Agent `/dev` runs, always passed as `--agent`. |
 | `planAgent` | `plan` | Agent for read-only turns and `/parallel` lanes, used once OpenCode lists it (see *Read-only turns*). |
 | `readOnlySubagents` | `["explore"]` | Literal subagent names a read-only turn may start via `task`; trimmed and deduplicated, `*` and `?` rejected. With `enforceReadOnly` only agents with verified shell-free permissions are available. |
-| `opencode2` | `false` | Experimental: drive OpenCode 2 through its HTTP API (tested on 2.0.18–2.2.0) instead of refusing it — every turn through this window's own server, read-only turns only when it lists the bridge's rules (see *OpenCode 2*). |
+| `opencode2` | `false` | Experimental: drive OpenCode 2 through its HTTP API (tested on 2.0.18–2.2.5) instead of refusing it — every turn through this window's own server, read-only turns only when it lists the bridge's rules (see *OpenCode 2*). |
 | `enforceReadOnly` | `true` | Read-only turns read-only by permission in every OpenCode process the bridge starts: no edits or shell, `readOnlyTools`, read-only subagents (see *Read-only turns*). `/dev` is unchanged. Off: 0.0.214, read-only by instruction. |
 | `readOnlyTools` | `["git-scan_gitScan"]` | With `enforceReadOnly`, the MCP tools a read-only turn may use, by OpenCode permission name (`<server>_<tool>`, wildcards allowed). A name that would allow a tool that writes, runs commands or starts subagents is left out. 1.x only. |
 | `attachDevToServer` | `true` | With transport `auto`, `/dev` attaches to the warm server instead of booting OpenCode per turn. |
@@ -558,6 +558,15 @@ All under `opencodeCopilotBridge.`.
 ## Changelog
 
 The last five releases; the full history is `CHANGELOG.md` in the repository.
+
+### 0.0.232
+
+- **Tested with OpenCode 1.19.5 and 2.2.5.** Both checked by the read-only
+  probes and against recorded wire traffic (no format changes since 1.19.0 and
+  2.2.0), so neither shows the "outside the tested versions" note any more.
+- **The nightly checks cover more:** plan cannot read outside the folder or
+  `.env`; an MCP tool runs on a plan turn only when `readOnlyTools` lists it;
+  `/dev` is not sandboxed and can work outside the folder. Checks `VN`, `TW`.
 
 ### 0.0.231
 
@@ -607,17 +616,4 @@ The last five releases; the full history is `CHANGELOG.md` in the repository.
   under a worktree edit and reviews the worktree.
 - OpenCode 2 tested on 2.0.18–2.2.0; the gate's timing checks no longer fail
   on battery. Checks `WT9`–`WT13`, `CP`, `TW`, `NF`, `FK`, `LB`.
-
-### 0.0.227
-
-- **A review gets Fix chips whatever its layout.** Findings ranked High,
-  Medium, P1 and the like, as bullets, tags, a Severity column, an HTML list or
-  a numbered list, now offer **Fix High: …** for the worst one, **Fix High (2)**
-  for its group and **Fix all**; before, only a numbered list got chips. A
-  severity word in a sentence is not read as one, and Low alone gets none.
-- **`/worktree` says what it leaves behind**: a new worktree starts from your
-  last commit, and a dirty checkout is told how many uncommitted changes it
-  does not have.
-- **Chips under `/worktree`**: the answer's own editing chips, sent back to
-  the same worktree. Checks `NF`, `WT8`, `WT9`.
 

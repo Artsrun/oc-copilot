@@ -6505,14 +6505,18 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         // v212: 1.18.35 → 1.19.0 was diffed and a 1.19.0 server measured (REFS).
         v5.version = "1.19.0";
         const vn190 = await v5Turn("explain the cart for vn 1.19");
-        v5.version = "1.19.2";
+        // 0.0.232: 1.19.5 measured (probe-readonly 48 rows, wire 0 differences from 1.19.0; REFS).
+        v5.version = "1.19.5";
+        const vn195 = await v5Turn("explain the cart for vn 1.19.5");
+        v5.version = "1.19.6";
         const vn1 = await v5Turn("explain the cart for vn new");
         const vn2 = await v5Turn("explain the cart for vn again");
         v5.version = undefined;
         add("VN a version inside the tested range says nothing", !/outside the versions/.test(vn0.md));
         add("VN 1.18.35 says nothing", !/outside the versions/.test(vn35.md) && /answered by/.test(vn35.md));
-        add("VN 1.19.0, the newest diffed and measured, says nothing", !/outside the versions/.test(vn190.md) && /answered by/.test(vn190.md));
-        add("VN …one outside it says so once per window, and the turn runs", /OpenCode 1\.19\.2 is outside the versions this bridge was tested with \(1\.18\.27–1\.19\.0\)/.test(vn1.md) && /answered by/.test(vn1.md) && !/outside the versions/.test(vn2.md));
+        add("VN 1.19.0 says nothing", !/outside the versions/.test(vn190.md) && /answered by/.test(vn190.md));
+        add("VN 1.19.5, the newest measured, says nothing", !/outside the versions/.test(vn195.md) && /answered by/.test(vn195.md));
+        add("VN …one outside it says so once per window, and the turn runs", /OpenCode 1\.19\.6 is outside the versions this bridge was tested with \(1\.18\.27–1\.19\.5\)/.test(vn1.md) && /answered by/.test(vn1.md) && !/outside the versions/.test(vn2.md));
 
 
         // demux hands unattributed events to every subscriber, and v184 counted
@@ -8507,8 +8511,8 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
             const tw7 = stream();
             await global.__handler({ prompt: "explain the cart on three [[probe:text]]" }, { history: [] }, tw7.response, tw7.token);
             const tw7Chat = plain(tw7.chatMarkdown.join(""));
-            add(`TW a 3.x with opencode2 runs on the 2.x adapter and says it is outside the tested 2.0.18–2.2.0${/Hello from the scripted model/.test(tw7Chat) ? "" : ` [chat: ${tw7Chat.slice(0, 400)}]`}`,
-                /Hello from the scripted model\./.test(tw7Chat) && /3\.0\.0 is outside the versions this bridge was tested with \(2\.0\.18–2\.2\.0\)/.test(tw7Chat));
+            add(`TW a 3.x with opencode2 runs on the 2.x adapter and says it is outside the tested 2.0.18–2.2.5${/Hello from the scripted model/.test(tw7Chat) ? "" : ` [chat: ${tw7Chat.slice(0, 400)}]`}`,
+                /Hello from the scripted model\./.test(tw7Chat) && /3\.0\.0 is outside the versions this bridge was tested with \(2\.0\.18–2\.2\.5\)/.test(tw7Chat));
             add("TW …its own `--version` was read (3.0.0), not a cached 2.x identity",
                 logLines.slice(tw7Log).some((l) => /fake-tw3\.js --version/.test(l)) && logLines.slice(tw7Log).some((l) => /CLI identity verified/.test(l)));
             ext.deactivate();
@@ -8529,6 +8533,15 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
                 const listed = (await v2api.sessionsRaw(work, 3000)).find((x) => x.id === made.id);
                 add(`TW Close on 2.0.18 falls back to the bridge's mark and keeps the title (${JSON.stringify(listed)})`, listed?.time?.archived === 42 && listed?.title === "close me on 2.0");
             }
+            ext.deactivate();
+            // 0.0.232: 2.2.5 measured (probe-opencode2 10 rows, wire 0 differences from 2.2.0; REFS): the top of the range is quiet.
+            process.env.FAKE_OC2_VERSION = "2.2.5";
+            settings.executable = writeFake("fake-tw225.js", [], `if (!process.argv.includes('--version') || true) require(${JSON.stringify(path.join(__dirname, "fixtures", "fake-opencode2.js"))})(process.argv);\n`);
+            const tw225 = stream();
+            await global.__handler({ prompt: "explain the cart on 2.2.5 [[probe:text]]" }, { history: [] }, tw225.response, tw225.token);
+            const tw225Chat = plain(tw225.chatMarkdown.join(""));
+            add(`TW 2.2.5 runs inside the tested range: no outside-the-range line${/Hello from the scripted model/.test(tw225Chat) ? "" : ` [chat: ${tw225Chat.slice(0, 300)}]`}`,
+                /Hello from the scripted model\./.test(tw225Chat) && !/outside the versions/.test(tw225Chat));
             ext.deactivate();
             process.env.FAKE_OC2_VERSION = "3.0.0";
             settings.executable = writeFake("fake-tw3.js", [], `if (!process.argv.includes('--version') || true) require(${JSON.stringify(path.join(__dirname, "fixtures", "fake-opencode2.js"))})(process.argv);\n`);
