@@ -5,6 +5,27 @@ actually measured, so nobody re-derives it.
 
 ---
 
+## 0.0.234: the first turn's MCP tools on 2.2.x come from a folder request (2026-11-02)
+
+**Dated 2026-11-02. Fixed in 0.0.234.** Linux, the scripted model, 2.2.5 and
+2.0.29 from scratch prefixes, the probe's MCP config (gitScan, a writer).
+
+A fresh 2.2.5 server, then plan calling gitScan (0.0.233 measured: `GET
+/api/mcp` + 1000 ms ran, a plain 3 s or 8 s wait did not). With `listAgents`
+for the folder first (`GET /api/agent`, what prewarm now sends): + 0 ms none
+(two runs), + 500, 1500 and 3000 ms ran. So any folder request starts its MCP
+servers, and their tools reach a turn 0.5–1 s later.
+
+`prewarmFolder` (`agents.ts`) runs `prewarmServer`, then `listAgents` for the
+folder; activation schedules it. `probe-opencode2.js`, a fresh server and 1 s
+before the first turn: 2.2.5 without the read gitScan not offered, with it ran;
+2.0.29 not offered both ways (no MCP by name before 2.2.0); 23 of 23 on each.
+The suite's `PV` fake records agent requests: red first (`[]`), green after.
+The scheduling tripwire passed in the red run only because it reads
+`src/extension.ts`, which was already edited.
+
+---
+
 ## 0.0.233: before 2.2.0 the agent list loads in stages (2026-11-02)
 
 **Dated 2026-11-02. Fixed in 0.0.233.** Linux, the scripted model, each

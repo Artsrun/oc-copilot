@@ -18,9 +18,9 @@ import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { config, logChannel, stamp } from "./core";
+import { config, logChannel, resolveFolder, stamp } from "./core";
 import { enforcedConfigContent } from "./enforce";
-import { currentServerGeneration, plainError } from "./net";
+import { currentServerGeneration, plainError, prewarmServer } from "./net";
 import { api } from "./oc-api";
 import { killTree, spawnOpenCode } from "./proc";
 
@@ -212,6 +212,20 @@ export function configStamp(cwd: string): string {
         stat(process.env.OPENCODE_CONFIG);
     }
     return digest(parts.join("\n"));
+}
+
+/** claim:prewarm-server — the server, then the folder's agent list. Reading it starts
+ * the folder's MCP servers on 2.x, whose tools reach a turn 0.5–1 s later (2.2.5: none
+ * on a first turn without it), and settles the list below 2.2.0 (AGENTS_SETTLE_MS),
+ * both off the turn path; the turn reads the cached list (REFS 0.0.234). */
+export function prewarmFolder(): Promise<string | undefined> | undefined {
+    const cwd = resolveFolder()?.folder.uri.fsPath;
+    return prewarmServer()?.then(async (base) => {
+        if (base && cwd) {
+            await listAgents(cwd, base, "plan");
+        }
+        return base;
+    });
 }
 
 export async function listAgents(cwd: string, base?: string, want?: string): Promise<AgentInfo[] | undefined> {

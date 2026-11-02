@@ -89,7 +89,7 @@ function activate(context) {
     }
     (0, commands_registry_1.registerCommands)(context);
     (0, git_scan_mcp_1.registerGitScan)(context);
-    const prewarm = setTimeout(() => void (0, net_1.prewarmServer)(), net_1.PREWARM_DELAY_MS);
+    const prewarm = setTimeout(() => void (0, agents_1.prewarmFolder)(), net_1.PREWARM_DELAY_MS);
     prewarm.unref?.();
     context.subscriptions.push({ dispose: () => clearTimeout(prewarm) });
 }
@@ -191,7 +191,7 @@ exports.__test = {
     setReplyConfirmWait: runs_1.setReplyConfirmWait,
     resetChipBackoff: chat_boot_1.resetChipBackoff,
     CHILD_MAX_ROWS: chat_boot_1.CHILD_MAX_ROWS,
-    prewarmServer: net_1.prewarmServer,
+    prewarmServer: agents_1.prewarmFolder,
     createLeakGate: format_1.createLeakGate,
     CONTEXT_HOLD_BYTES: context_markers_1.CONTEXT_HOLD_BYTES,
     createEchoGate: format_1.createEchoGate,

@@ -9007,6 +9007,7 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
             ext.deactivate();
             const pvSaved = { exe: settings.executable, port: settings.serverPort, t: settings.transport, poll: settings.serverStartupPollMs, pre: settings.prewarmServer };
             const pvSpawns = path.join(work, "pv-spawns.txt");
+            const pvAgents = path.join(work, "pv-agents.txt");
             const pvFake = writeFake(
                 "fake-pv-serve.js",
                 [],
@@ -9016,6 +9017,7 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
                 "  const t0 = Date.now();\n" +
                 "  require('http').createServer((q, s) => {\n" +
                 "    if (Date.now() - t0 < 1900) return; // booting: accepts, never answers\n" +
+                "    if (q.url.startsWith('/agent')) fs.appendFileSync(" + JSON.stringify(pvAgents) + ", q.url + '\\n');\n" +
                 "    s.setHeader('content-type', 'application/json');\n" +
                 "    const agents = Object.entries(JSON.parse(process.env.OPENCODE_CONFIG_CONTENT || '{}').agent || {}).map(([name, a]) => ({ name, permission: Object.entries(a.permission).flatMap(([permission, value]) => typeof value === 'string' ? [{permission, pattern: '*', action: value}] : Object.entries(value).map(([pattern, action]) => ({permission, pattern, action}))) }));\n" +
                 "    s.end(q.url.startsWith('/global/health') ? JSON.stringify({ healthy: true, version: '1.18.34' }) : q.url.startsWith('/agent') ? JSON.stringify(agents) : q.url.startsWith('/session') ? '[]' : '{}');\n" +
@@ -9047,6 +9049,11 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
                 typeof pvBase === "string" && /^http:\/\/127\.0\.0\.1:\d+$/.test(pvBase) && logLines.slice(pvLog).some((l) => l.includes(`prewarming the OpenCode server for ${work}`))
             );
             add(`PV a turn mid-boot joins that start: one spawn (saw ${pvSpawned})`, pvSpawned === 1 && /No OpenCode sessions in/.test(pvTurn.chatMarkdown.join("")));
+            // 0.0.234: reading a folder's agents starts its MCP servers on 2.x, whose tools
+            // reach a turn 0.5–1 s later (2.2.5): prewarm reads them, off the turn path.
+            const pvListed = fs.existsSync(pvAgents) ? fs.readFileSync(pvAgents, "utf8").trim().split("\n").filter(Boolean) : [];
+            add(`PV …then reads the folder's agent list, before any turn asks (${JSON.stringify(pvListed.slice(0, 2))})`,
+                pvListed.some((u) => u.includes(`directory=${encodeURIComponent(work)}`)));
             add("PV …and is told it waits on a boot", pvTurn.progress.some((t) => /Starting the OpenCode server/.test(t)));
             const pvOcc = lastEnv("fake-pv-serve.js").occ;
             // The overrides are the ones it started with: a subagent listed later is not read-only there until a restart.
@@ -9062,7 +9069,7 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
             add(
                 "PV activation schedules it after startup, off the activation path",
                 pvPkg.activationEvents.includes("onStartupFinished") &&
-                /setTimeout\(\(\) => void prewarmServer\(\), PREWARM_DELAY_MS\)/.test(fs.readFileSync(path.join(repoDir, "src", "extension.ts"), "utf8"))
+                /setTimeout\(\(\) => void prewarmFolder\(\), PREWARM_DELAY_MS\)/.test(fs.readFileSync(path.join(repoDir, "src", "extension.ts"), "utf8"))
             );
             ext.deactivate();
             delete vscodeStub.workspace.isTrusted;

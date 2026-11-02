@@ -178,6 +178,8 @@ OpenCode's server (started on demand). Debug: the output channel logs
 - **The server is up before you ask** <!-- claim:prewarm-server -->: a trusted
   window starts (or adopts) the OpenCode server a few seconds after VS Code
   starts (`prewarmServer`), so the first message does not wait for its boot.
+  It then reads the folder's agents, which also starts the folder's MCP
+  servers: on OpenCode 2.2 the first message has its MCP tools (gitScan too).
 - **Files open on click** <!-- claim:file-links -->: a workspace file the answer
   names in inline code (`src/cart.ts:42`) becomes a pill that opens it at that
   line; an accordion row that read or edited one file opens it too.
@@ -559,6 +561,14 @@ All under `opencodeCopilotBridge.`.
 
 The last five releases; the full history is `CHANGELOG.md` in the repository.
 
+### 0.0.234
+
+- **OpenCode 2.2: the first message after VS Code starts has its MCP tools.**
+  OpenCode starts a folder's MCP servers on its first request, and their tools
+  arrive about a second later, so a first message had none (gitScan included).
+  The server prewarm now also reads the folder's agents, which starts them. On
+  2.0 and 2.1 it settles the agent list ahead of the first message. Checks `PV`.
+
 ### 0.0.233
 
 - **OpenCode 2.0 and 2.1: the first message after the server starts is sent
@@ -600,13 +610,4 @@ The last five releases; the full history is `CHANGELOG.md` in the repository.
   starts. The status bar names a running turn and its time, then the context
   share. Timing checks measure growth, not a fixed budget.
   Checks `TW`, `SE`, `ST`, `GT`.
-
-### 0.0.229
-
-- **OpenCode: Worktrees** (palette and Quick Actions): the worktrees
-  `/worktree` made here, each with what it holds, and Show changes, Open,
-  Remove — plus **Remove all without changes**.
-- **Show full diff opens VS Code's multi-file diff**, a row per file against
-  the worktree's base; nothing is written to show it.
-- `/worktree` with no task lists the worktrees it made. Checks `WT14`–`WT17`, `QA`.
 

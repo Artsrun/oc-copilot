@@ -238,6 +238,19 @@ const { runCapture } = out("proc.js");
         return [fs.existsSync(mcpTarget) ? "CREATED" : mcpGot(r, false), note(r)];
     });
     delete settings.readOnlyTools;
+    // 0.0.234: prewarm reads the folder's agent list (prewarmFolder), which starts its MCP
+    // servers. The first message comes after it: 1 s stands for that gap here (2.2.5: 0.5 s
+    // was enough; a wait with no request starts nothing). The pair isolates the read.
+    const firstTurnMcp = async (readList) => {
+        stopServer();
+        const warmed = await out("net.js").warmServer(project);
+        if (readList && warmed) await out("agents.js").listAgents(project, warmed, "plan");
+        await new Promise((r) => setTimeout(r, 1000));
+        const r = await plan("call:gitScan");
+        return [mcpGot(r, /Working tree|Branch/i.test(r.text) && "runs"), note(r)];
+    };
+    await row("control: first turn, no agent list read before it · gitScan", vMajor === 1 ? "runs" : "not offered", () => firstTurnMcp(false));
+    await row("prewarm: first turn after the folder's agent list was read · gitScan", mcpByName ? "runs" : "not offered", () => firstTurnMcp(true));
     stopServer();
     settings.enforceReadOnly = false;
     await row("control: enforceReadOnly off · plan shell echo > file", "CREATED", async () => {

@@ -2,7 +2,7 @@ import * as vscode from "vscode";
 
 import { logChannel, resolveFolder, setExtensionContext, setLogChannel, stamp } from "./core";
 import { expandShimVar, readShimTarget, resolveExecutable, tokenizeCmdLine } from "./proc";
-import { PREWARM_DELAY_MS, httpGetJson, httpPostJson, knownServerBase, lastServeLine, prewarmServer, setStartupDeadline, stopServer, withDirectory } from "./net";
+import { PREWARM_DELAY_MS, httpGetJson, httpPostJson, knownServerBase, lastServeLine, setStartupDeadline, stopServer, withDirectory } from "./net";
 import { api, serverMajor } from "./oc-api";
 import { toolFilePath } from "./metrics";
 import { discoverOpenCodeEnv, openCodeConfigModel, readJsonc, summariseEnv } from "./env";
@@ -23,7 +23,7 @@ import { contextNote, effortFor, getModelCatalog, higherEffort, modelLabel, pars
 import { compactSession, emitKeyedDelta, isMissingSessionError, isMissingSessionRun, noteTask, partDeltaOf, providerRetryOf, safeSessionId, sessionPath, sessionRoot, setReplyConfirmWait, stepDetail, readOnlyReach, turnPermission } from "./runs";
 import { coldEnforcement, enforcedConfigContent, readOnlyLeaks } from "./enforce";
 import { laneProblem } from "./compose";
-import { laneAgentProblem, parseAgentList } from "./agents";
+import { laneAgentProblem, parseAgentList, prewarmFolder } from "./agents";
 import { CHILD_MAX_ROWS, GROUP_MAX_ROWS, KIND_COMMAND_NAMES, LANE_ANSWER_CAP, LANE_STORE_CAP, SETTLE_MS, chatStream, commandAliases, outcomeOf, recallLanes, rememberLanes, resolveAlias, retryLanesPrompt, ROUTED_COMMANDS, followupsFor, resetChipBackoff, nextMilestone, splitLanes, startHeartbeat, stepLabel, supportsTaskProgress, suggestFollowups, thoughtLine, SLASH_COMMANDS } from "./chat-boot";
 import { handleChat } from "./chat";
 import { badge, chipOf, createBadger, followupsProblems } from "./followups";
@@ -76,7 +76,7 @@ export function activate(context: vscode.ExtensionContext): void {
     registerCommands(context);
     registerGitScan(context);
     // claim:prewarm-server — off the activation path, cancelled on deactivate.
-    const prewarm = setTimeout(() => void prewarmServer(), PREWARM_DELAY_MS);
+    const prewarm = setTimeout(() => void prewarmFolder(), PREWARM_DELAY_MS);
     prewarm.unref?.();
     context.subscriptions.push({ dispose: () => clearTimeout(prewarm) });
 }
@@ -193,7 +193,8 @@ export const __test = {
     setReplyConfirmWait,
     resetChipBackoff,
     CHILD_MAX_ROWS,
-    prewarmServer,
+    // What activation schedules: the server, then the folder's agent list.
+    prewarmServer: prewarmFolder,
     createLeakGate,
     CONTEXT_HOLD_BYTES,
     createEchoGate,

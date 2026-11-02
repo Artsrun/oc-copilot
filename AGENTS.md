@@ -314,7 +314,9 @@ history belongs in `CHANGELOG.md`, not in the source.
   inside Code Mode's `execute`, which can POST anywhere and create worktrees:
   denied on read-only turns, so before 2.2.0 read-only turns have no MCP tools.
   From 2.2.0 plan is offered a `readOnlyTools` MCP tool by name, and no other
-  (2.0.29, 2.1.4 none; 2.2.0, 2.2.5 by name; `probe-opencode2.js`).
+  (2.0.29, 2.1.4 none; 2.2.0, 2.2.5 by name; `probe-opencode2.js`). A folder's
+  MCP servers start with its first request, and their tools reach a turn 0.5–1 s
+  later: prewarm reads the folder's agents for that (`prewarmFolder`, `PV`).
 - **Before 2.2.0 a folder's agent list loads in stages**, started by its first
   `GET /agent`: `[]`, then the stock rules alone for ~200–280 ms, then with the
   injected overrides (2.0.29: plan 7 → 39 rules; bisected: 2.1.4 the last, 2.2.0

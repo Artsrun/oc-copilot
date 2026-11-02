@@ -3,6 +3,21 @@
 Full release history, newest first; releases before the last one are condensed
 to their summary and headlines. The README ships the last five.
 
+### 0.0.234
+
+The first turn after VS Code starts has the folder's MCP tools on OpenCode 2.2.
+
+- **Prewarm reads the folder's agent list** (`prewarmFolder`, `agents.ts`):
+  activation schedules the server's start and then `listAgents` for the
+  folder. On 2.x a folder's MCP servers start with its first request and their
+  tools reach a turn 0.5–1 s later; prewarm made no such request, so the first
+  turn had none. On 2.2.5: `listAgents`, then a plan turn calling gitScan,
+  after 0 ms none (twice), after 500, 1500 or 3000 ms it ran. Below 2.2.0 the
+  same read settles the staged agent list off the turn path (0.0.233). Checks
+  `PV` (red first: no agent request after the start; the scheduling tripwire).
+- **Probe rows** (`probe-opencode2.js`): the first turn on a fresh server, with
+  and without the agent list read before it, each after 1 s.
+
 ### 0.0.233
 
 The first plan turn on OpenCode 2.0.x and 2.1.x is sent again.
