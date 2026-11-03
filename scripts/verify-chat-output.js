@@ -261,6 +261,8 @@ const repoDir = path.join(__dirname, "..");
 let quickPickScript;
 const quickPicksShown = [];
 let lastStatusItem;
+// Every text the bar was given, in order: a value up for less than a poll still counts.
+const statusWrites = [];
 const registeredCommands = new Map();
 // 0.0.229: the worktree diff's base side (`ocb-base:`), read back by WT16.
 const contentProviders = new Map();
@@ -306,7 +308,14 @@ const vscodeStub = {
         // v184: kept, so a check can read what the bar says after a turn.
         createStatusBarItem: () =>
             (lastStatusItem = {
-                text: "",
+                _text: "",
+                get text() {
+                    return this._text;
+                },
+                set text(value) {
+                    this._text = value;
+                    statusWrites.push(value);
+                },
                 tooltip: "",
                 command: "",
                 backgroundColor: undefined,
@@ -2046,10 +2055,10 @@ function collectConfigProperties(configuration) {
     memento.clear();
     const cj = stream();
     // 0.0.230 (P4): the status bar names the running turn and its time, at milestones.
-    const cjBar = [];
-    const cjPoll = setInterval(() => lastStatusItem && cjBar.push(lastStatusItem.text), 100);
+    // Read at the writer: a 100 ms poll missed `· 3s` when a stall left it up just before the cap (0.0.237).
+    const cjBarFrom = statusWrites.length;
     await global.__handler({ prompt: "a run long enough to tick several times" }, {}, cj.response, cj.token);
-    clearInterval(cjPoll);
+    const cjBar = statusWrites.slice(cjBarFrom);
     add(`ST the status bar shows the running turn and its time (${[...new Set(cjBar)].join(" | ").slice(0, 200)})`, cjBar.some((t) => /^\$\(sync~spin\) OpenCode · plan · [3-9]s$/.test(t)));
     add("ST …and is back to idle after it", !!lastStatusItem && !/sync~spin/.test(lastStatusItem.text));
     add("CJ progress calls stay well below one per second", cj.progress.length < 8);

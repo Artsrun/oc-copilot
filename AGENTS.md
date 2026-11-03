@@ -212,6 +212,8 @@ pick the next free one.
 - **Assert what the run produced** (argv read back, what reached chat), not what
   a function returned. `hostStream()` models the real host — use it for rendering.
 - **Source-text tripwires are legitimate** (`BF`, `MA`); they read text, not the AST.
+- **Record a passing value at its writer, never by polling** (`statusWrites`): a poll
+  measures the machine (`ST`, 0.0.237).
 - **Reproduce the defect first.**
 - **Rewrite a fake with `writeFake`**, never a bare write: on POSIX the fake is
   the file `spawn` runs, and without its shebang `/bin/sh` reads it. Windows

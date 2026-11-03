@@ -19,11 +19,14 @@ pinned.
   next switch, unlike 1.x: a turn without one puts the default back.
 - **A level the model does not list is not sent**: on 2.x it would fail the run.
   The turn runs at the default and the log says why; so does a read that fails.
-- Written from OpenCode's source (2.0.18, 2.0.29, 2.1.4, 2.2.0, 2.2.5), not
-  measured here: three new rows in `probe-opencode2.js` measure it on real binaries
-  (REFS 0.0.237).
+- Written from OpenCode's source (2.0.18 to 2.2.5), then measured: three new rows in
+  `probe-opencode2.js` pass on real 2.0.29 and 2.2.5 (CI, Linux, the scripted model;
+  REFS 0.0.237).
 - Words: `readOnlyTools`'s description said 2.x has no MCP tools on read-only
   turns; 2.2.0 does.
+- **Gate: `ST` missed the bar's `· 3s`** on one Ubuntu CI run. It polled every
+  100 ms, and a stall could leave that text up for less than a poll before the cap
+  ended the turn. It now reads every write; the assertion is the same.
 
 ### 0.0.236
 

@@ -7,9 +7,12 @@ actually measured, so nobody re-derives it.
 
 ## 0.0.237: on 2.x a variant needs a model ref (2026-11-03)
 
-**Dated 2026-11-03. Fixed in 0.0.237. Read from source, not measured on a real
-binary:** installing one was refused in this session. The new probe rows are what
-measures it.
+**Dated 2026-11-03. Fixed in 0.0.237.** Written from source, since installing a real
+binary was refused in the authoring session. Then measured by `probes.yml`, dispatched
+on the branch (`216eb24`, Linux, the scripted model): the three new rows of
+`probe-opencode2.js` pass on 2.0.29 and 2.2.5, reading `high`, then `default`, then
+`default answered` back from the session: `ALL 26 ROWS AS EXPECTED`. The `latest` cell
+was 2.2.5 too. Not measured: a real model, and 2.0.18, 2.1.x or 2.2.0.
 
 - **The route.** `POST /api/session/:id/model` takes `{model: {id, providerID,
   variant?}}`, `id` and `providerID` required (v2.opencode.ai API reference;
@@ -33,6 +36,11 @@ measures it.
   promise: a level the model lacks runs at the default.
 - **Not covered:** metadata and the `effort` line in chat still name the level asked
   when it was not sent, on both majors. The log has the reason.
+- **`ST` red on one Ubuntu CI run** (`216eb24`; Windows, macOS, 3 earlier Ubuntu runs
+  and 5 local ones green): it saw only `OpenCode · plan`, no `· 3s`. Scratch probe, the
+  real heartbeat with a 100 ms poll and a 4 s cap, stalling the event loop: 1495 ms and
+  3480 ms stalls made the poll miss what the bar was written; 1400–1480 ms and shorter
+  did not. Which stall the runner had is not known. The check now records every write.
 
 ---
 
