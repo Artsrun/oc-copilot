@@ -53,10 +53,25 @@ function ledger(file) {
         .map(([version, sha]) => ({ version, sha }));
 }
 
+// A `.cmd` shim started by a quoted bare name gets `%~dp0` = the current folder, so
+// VS Code's `code.cmd` runs `<cwd>\..\Code.exe` (REFS, 2026-11-03): name the file.
+function resolveEditor(editor) {
+    if (!win || /[\\/]/.test(editor)) return editor;
+    const exts = (process.env.PATHEXT || ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean);
+    for (const dir of (process.env.PATH || "").split(path.delimiter).filter(Boolean)) {
+        for (const ext of exts) {
+            const file = path.join(dir, editor + ext);
+            if (fs.existsSync(file)) return file;
+        }
+    }
+    return editor;
+}
+
 // Editor CLIs are `.cmd` shims on Windows: they need a shell, so every argument is quoted.
 function run(editor, argv, opts = {}) {
     const quoted = win ? argv.map((a) => `"${a.replace(/"/g, "")}"`) : argv;
-    return execFileSync(win ? `"${editor}"` : editor, quoted, { encoding: "utf8", shell: win, windowsHide: true, ...opts });
+    const file = resolveEditor(editor);
+    return execFileSync(win ? `"${file}"` : file, quoted, { encoding: "utf8", shell: win, windowsHide: true, ...opts });
 }
 
 function main() {
@@ -80,7 +95,7 @@ function main() {
     for (const editor of opt.editors) {
         let listed;
         try {
-            listed = run(editor, ["--list-extensions", "--show-versions"]);
+            listed = run(editor, ["--list-extensions", "--show-versions"], { stdio: ["ignore", "pipe", "pipe"] });
         } catch {
             console.log(`${editor}: not found, skipped`);
             continue;

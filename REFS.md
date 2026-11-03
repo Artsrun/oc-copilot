@@ -5,6 +5,37 @@ actually measured, so nobody re-derives it.
 
 ---
 
+## 0.0.236 on Windows: the first probe run, and `update.js`'s `code` (2026-11-03)
+
+**Dated 2026-11-03. Measured, not fixed in the extension.** Windows 11, Node
+22.23.2, OpenCode 2.2.5 (`@opencode/cli`, npm global), the scripted model. The
+first real-binary probe run on Windows; CI's `probes.yml` runs on Linux only.
+
+`probe-readonly.js`: 9 of 9 (2.x over ACP). `probe-opencode2.js`: 21 of 22, twice.
+Every read-only row held (plan, plan → explore, plan → general wrote nothing;
+outside reads and `.env` refused) and every control was `CREATED`. The one red
+row is `control: first turn, no agent list read before it · gitScan`: it ran
+(expected not offered), so the prewarm row's green proves nothing on this machine.
+
+Why, timed by wrapping `http.request` around the unchanged probe: the control's
+own turn reads the agent list for read-only evidence (`readOnlyEvidence`, `GET
+/api/agent`) before it creates the session. On a fresh server that read took
+897 ms and 910 ms here (5 ms on a folder already loaded), so the prompt left
+929 ms after the folder's first request: inside the 0.5–1 s in which 0.0.234 saw
+MCP tools arrive. The row assumes nothing reaches the folder before the prompt;
+on a slow first agent-list load the evidence read itself starts MCP. Linux's
+duration for that read was not timed. Not a safety finding: the tool offered is
+the `readOnlyTools` one.
+
+`node scripts/update.js` found no editor: `code: not found, skipped` although
+`code.cmd` is on `PATH`. `run()` passes `"code"` quoted to `cmd.exe`, and a `.cmd`
+started by a quoted bare name gets `%~dp0` = the current folder, so VS Code's
+shim ran `<cwd>\..\Code.exe` (reproduced from the repo and from `%TEMP%`; an
+unquoted bare name and a quoted full path both printed `1.144.1`). Fixed in the
+script: a bare editor name is resolved on `PATH` (with `PATHEXT`) first.
+
+---
+
 ## 0.0.236: git's real path vs VS Code's opened path (`WT11` on macOS/Windows CI) (2026-11-02)
 
 **Dated 2026-11-02. Fixed in 0.0.236.** CI run 41541276057 (PR head `4be521b`)
