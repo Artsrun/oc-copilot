@@ -1,5 +1,7 @@
 # v216 Rechecked Hardening and Dead-code Cleanup Implementation Plan
 
+> **Historical (2026-11-03):** released as 0.0.216; unticked boxes below are not a to-do list. Read-only has moved on since: see `docs/flow/03-transport.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Deliver 0.0.216 with the confirmed shell write closed, honest enforcement notices, and removal of demonstrably redundant code and stale comments.

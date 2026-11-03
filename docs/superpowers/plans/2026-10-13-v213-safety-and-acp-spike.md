@@ -1,5 +1,7 @@
 # v213 Safety and ACP Spike Implementation Plan
 
+> **Historical (2026-11-03):** released as 0.0.213 and 0.0.214; unticked boxes below are not a to-do list. Its OpenCode 2 refusal has since become `opencode2`.
+
 > **For agentic workers:** Follow the repository instructions and execute this plan task-by-task inline. Steps use checkbox (`- [ ]`) syntax for tracking. Delegate only when explicitly authorized by the user or applicable repository instructions.
 
 **Goal:** Release 0.0.213 with the identified v212 safety gaps closed. The ACP evidence work below is deferred follow-up, outside this release.

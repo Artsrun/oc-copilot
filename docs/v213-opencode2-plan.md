@@ -1,5 +1,9 @@
 # v218+ plan — Smooth Switch to OpenCode 2 (Instructions for Opus 5.5)
 
+**Status (2026-11-03): superseded.** OpenCode 2 shipped through its HTTP API
+(`opencode2`, 0.0.221–0.0.223), not the ACP transport planned here; ACP stays a
+probe (`scripts/probe-acp.js`). Current state: `docs/flow/08-opencode2-and-harness.md`.
+
 Dated 2026-10-16 (updated after 0.0.217). Trigger: company transition to OpenCode 2:
 
 ```bash

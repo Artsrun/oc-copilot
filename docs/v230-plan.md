@@ -1,6 +1,6 @@
 # 0.0.230 plan — proposals to choose from
 
-Dated 2026-10-29. Base `fbc9392` (0.0.229, 1295 checks). Status: **chosen 2026-10-29: P1, P2 and P4**, in the order P4, P2, P1. Each proposal is fixed in scope: what is in,
+Dated 2026-10-29. Base `fbc9392` (0.0.229, 1295 checks). Status: **chosen 2026-10-29: P1, P2 and P4**, in the order P4, P2, P1. Built: P4 and P2's items 1–3 in 0.0.230 (P2's item 4 is not recorded in the changelog or REFS); most of P1's step 2 in 0.0.231 and 0.0.235 (README, Diagnose, a warning outside chat; `/help` does not mention Local). Not done: P1's step 1 (the manual harness table is not in REFS) and step 3 (language model tools). P3 was not chosen. Each proposal is fixed in scope: what is in,
 what is out, the order, and what proves it done. Every one ends the same way:
 checks red first, fix, `npm run ship` green, mutants caught, clean room, VSIX,
 `--record`, commit, push.
