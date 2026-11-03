@@ -98,7 +98,9 @@ model's own (`low`, `medium`, `high`, `xhigh`, `max`…, shown in the model
 picker). OpenCode ignores a level the model lacks without a word, so the bridge
 checks the catalog first: `effort:` is refused before anything runs, the setting
 runs at the model's default with a note, and each `/parallel` lane is checked
-against its own model. <!-- claim:effort -->
+against its own model. On OpenCode 2 the level goes with the model, so with none
+pinned it goes on the model the turn would use; one that model does not list runs
+at its default, and the log says why. <!-- claim:effort -->
 
 **Short model names.** `model:tundra` is the one listed model whose id or name
 is `tundra` (any case), or starts with it (3+ letters). Two matches or none: the
@@ -572,6 +574,12 @@ All under `opencodeCopilotBridge.`.
 
 The last five releases; the full history is `CHANGELOG.md` in the repository.
 
+### 0.0.237
+
+- **OpenCode 2: `effort:` works with no model pinned.** The level was dropped
+  without a word, and the turn ran at the model's default. It now reaches the run
+  and lasts that turn only. Checks `TW`.
+
 ### 0.0.236
 
 - **`/worktree` reads a file attached through a symlinked path.** A checkout
@@ -600,13 +608,3 @@ The last five releases; the full history is `CHANGELOG.md` in the repository.
   it before the read-only rules were in, then refused the turn as unverified.
   It now waits for the list to settle (about a second, once per server start).
   OpenCode 2.2 and later are unaffected. Checks `TW`.
-
-### 0.0.232
-
-- **Tested with OpenCode 1.19.5 and 2.2.5.** Both checked by the read-only
-  probes and against recorded wire traffic (no format changes since 1.19.0 and
-  2.2.0), so neither shows the "outside the tested versions" note any more.
-- **The nightly checks cover more:** plan cannot read outside the folder or
-  `.env`; an MCP tool runs on a plan turn only when `readOnlyTools` lists it;
-  `/dev` is not sandboxed and can work outside the folder. Checks `VN`, `TW`.
-

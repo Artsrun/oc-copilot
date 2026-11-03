@@ -3,6 +3,28 @@
 Full release history, newest first; releases before the last one are condensed
 to their summary and headlines. The README ships the last five.
 
+### 0.0.237
+
+On OpenCode 2, `effort:` and the `effort` setting reach the run when no model is
+pinned.
+
+- **Fixed: with no model named, 2.x never got the level** (`sessionPrompt`,
+  `oc-api.ts`). `variant` went only inside `POST …/model`, which was sent only
+  for a pinned model, and 2.x's prompt takes none: the turn ran at the default
+  and chat still said `effort`. Now `unpinnedModel` sends the model the run would
+  use: the session's, else the agent's own if listed (from 2.1.4; before that a run
+  ignores it), else `GET /api/model/default`. OpenCode's own `run --variant` does the
+  same, without the agent step. Checks `TW` (red first: 8).
+- **A level does not outlive its turn.** A 2.x session keeps the level until the
+  next switch, unlike 1.x: a turn without one puts the default back.
+- **A level the model does not list is not sent**: on 2.x it would fail the run.
+  The turn runs at the default and the log says why; so does a read that fails.
+- Written from OpenCode's source (2.0.18, 2.0.29, 2.1.4, 2.2.0, 2.2.5), not
+  measured here: three new rows in `probe-opencode2.js` measure it on real binaries
+  (REFS 0.0.237).
+- Words: `readOnlyTools`'s description said 2.x has no MCP tools on read-only
+  turns; 2.2.0 does.
+
 ### 0.0.236
 
 A file attached to a `/worktree` turn through a symlinked path reaches the run.

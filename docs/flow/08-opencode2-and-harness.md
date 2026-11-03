@@ -43,7 +43,7 @@ answering health with a web page is the second way a 2.x is recognised.
 | Server identity | Adopts a listener that names a `version` | Own server only; `/api/info` with the printed password |
 | Prompt | Answered when the run ends | Queued, then awaited on the run's own events |
 | Agent and model | In the message body | `POST` to the session before each prompt |
-| Effort | `--variant`, or `variant` in the body | Inside the model `POST` only, so with no model named it is not sent (`sessionPrompt`, read in code on 0.0.236, not run) |
+| Effort | `--variant`, or `variant` in the body; an unknown level is ignored; a prompt without one resets | Inside the model `POST` only; with no model named, on the session's, the agent's (from 2.1.4) or the default (`unpinnedModel`). An unknown level fails the run, so the catalog is read first; the session keeps the level, so a turn without one puts the default back |
 | Rule format | `{permission, pattern, action}`, `agent.<n>.permission` | `{action, resource, effect}`, `agents.<n>.permissions` (`toV2Rules`, `toV1Rules`) |
 | Your own rules in `opencode.json` | Applied, and read back | Ignored without a word; `.opencode/agents/*.md` frontmatter is read. Named once per folder (`v1PermissionRules`) |
 | Unverified plan turn | Warned, no subagents | Refused: 2.x's own `plan` writes |

@@ -2,7 +2,7 @@
   "name": "opencode-copilot-bridge",
   "displayName": "OpenCode Copilot Bridge",
   "description": "Delegate research, planning, and development to OpenCode from GitHub Copilot Chat.",
-  "version": "0.0.236",
+  "version": "0.0.237",
   "publisher": "local",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -320,7 +320,7 @@
             "default": [
               "git-scan_gitScan"
             ],
-            "markdownDescription": "With `enforceReadOnly`, the tools a read-only turn may use besides reading, searching and the web: MCP tools by OpenCode permission name, `<server>_<tool>` (wildcards allowed, e.g. `jira_get*`). List only tools that do not change anything. A name that would allow a tool that writes, runs commands or starts subagents is left out (logged). Default: the bridge's gitScan. OpenCode 1.x; on 2.x MCP tools run inside Code Mode, which read-only turns deny."
+            "markdownDescription": "With `enforceReadOnly`, the tools a read-only turn may use besides reading, searching and the web: MCP tools by OpenCode permission name, `<server>_<tool>` (wildcards allowed, e.g. `jira_get*`). List only tools that do not change anything. A name that would allow a tool that writes, runs commands or starts subagents is left out (logged). Default: the bridge's gitScan. On OpenCode 2 from 2.2.0; 2.0 and 2.1 keep MCP tools inside Code Mode, which read-only turns deny."
           },
           "opencodeCopilotBridge.attachDevToServer": {
             "type": "boolean",

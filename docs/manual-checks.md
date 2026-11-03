@@ -78,7 +78,20 @@ connected. Without that entry `/env` shows the guidance (with `gitScan` on).
 - A CLI run that exits with an error → its first stderr error line, the debug
   log button, and chips that fit it.
 
-## This release: 0.0.231–0.0.236 — quick pass (about 15 minutes)
+## This release: 0.0.237 — quick pass (about 5 minutes)
+
+On 2.x with `opencode2` on, no model pinned (`model` empty), and a model with
+effort levels.
+
+1. **Effort reaches the run**: `effort:high Explain HTTP caching in two lines.` The
+   log's line for the turn names `variant=high`, and OpenCode's own app shows the
+   session on that level.
+2. **It lasts one turn**: a second message without `effort:`: the session is back at
+   the model's default.
+3. **A level the model lacks**: `effort:nosuchlevel Say hi.` It answers, and the log
+   says `effort nosuchlevel not sent`.
+
+## 0.0.231–0.0.236 — quick pass (about 15 minutes)
 
 VS Code 1.142 or later for items 1 and 2; items 4 and 5 need the 2.x versions
 named, with `opencode2` on. Windows and macOS have the least coverage: say which

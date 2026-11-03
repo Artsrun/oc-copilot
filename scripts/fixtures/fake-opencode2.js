@@ -8,6 +8,8 @@
 //      FAKE_OC2_VERSION  the version it names (default: the recording's)
 //      FAKE_OC2_DROP=1   the server ignores the injected overrides (a 2.x that
 //                        does not apply them: the bridge must refuse plan turns)
+//      FAKE_OC2_AGENT_MODEL  `provider/id`: the plan agent's own model
+//      FAKE_OC2_DEFAULT  "none" answers null at /model/default, "gone" 404s
 "use strict";
 const fs = require("node:fs");
 const path = require("node:path");
@@ -52,6 +54,7 @@ module.exports = (argv) => {
     const modes = { build: "primary", plan: "primary", explore: "subagent", general: "subagent" };
     const agentInfo = (id, stockOnly = false) => ({
         id, name: id, mode: modes[id], hidden: false,
+        ...(id === "plan" && process.env.FAKE_OC2_AGENT_MODEL ? { model: { providerID: process.env.FAKE_OC2_AGENT_MODEL.split("/")[0], id: process.env.FAKE_OC2_AGENT_MODEL.split("/")[1] } } : {}),
         permissions: [...stock[id], ...(stockOnly || process.env.FAKE_OC2_DROP === "1" ? [] : occ.agents?.[id]?.permissions ?? []), R("browser", "deny")]
     });
     // Before 2.2.0 a folder's agents load in stages, started by its first request: `[]`, then
@@ -128,7 +131,11 @@ module.exports = (argv) => {
             if (p === "/agent") return send(200, { location: { directory: u.searchParams.get("location[directory]") }, data: agentList(u.searchParams.get("location[directory]")) });
             const agent = p.match(/^\/agent\/([^/]+)$/);
             if (agent) return stock[agent[1]] ? send(200, { data: agentInfo(agent[1]) }) : send(404, { _tag: "AgentNotFoundError" });
-            if (p === "/model") return send(200, { data: [{ id: "scripted", modelID: "scripted", providerID: "probe", name: "Scripted", limit: { context: 64000, output: 4096 }, variants: [{ id: "high" }], enabled: true }] });
+            // 2.2.5's model route: the catalog, and the model a session with none runs on.
+            const catalog = [{ id: "scripted", modelID: "scripted", providerID: "probe", name: "Scripted", limit: { context: 64000, output: 4096 }, variants: [{ id: "high" }], enabled: true }];
+            if (process.env.FAKE_OC2_AGENT_MODEL === "probe/other") catalog.push({ id: "other", modelID: "other", providerID: "probe", name: "Other", limit: { context: 64000, output: 4096 }, variants: [{ id: "high" }, { id: "low" }], enabled: true });
+            if (p === "/model") return send(200, { data: catalog });
+            if (p === "/model/default") return process.env.FAKE_OC2_DEFAULT === "gone" ? send(404, { _tag: "NotFound", path: p }) : send(200, { data: process.env.FAKE_OC2_DEFAULT === "none" ? null : catalog[0] });
             if (p === "/session/active") return send(200, { data: Object.fromEntries([...turns.keys()].map((s) => [s, { type: "running" }])) });
             if (p === "/session" && req.method === "POST") {
                 n += 1;
@@ -157,7 +164,12 @@ module.exports = (argv) => {
                 return send(204);
             }
             if (!tail && req.method === "DELETE") { sessions.delete(sid); return send(204); }
-            if (tail === "/agent" || tail === "/model") return send(200, { data: {} });
+            if (tail === "/agent") return send(200, { data: {} });
+            // The session keeps a model and its variant until the next switch; info names "default" (2.2.5 session/info.ts).
+            if (tail === "/model") {
+                s.model = { ...json?.model, variant: json?.model?.variant ?? "default" };
+                return send(204);
+            }
             if (tail === "/message") return send(200, { data: [] });
             if (tail === "/prompt") {
                 const kind = kindOf(String(json?.text ?? ""));

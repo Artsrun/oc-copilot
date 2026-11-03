@@ -179,7 +179,7 @@ A probe measures one thing on this machine and prints it. Paste its output.
 | `scripts/probe-subtask-lanes.js` | Against a real server: whether a `subtask` part runs a project-local subagent (#21659), before lanes move to server-side delegation. |
 | `scripts/probe-readonly.js` | Against a real binary, through `out/` (`runOpenCode`, `ensureServer`, `createServerSession`): can a read-only turn write — cold run, managed serve, an adopted one, another window's; 2.x over ACP. One line per row; control rows must be `CREATED`. `npm run compile` first. |
 | `scripts/probe-acp.js` | `opencode acp` over JSON-RPC: handshake, prompt, cancel, load; the transcript as JSONL. Also the ACP client `probe-readonly.js` uses. |
-| `scripts/probe-opencode2.js` | With `opencode2`, against a real 2.x through `out/`: text turn, plan writes (absent ×3), `/dev` and enforcement-off controls (`CREATED`), a subagent, Stop, `/sessions`; reads outside the folder and `.env` (refused), `/dev` outside (known), MCP only via `readOnlyTools`, plan first on a fresh server. Expectations that differ by version name the version measured. |
+| `scripts/probe-opencode2.js` | With `opencode2`, against a real 2.x through `out/`: text turn, plan writes (absent ×3), `/dev` and enforcement-off controls (`CREATED`), a subagent, Stop, `/sessions`; reads outside the folder and `.env` (refused), `/dev` outside (known), MCP only via `readOnlyTools`, plan first on a fresh server, effort with no model named. Expectations that differ by version name the version measured. |
 | `scripts/record-wire-fixtures.js` | Records a real 1.x and 2.x server's frames per scripted turn into `scripts/fixtures/wire-v*.json`, the `TW` fakes' input. |
 | `scripts/probe-model.js` | The scripted OpenAI-compatible model both use (`[[probe:<action>]]`): every tool attempt certain, no provider, no cost. |
 
@@ -416,6 +416,12 @@ history belongs in `CHANGELOG.md`, not in the source.
   but 1.19.3 refuses one 2.x created ("Database is not empty and has no session
   table") on every spawn. Remembered per executable file, refused before any
   spawn until `/ping` (`dataFolderRefusal`, `SE`).
+- **On 2.x a variant goes only inside a model ref, and a session keeps both**
+  (`POST …/model`: `id` and `providerID` required; 2.2.5 source). A prompt takes
+  neither, so with no model named `unpinnedModel` sends the one the run would use,
+  and a turn without a level puts the default back: 1.x resets by itself, 2.x does
+  not. A level the model lacks fails the run on 2.x, where 1.x ignores it: read
+  the catalog first (`TW`, REFS 0.0.237).
 - **`opencode --version` costs ~0.7 s on 1.19 (the Bun binary starting)**:
   CLI first use awaits one shared check; later sends reuse it while the file
   behind the name is unchanged (`executableStamp`, file stats): a 2.x installer
