@@ -172,7 +172,7 @@ let servePassword;
 const serverAuths = new Map();
 const serverAuth = (base) => serverAuths.get(base);
 exports.serverAuth = serverAuth;
-const openCode2Allowed = () => (0, core_1.config)().get("opencode2", false) === true;
+const openCode2Allowed = () => (0, core_1.config)().get("opencode2", true) === true;
 exports.openCode2Allowed = openCode2Allowed;
 let servePort;
 const serveAlive = () => Boolean(serveProcess && serveProcess.exitCode === null);
@@ -278,10 +278,10 @@ function ensureCliIdentity(executable, cwd) {
     return check;
 }
 function markNotOpenCode1(executable, evidence) {
-    const error = Object.assign(new Error(`\`opencode\` here is not OpenCode 1: ${evidence}. The bridge drives OpenCode 1 only so far (its server API and permission rules), so nothing was run. ` +
-        "To keep OpenCode 2 and use @opencode, give the bridge its own 1.x: `npm i --prefix ~/.opencode1 opencode-ai@1`, set " +
+    const error = Object.assign(new Error(`\`opencode\` here is not OpenCode 1: ${evidence}, and with \`opencodeCopilotBridge.opencode2\` off the bridge drives OpenCode 1 only, so nothing was run. ` +
+        "Turn that setting on to drive it through its API, or give the bridge its own 1.x: `npm i --prefix ~/.opencode1 opencode-ai@1`, set " +
         "`opencodeCopilotBridge.executable` to `~/.opencode1/node_modules/.bin/opencode` (`opencode.cmd` on Windows), then run `/ping`. " +
-        "Or try `opencodeCopilotBridge.opencode2` (experimental): OpenCode 2 through its API. The README's *OpenCode 2* section says what the two share."), { code: "ENOTOPENCODE1" });
+        "The README's *OpenCode 2* section says what the two share."), { code: "ENOTOPENCODE1" });
     if (!notOpenCode1.has(executable)) {
         core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] ${executable}: ${error.message}`);
     }
@@ -304,7 +304,7 @@ function noteDataFolderClash(executable, output) {
     }
     const error = Object.assign(new Error("Nothing was run: OpenCode 1 cannot open its data folder — its `opencode.db` was created by OpenCode 2, without 1.x's `session` table. " +
         "Give 1.x its own folder: set `opencodeCopilotBridge.dataHome` (e.g. `~/.opencode1/data`), or start VS Code with `XDG_DATA_HOME` set, " +
-        "or turn on `opencodeCopilotBridge.opencode2`. `/ping` checks again."), { code: "EOPENCODEDATA" });
+        "or point `opencodeCopilotBridge.executable` at OpenCode 2. `/ping` checks again."), { code: "EOPENCODEDATA" });
     if (!dataClash.has(executable)) {
         core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] ${executable}: OpenCode 1 cannot open its data folder (created by OpenCode 2); nothing more is started until /ping`);
     }
@@ -339,7 +339,7 @@ function majorVersionNote(executable, output) {
     }
     else if (major !== undefined && major >= 2) {
         markNotOpenCode1(executable, `\`--version\` prints \`${(0, core_1.truncate)(output.trim(), 40)}\``);
-        return `OpenCode ${major}: the bridge drives 1.x only so far — README, *OpenCode 2*`;
+        return `OpenCode ${major}: \`opencode2\` is off — README, *OpenCode 2*`;
     }
     return undefined;
 }

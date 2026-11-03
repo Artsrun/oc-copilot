@@ -1,6 +1,6 @@
 # (・∀・) Chat flow: from Copilot Chat to OpenCode and back
 
-As of 0.0.237 (tested OpenCode: 1.18.27–1.19.5, and 2.0.18–2.2.5 with `opencode2`).
+As of 0.0.238 (tested OpenCode: 2.0.18–2.2.5, and 1.18.27–1.19.5).
 
 > **One-line truth** (´-ω-)
 > Copilot only routes a prompt, attachments and turn history to the `@opencode`

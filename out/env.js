@@ -42,6 +42,12 @@ exports.summariseEnv = summariseEnv;
 const fs = __importStar(require("node:fs"));
 const path = __importStar(require("node:path"));
 const node_process_1 = require("node:process");
+function mcpServerNames(mcp) {
+    const servers = mcp?.servers;
+    return servers && typeof servers === "object"
+        ? Object.keys(servers)
+        : Object.entries(mcp ?? {}).filter(([, value]) => value && typeof value === "object").map(([name]) => name);
+}
 function existsQuiet(target) {
     try {
         return fs.existsSync(target);
@@ -176,7 +182,7 @@ function discoverOpenCodeEnv(cwd) {
             for (const plugin of parsed?.plugin ?? []) {
                 out.push({ kind: "plugin", name: plugin, scope });
             }
-            for (const server of Object.keys(parsed?.mcp ?? {})) {
+            for (const server of mcpServerNames(parsed?.mcp)) {
                 out.push({ kind: "mcp", name: server, scope });
             }
             for (const agent of Object.keys(parsed?.agent ?? {})) {
@@ -223,7 +229,7 @@ function discoverOpenCodeEnv(cwd) {
             for (const plugin of parsed?.plugin ?? []) {
                 out.push({ kind: "plugin", name: plugin, scope: "project" });
             }
-            for (const server of Object.keys(parsed?.mcp ?? {})) {
+            for (const server of mcpServerNames(parsed?.mcp)) {
                 out.push({ kind: "mcp", name: server, scope: "project" });
             }
             for (const agent of Object.keys(parsed?.agent ?? {})) {

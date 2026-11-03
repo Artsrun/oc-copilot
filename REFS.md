@@ -5,6 +5,39 @@ actually measured, so nobody re-derives it.
 
 ---
 
+## 0.0.238: what 2.x does to a folder 1.x uses (2026-11-03)
+
+**Dated 2026-11-03. Measured:** `scripts/probe-data-folder.js` through `out/`, `probes.yml`
+on Linux, the scripted model, 1.19.5 then 2.0.29, and 1.19.5 then 2.2.5: `ALL 11 ROWS AS
+EXPECTED` on each, and the same answers on both. The rows' expectations were a first
+guess, written before either ran.
+
+| Step | Result |
+| --- | --- |
+| 1.x makes a session | answered |
+| 2.x starts on that folder; `GET /api/experimental/migration/v1` | `completed` on the first read |
+| 2.x lists the 1.x session | listed, at once |
+| 2.x, a chat bound to that session | answered, same session |
+| 2.x, a new session | answered |
+| 1.x again: opens the folder, lists and goes on in its session | answered, listed, same session |
+| 1.x, the session 2.x made | not listed |
+| 2.x again, a session 1.x made after the import | not listed |
+
+Row counts from a copy of the database, 2.2.5: after 1.x `session 1 · message 2 · part 4 ·
+event 16`, 20 tables. After 2.x `session 1 · session_v2 2 · message 2 · part 4 ·
+session_message 11 · event 0`, 29 tables. So 2.x leaves 1.x's session rows alone and
+clears `event`; source says the same (`database/v1-migration.bun.ts`: `DELETE FROM event`,
+then a copy into `session_v2`, once, then phase `completed`). After 1.x again, `event 45`.
+
+**The roadmap had this wrong.** It called moving a 1.x folder to 2.x one-way, and planned a
+warning before the first 2.x run. Only a folder 2.x *created* is closed to 1.x (0.0.224).
+
+**Not measured:** a large folder. The import runs in the background (`Effect.forkScoped`);
+until a session is imported, a chat bound to it should read as a stale session and start a
+new one (code read, not run). One session was done before the first read. Windows, macOS.
+
+---
+
 ## 0.0.237: on 2.x a variant needs a model ref (2026-11-03)
 
 **Dated 2026-11-03. Fixed in 0.0.237.** Written from source, since installing a real

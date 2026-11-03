@@ -7,7 +7,7 @@
 ```
 useServer = transport == "server" || (transport == "auto" && !isBuild)
 attachDev = transport == "auto" && setting attachDevToServer (default true)
-OpenCode 2: every turn goes through this window's server, whatever the two say
+OpenCode 2 (`opencode2`, on by default): every turn goes through this window's server, whatever the two say
 ```
 
 | Turn | Transport | Why |

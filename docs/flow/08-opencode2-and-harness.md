@@ -31,7 +31,8 @@ flowchart TD
   ON -->|yes| SRV --> API --> NOTE
 ```
 
-`opencode2` is off by default (`openCode2Allowed`). A 2.x installed over a 1.x is
+`opencode2` is on by default (`openCode2Allowed`, 0.0.238), and `false` is the way out. A
+2.x installed over a 1.x is
 caught because the check is of the file, not the name (`executableStamp`). A server
 answering health with a web page is the second way a 2.x is recognised.
 
@@ -73,11 +74,14 @@ first turn: only ever the safe way. On Windows the first agent-list read took ab
 900 ms, so one control row of `scripts/probe-opencode2.js` reads differently there
 (21 of 22, REFS, *0.0.236 on Windows*). Not a safety finding.
 
-## The data folder runs one way
+## The data folder
 
-Both majors default to `~/.local/share/opencode`. 2.x adds its tables to a 1.x
-`opencode.db`; 1.x cannot open one 2.x created (1.19.3: "Database is not empty and
-has no session table") and exits on every spawn. `noteDataFolderClash` remembers it
+Both majors default to `~/.local/share/opencode`. The first time 2.x opens a folder 1.x
+used, it imports the sessions: a chat bound to one goes on in it. 1.x still opens the
+folder and goes on in its own. From then on each sees only what it wrote
+(`scripts/probe-data-folder.js`, real 1.19.5 with 2.0.29 and 2.2.5; a large folder is not
+measured). The closed case: 1.x cannot open a folder 2.x *created* (1.19.3: "Database is
+not empty and has no session table") and exits on every spawn. `noteDataFolderClash` remembers it
 per executable file, `dataFolderRefusal` refuses before spawning, until `/ping` or a
 new `dataHome`. `dataHome` is `XDG_DATA_HOME` for every process the bridge starts
 (`dataHomeEnv`); changing it stops the managed server and forgets the clash

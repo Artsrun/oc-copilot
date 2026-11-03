@@ -4,7 +4,7 @@
 // differs translates here, so no call site branches on the version. 2.x serves
 // another API under `/api` (Basic auth, `location`, `{action, resource,
 // effect}` rules; measured on 2.0.29 and 2.0.32, REFS), driven only when
-// `opencode2` is on and only on the server this window started (net.ts).
+// `opencode2` is on (the default) and only on the server this window started (net.ts).
 import type * as vscode from "vscode";
 
 import { delay, logChannel, stamp } from "./core";
