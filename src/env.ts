@@ -21,6 +21,15 @@ export interface EnvItem {
     detail?: string;
 }
 
+// 1.x: the keys of `mcp` are the servers. 2.x: `mcp.servers`, beside settings such
+// as `timeout` (2.2.5 schema); it reads 1.x's shape too (gitScan's snippet, measured).
+function mcpServerNames(mcp: Record<string, unknown> | undefined): string[] {
+    const servers = mcp?.servers;
+    return servers && typeof servers === "object"
+        ? Object.keys(servers)
+        : Object.entries(mcp ?? {}).filter(([, value]) => value && typeof value === "object").map(([name]) => name);
+}
+
 export function existsQuiet(target: string): boolean {
     try {
         return fs.existsSync(target);
@@ -184,7 +193,7 @@ export function discoverOpenCodeEnv(cwd: string): EnvItem[] {
             for (const plugin of parsed?.plugin ?? []) {
                 out.push({ kind: "plugin", name: plugin, scope });
             }
-            for (const server of Object.keys(parsed?.mcp ?? {})) {
+            for (const server of mcpServerNames(parsed?.mcp)) {
                 out.push({ kind: "mcp", name: server, scope });
             }
             for (const agent of Object.keys(parsed?.agent ?? {})) {
@@ -241,7 +250,7 @@ export function discoverOpenCodeEnv(cwd: string): EnvItem[] {
             for (const plugin of parsed?.plugin ?? []) {
                 out.push({ kind: "plugin", name: plugin, scope: "project" });
             }
-            for (const server of Object.keys(parsed?.mcp ?? {})) {
+            for (const server of mcpServerNames(parsed?.mcp)) {
                 out.push({ kind: "mcp", name: server, scope: "project" });
             }
             // The root file sets these as much as .opencode/'s does.

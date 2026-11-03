@@ -245,7 +245,7 @@ const settings = {
     planAgent: "plan",
     readOnlySubagents: ["explore"],
     enforceReadOnly: true,
-    opencode2: false,
+    opencode2: true,
     dataHome: "",
     readOnlyTools: ["git-scan_gitScan"],
     attachDevToServer: true,
@@ -2155,6 +2155,16 @@ function collectConfigProperties(configuration) {
     add("DA finds the project opencode.json", kinds("config").includes("opencode.json"));
     add("DA lists declared plugins", kinds("plugin").includes("opencode-yaml-hooks") && kinds("plugin").includes("@tarquinen/opencode-dcp"));
     add("DA lists MCP servers", kinds("mcp").includes("jira-cloud") && kinds("mcp").includes("chrome-devtools"));
+    {
+        // OpenCode 2's own shape: servers under `mcp.servers`, beside settings (2.2.5 schema, migrate-v1).
+        const envV2 = fs.mkdtempSync(path.join(os.tmpdir(), "ocb-envv2-"));
+        fs.writeFileSync(path.join(envV2, "opencode.json"), JSON.stringify({ mcp: { timeout: 5000, servers: { "git-scan": { type: "local", command: ["node", "x"] } } } }));
+        const v2Names = ext.__test.discoverOpenCodeEnv(envV2).filter((i) => i.kind === "mcp").map((i) => i.name);
+        add(`DA lists the servers of 2.x's mcp.servers, not its keys (${v2Names.join(", ")})`, v2Names.join() === "git-scan");
+        fs.writeFileSync(path.join(envV2, "opencode.json"), JSON.stringify({ mcp: { timeout: 5000 } }));
+        const v2None = ext.__test.discoverOpenCodeEnv(envV2).filter((i) => i.kind === "mcp").map((i) => i.name);
+        add(`DA a 2.x mcp block with no servers lists none (${v2None.join(", ")})`, v2None.length === 0);
+    }
     add("DA finds commands", kinds("command").includes("jira") && kinds("command").includes("tfs-pr"));
     add("DA finds skills", kinds("skill").includes("trekoon"));
     add("DA finds the hooks file", kinds("hooks").some((n) => n.includes("hooks.yaml")));
@@ -8232,7 +8242,8 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
             const ocFake = writeFake("fake-oc2.js", [], ocScript);
             const ocCli = writeFake("fake-oc2-cli.js", [], ocScript);
             const ocSaved = { exe: settings.executable, port: settings.serverPort, t: settings.transport, poll: settings.serverStartupPollMs, effort: settings.effort };
-            Object.assign(settings, { executable: ocFake, serverPort: await sbPort(), transport: "server", serverStartupPollMs: 50 });
+            // opencode2 off (on by default since 0.0.238): the refusal is still what it asks for.
+            Object.assign(settings, { executable: ocFake, serverPort: await sbPort(), transport: "server", serverStartupPollMs: 50, opencode2: false });
             // Bounds 0.0.211's red run; 0.0.212 never gets near it.
             ext.__test.setStartupDeadline(4000);
             const ocLog = logLines.length;
@@ -8411,7 +8422,7 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
                 );
             }
             settings.attachDevToServer = true;
-            Object.assign(settings, { executable: ocSaved.exe, serverPort: ocSaved.port, transport: ocSaved.t, serverStartupPollMs: ocSaved.poll });
+            Object.assign(settings, { executable: ocSaved.exe, serverPort: ocSaved.port, transport: ocSaved.t, serverStartupPollMs: ocSaved.poll, opencode2: true });
             ext.deactivate();
         }
 
@@ -8433,6 +8444,12 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
             add("TW opencode2 off: an OpenCode 2 is refused as before", /not OpenCode 1/.test(plain(twOff.chatMarkdown.join(""))) && !twReqs().some((r) => r.path?.startsWith("/api/session")));
             ext.deactivate();
 
+            // 0.0.238: on by default: a setting nobody touched drives a 2.x.
+            delete settings.opencode2;
+            const twUnset = stream();
+            await global.__handler({ prompt: "explain the cart, setting untouched [[probe:text]]" }, { history: [] }, twUnset.response, twUnset.token);
+            add("TW with opencode2 untouched, an OpenCode 2 just runs", /Hello from the scripted model\./.test(twUnset.chatMarkdown.join("")) && twReqs().some((r) => /\/prompt$/.test(r.path ?? "")));
+            ext.deactivate();
             settings.opencode2 = true;
             fs.rmSync(twRecord, { force: true });
             const twLog = logLines.length;

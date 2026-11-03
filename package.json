@@ -2,7 +2,7 @@
   "name": "opencode-copilot-bridge",
   "displayName": "OpenCode Copilot Bridge",
   "description": "Delegate research, planning, and development to OpenCode from GitHub Copilot Chat.",
-  "version": "0.0.237",
+  "version": "0.0.238",
   "publisher": "local",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -309,8 +309,8 @@
           },
           "opencodeCopilotBridge.opencode2": {
             "type": "boolean",
-            "default": false,
-            "markdownDescription": "Experimental: drive OpenCode 2 (`@opencode/cli`, tested on 2.0.18–2.2.5) through its HTTP API instead of refusing it. Every turn goes through the server this window starts (its password stays in memory); read-only turns are sent only when that server lists the bridge's read-only rules for `plan`. Off: an OpenCode 2 `opencode` is refused, as before."
+            "default": true,
+            "markdownDescription": "Drive OpenCode 2 (`@opencode/cli`, tested on 2.0.18–2.2.5) through its HTTP API. Every turn goes through the server this window starts (its password stays in memory); read-only turns are sent only when that server lists the bridge's read-only rules for `plan`. An `opencode` that is 1.x runs the same either way. Off: an OpenCode 2 `opencode` is refused."
           },
           "opencodeCopilotBridge.readOnlyTools": {
             "type": "array",

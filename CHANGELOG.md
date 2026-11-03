@@ -3,6 +3,28 @@
 Full release history, newest first; releases before the last one are condensed
 to their summary and headlines. The README ships the last five.
 
+### 0.0.238
+
+Milestone 2 of the roadmap: an OpenCode 2 install just works. Merging this is not its
+exit: that takes real use on real models, and Windows and macOS checked by hand.
+
+- **`opencode2` is on by default.** Before, a 2.x was refused unless you turned it on,
+  so nothing that worked changes. `false` is the way out, and `OC` now runs on it:
+  every refusal check still holds. Checks `TW`.
+- **OpenCode 1 pays one `--version`** before the bridge starts its server (~0.7 s on
+  1.19, once per executable file, off the turn path when prewarm runs), since the major
+  decides which overrides the server gets. A check that cannot confirm a version now
+  stops that start too, as it already stopped a CLI run.
+- **Measured: moving from 1.x to 2.x is not one-way** (`probe-data-folder.js`, real
+  1.19.5 with 2.0.29 and 2.2.5, new nightly job; REFS 0.0.238). 2.x imports the sessions,
+  a chat bound to one goes on, and 1.x still opens the folder. So there is no warning
+  before the first 2.x run, which the roadmap had planned; the README says what happens.
+- **`/env` reads OpenCode 2's `mcp.servers`.** A config in 2.x's own shape listed
+  `timeout` and `servers` as servers, and offered gitScan's setup when it was there.
+  Checks `DA` (red first: 2).
+- Words: refusals no longer say 2.x is experimental; a 1.x on a folder 2.x created is
+  told to point `executable` at 2.x, not to turn on a setting that is already on.
+
 ### 0.0.237
 
 On OpenCode 2, `effort:` and the `effort` setting reach the run when no model is

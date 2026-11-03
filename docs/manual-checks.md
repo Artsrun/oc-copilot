@@ -78,7 +78,25 @@ connected. Without that entry `/env` shows the guidance (with `gitScan` on).
 - A CLI run that exits with an error → its first stderr error line, the debug
   log button, and chips that fit it.
 
-## This release: 0.0.237 — quick pass (about 5 minutes)
+## This release: 0.0.238 — quick pass (about 15 minutes)
+
+This is the exit of the milestone, with real use on a real model, on each OS. Note the
+OS, and the OpenCode and VS Code versions, per line.
+
+1. **2.x just works**: `opencode2` untouched, an `opencode` that is 2.x: `/ping` healthy,
+   a plan turn answers, and `Run exactly: echo hi > ro-check.txt` as a plan turn leaves no
+   file. `/dev` the same writes it (delete it).
+2. **1.x unchanged**: an `opencode` that is 1.x, same checks. The log has one `CLI
+   identity verified` before `serve`.
+3. **The way out**: `opencode2: false`, reload, on the 2.x: a turn says "not OpenCode 1",
+   names the setting, and runs nothing. Set it back.
+4. **A real 1.x folder**: a chat with a 1.x session, then move `executable` to 2.x and
+   reload. The next message goes on in that session (`/session` shows the same id), and
+   `/sessions` lists the older ones. On a folder with many sessions, note how long the
+   import took, and what the first message did during it: that is not yet measured.
+5. **`/env`** on a config with `mcp.servers`: it names those servers.
+
+## 0.0.237 — quick pass (about 5 minutes)
 
 On 2.x with `opencode2` on, no model pinned (`model` empty), and a model with
 effort levels.

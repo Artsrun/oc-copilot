@@ -56,3 +56,25 @@ jobs:
         run: '"$RUNNER_TEMP/oc/node_modules/.bin/opencode" --version'
       - name: Probe
         run: node ${{ matrix.probe }} "$RUNNER_TEMP/oc/node_modules/.bin/opencode"
+  # What a real 2.x does to a folder a real 1.x uses: two binaries, one data folder.
+  data-folder:
+    strategy:
+      fail-fast: false
+      matrix:
+        two: ["2.0.29", "2.2.5"]
+    name: data folder · 1.19.5 then ${{ matrix.two }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci && npm run compile
+      - name: Install both into their own prefixes
+        run: |
+          npm i --no-audit --no-fund --prefix "$RUNNER_TEMP/oc2" "@opencode/cli@${{ matrix.two }}"
+          npm i --no-audit --no-fund --prefix "$RUNNER_TEMP/oc1" opencode-ai@1.19.5
+      - name: Probe
+        run: node scripts/probe-data-folder.js "$RUNNER_TEMP/oc2/node_modules/.bin/opencode" "$RUNNER_TEMP/oc1/node_modules/.bin/opencode"

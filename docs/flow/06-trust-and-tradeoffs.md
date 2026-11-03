@@ -68,7 +68,7 @@ flowchart LR
 | --- | --- |
 | Participant API deprecated | The biggest one. VS Code's Copilot harness has no participants, and from 1.142 it is progressively the default for new chats; the API stays for Local, with no removal date, and a managed policy can already disable Local. `@opencode` then cannot run at all (page 8). No `@deprecated` tag yet: `api-watch.yml` fails the day one appears |
 | Undocumented OpenCode behaviour | Pinned to the measured ranges (`TESTED_OPENCODE`, `TESTED_OPENCODE2` in `net.ts`): `?directory=` semantics, message-vs-session ids, fork dropping permission rules, session rules that only append, attach kill not stopping the run. A server outside a range earns one line saying so; nothing negotiates, so an update can still break it |
-| OpenCode 2 | Driven through its API since 0.0.222, but behind `opencode2`, off by default and experimental. One-way data folder: 1.x cannot open a folder 2.x created (`dataHome`). The probes on 2.2.5 use a scripted model: REFS has no real-model run on it |
+| OpenCode 2 | On by default since 0.0.238, with `opencode2: false` as the way out. 1.x cannot open a folder 2.x created (`dataHome`). The probes on 2.2.5 use a scripted model: REFS has no real-model run on it, and a large 1.x folder's import is not measured |
 | Proposed API | `chatParticipantAdditions` blocks Marketplace publishing and needs cast hacks that rot as the API stabilises; only inline chat depends on it, and on stable it needs the runtime flag |
 | Windows weight | `proc.ts` is dominated by `cmd.exe` workarounds. The gate runs on Windows in CI, the nightly probes on Linux only. The first real-binary run on Windows was 0.0.236: 21 of 22, one control row (REFS) |
 | Big modules | `runs.ts` (0.0.203), `chat-boot.ts` (0.0.204) and `handleChat` (0.0.205) were split; `net.ts`, `context.ts` and `chat-turn.ts` are the largest now (`wc -l src/*.ts`). The suite's `LY` checks the layering has no cycle |
@@ -98,9 +98,8 @@ Done, and kept for the record:
 Open:
 
 8. **Decide the proposed-API stance:** sideloaded VSIX only, or wait.
-9. **Turn `opencode2` on by default.** The first plan turn is fixed (0.0.233) and
-   first-turn MCP tools too (0.0.234). Still to measure: a real model and macOS on
-   2.2.5. Windows has its first probe run.
+9. **Prove `opencode2` on by default (0.0.238).** Still to measure: a real model, macOS
+   and Windows by hand on 2.2.5, and a large 1.x folder's import.
 10. **Freeze the participant to bug fixes**, awaiting Jan's answer (CHANGELOG 0.0.235).
 11. **Try a separate front end** before Local goes: an Agent Host Protocol host or
     language model tools. Neither has been run (REFS, *Agent Host Protocol*).
