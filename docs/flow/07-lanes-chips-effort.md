@@ -124,9 +124,12 @@ flowchart LR
   H -->|no, setting| D
 ```
 
-- Sent **every turn**: a prompt without one resets the session to `default`.
+- Sent **every turn**: on 1.x a prompt without one resets the session to `default`.
+  2.x keeps the last level, so the bridge puts the default back.
 - Fallback models and each lane are checked against **their own** model; a
   `/worktree` turn reads `effort:` and the setting too.
+- With no model named on 2.x the level goes on the model the run would use, and one
+  that model does not list is not sent: 2.x would fail the run (`unpinnedModel`).
 - The model picker shows each model's levels; **Dig deeper** asks for the next
   one up (`higherEffort`).
 

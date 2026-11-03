@@ -86,6 +86,10 @@ function watch(base, sessionId, timeoutMs, token, step) {
     });
     return { ready: Promise.race([ready, (0, core_1.delay)(2000)]), result, abandon: end };
 }
+const refOf = (m) => {
+    const r = m;
+    return typeof r?.id === "string" && typeof r.providerID === "string" ? { id: r.id, providerID: r.providerID } : undefined;
+};
 const v1Session = (s) => ({
     id: String(s.id),
     ...(typeof s.metadata?.title === "string" ? { title: s.metadata.title } : {}),
@@ -107,6 +111,10 @@ const loadsAgentsAtOnce = (base) => {
     const v = (0, net_1.serverVersion)(base)?.match(/^v?(\d+)\.(\d+)\./);
     return Boolean(v) && (Number(v?.[1]) > 2 || (Number(v?.[1]) === 2 && Number(v?.[2]) >= 2));
 };
+const runsOnAgentModel = (base) => {
+    const [major, minor, patch] = ((0, net_1.serverVersion)(base)?.match(/\d+/g) ?? []).map(Number);
+    return major > 2 || (major === 2 && (minor > 1 || (minor === 1 && patch >= 4)));
+};
 const v2 = (base) => {
     const auth = () => (0, net_1.serverAuth)(base) ?? {};
     const url = (path, query = {}) => {
@@ -118,6 +126,33 @@ const v2 = (base) => {
     const send = (method, u, body, timeoutMs) => (0, net_1.httpRequestJson)(method, u, body, timeoutMs, undefined, auth());
     const data = (r) => r?.data;
     const list = async (cwd, query, timeoutMs) => (data(await get(url("/session", { directory: cwd, ...query }), timeoutMs)) ?? []).map(v1Session);
+    const unpinnedModel = async (cwd, id, agent, asked) => {
+        const session = data(await get(url(`/session/${safeSessionId(id)}`), 5000));
+        const current = refOf(session?.model);
+        const kept = current && ((session?.model).variant ?? "default") !== "default" ? current : undefined;
+        if (!asked) {
+            return kept;
+        }
+        const models = data(await get(at("/model", cwd), 5000)) ?? [];
+        const listed = (r) => (r ? models.find((m) => m.providerID === r.providerID && m.id === r.id) : undefined);
+        const own = typeof agent === "string" && runsOnAgentModel(base)
+            ? refOf(data(await get(at(`/agent/${encodeURIComponent(agent)}`, cwd), 5000))?.model)
+            : undefined;
+        const ref = current ?? (listed(own) ? own : undefined) ?? refOf(data(await get(at("/model/default", cwd), 5000)));
+        if (!ref) {
+            core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] effort ${asked} not sent: OpenCode names no model for this session`);
+            return kept;
+        }
+        const levels = listed(ref)?.variants;
+        const level = Array.isArray(levels)
+            ? levels.map((v) => v?.id).find((v) => typeof v === "string" && v.toLowerCase() === asked.toLowerCase())
+            : asked;
+        if (!level) {
+            core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] effort ${asked} not sent: ${ref.providerID}/${ref.id} does not list it, so it runs at its default`);
+            return kept;
+        }
+        return { ...ref, variant: level };
+    };
     return {
         health: async (timeoutMs) => {
             const info = await (0, net_1.httpGetJson)(url("/info"), timeoutMs, auth());
@@ -200,8 +235,20 @@ const v2 = (base) => {
             if (typeof b.agent === "string") {
                 await send("POST", url(`/session/${safeSessionId(id)}/agent`), { agent: b.agent }, 5000);
             }
+            const asked = typeof b.variant === "string" ? b.variant : undefined;
             if (typeof b.model?.providerID === "string" && typeof b.model.modelID === "string") {
-                await send("POST", url(`/session/${safeSessionId(id)}/model`), { model: { id: b.model.modelID, providerID: b.model.providerID, ...(typeof b.variant === "string" ? { variant: b.variant } : {}) } }, 5000);
+                await send("POST", url(`/session/${safeSessionId(id)}/model`), { model: { id: b.model.modelID, providerID: b.model.providerID, ...(asked ? { variant: asked } : {}) } }, 5000);
+            }
+            else {
+                try {
+                    const model = await unpinnedModel(cwd, id, b.agent, asked);
+                    if (model) {
+                        await send("POST", url(`/session/${safeSessionId(id)}/model`), { model }, 5000);
+                    }
+                }
+                catch (error) {
+                    core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] effort ${asked ?? "default"} not sent: ${error instanceof Error ? error.message : String(error)}`);
+                }
             }
             const delivered = new Set();
             let failed = false;

@@ -5,6 +5,45 @@ actually measured, so nobody re-derives it.
 
 ---
 
+## 0.0.237: on 2.x a variant needs a model ref (2026-11-03)
+
+**Dated 2026-11-03. Fixed in 0.0.237.** Written from source, since installing a real
+binary was refused in the authoring session. Then measured by `probes.yml`, dispatched
+on the branch (`216eb24`, Linux, the scripted model): the three new rows of
+`probe-opencode2.js` pass on 2.0.29 and 2.2.5, reading `high`, then `default`, then
+`default answered` back from the session: `ALL 26 ROWS AS EXPECTED`. The `latest` cell
+was 2.2.5 too. Not measured: a real model, and 2.0.18, 2.1.x or 2.2.0.
+
+- **The route.** `POST /api/session/:id/model` takes `{model: {id, providerID,
+  variant?}}`, `id` and `providerID` required (v2.opencode.ai API reference;
+  `Model.Ref`). `POST …/prompt` takes neither. So the bridge's `variant` was dropped
+  whenever no model was named.
+- **What OpenCode's own client does.** `cli/src/run/noninteractive.ts`: a variant
+  with no model reads `session.get().model`, else `model.default()`, and fails with
+  "Cannot select a variant before selecting a model". Same logic and routes at
+  v2.0.18, v2.0.29, v2.1.4, v2.2.0 and v2.2.5.
+- **Which model a run uses.** `session/runner/model.ts`: `session.model` if set, else
+  the agent's model if the catalog lists it, else the default. The agent step is
+  absent at v2.0.18, v2.0.29 and v2.1.0–v2.1.3, and there at v2.1.4, v2.2.0 and
+  v2.2.5. The bridge follows that by version, so an agent's own model is not replaced
+  by the default, and is not forced on a version that ignores it. OpenCode's client
+  skips the agent.
+- **A session keeps it.** `Session.switchModel` stores model and variant, and
+  `session/info.ts` reports `variant` as `"default"` when none. 1.x resets on a prompt
+  without one (`session/prompt.ts`, 1.18.34); 2.x does not, so the bridge resets it.
+- **An unknown level fails.** `ModelResolver.withVariant` raises
+  `VariantUnavailableError`; 1.x ignores it. Reading the catalog keeps the setting's
+  promise: a level the model lacks runs at the default.
+- **Not covered:** metadata and the `effort` line in chat still name the level asked
+  when it was not sent, on both majors. The log has the reason.
+- **`ST` red on one Ubuntu CI run** (`216eb24`; Windows, macOS, 3 earlier Ubuntu runs
+  and 5 local ones green): it saw only `OpenCode · plan`, no `· 3s`. Scratch probe, the
+  real heartbeat with a 100 ms poll and a 4 s cap, stalling the event loop: 1495 ms and
+  3480 ms stalls made the poll miss what the bar was written; 1400–1480 ms and shorter
+  did not. Which stall the runner had is not known. The check now records every write.
+
+---
+
 ## 0.0.236 on Windows: the first probe run, and `update.js`'s `code` (2026-11-03)
 
 **Dated 2026-11-03. Measured, not fixed in the extension.** Windows 11, Node

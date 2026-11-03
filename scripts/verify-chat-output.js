@@ -261,6 +261,8 @@ const repoDir = path.join(__dirname, "..");
 let quickPickScript;
 const quickPicksShown = [];
 let lastStatusItem;
+// Every text the bar was given, in order: a value up for less than a poll still counts.
+const statusWrites = [];
 const registeredCommands = new Map();
 // 0.0.229: the worktree diff's base side (`ocb-base:`), read back by WT16.
 const contentProviders = new Map();
@@ -306,7 +308,14 @@ const vscodeStub = {
         // v184: kept, so a check can read what the bar says after a turn.
         createStatusBarItem: () =>
             (lastStatusItem = {
-                text: "",
+                _text: "",
+                get text() {
+                    return this._text;
+                },
+                set text(value) {
+                    this._text = value;
+                    statusWrites.push(value);
+                },
                 tooltip: "",
                 command: "",
                 backgroundColor: undefined,
@@ -2046,10 +2055,10 @@ function collectConfigProperties(configuration) {
     memento.clear();
     const cj = stream();
     // 0.0.230 (P4): the status bar names the running turn and its time, at milestones.
-    const cjBar = [];
-    const cjPoll = setInterval(() => lastStatusItem && cjBar.push(lastStatusItem.text), 100);
+    // Read at the writer: a 100 ms poll missed `· 3s` when a stall left it up just before the cap (0.0.237).
+    const cjBarFrom = statusWrites.length;
     await global.__handler({ prompt: "a run long enough to tick several times" }, {}, cj.response, cj.token);
-    clearInterval(cjPoll);
+    const cjBar = statusWrites.slice(cjBarFrom);
     add(`ST the status bar shows the running turn and its time (${[...new Set(cjBar)].join(" | ").slice(0, 200)})`, cjBar.some((t) => /^\$\(sync~spin\) OpenCode · plan · [3-9]s$/.test(t)));
     add("ST …and is back to idle after it", !!lastStatusItem && !/sync~spin/.test(lastStatusItem.text));
     add("CJ progress calls stay well below one per second", cj.progress.length < 8);
@@ -8523,6 +8532,80 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
             add("TW transport cli on OpenCode 2 runs through the server, never `run`",
                 /Hello from the scripted model\./.test(tw6.chatMarkdown.join("")) && twReqs().some((r) => /\/prompt$/.test(r.path ?? "")) && !logLines.slice(twCliLog).some((l) => /fake-tw2\.js run\b/.test(l)));
             ext.deactivate();
+
+            // 0.0.237: 2.x takes a variant only inside a model ref, and a session keeps
+            // both. With no model named, the ref is the one the run would use.
+            {
+                const modelSets = (reqs) => reqs.filter((r) => r.method === "POST" && /\/session\/[^/]+\/model$/.test(r.path ?? ""));
+                const setBeforePrompt = (reqs) => {
+                    const at = reqs.findIndex((r) => r.method === "POST" && /\/prompt$/.test(r.path ?? ""));
+                    return at > 0 && reqs.slice(0, at).some((r) => modelSets([r]).length === 1);
+                };
+                const evTurn = async (prompt, history = []) => {
+                    fs.rmSync(twRecord, { force: true });
+                    const s = stream();
+                    const result = await global.__handler({ prompt }, { history }, s.response, s.token);
+                    return { chat: s.chatMarkdown.join(""), reqs: twReqs(), result };
+                };
+                const answered = (t) => /Hello from the scripted model\./.test(t.chat);
+                ext.deactivate();
+                const ev1 = await evTurn("effort:high explain the cart for ev [[probe:text]]");
+                add(`TW effort: with no model named reaches 2.x: the default model, with the level, before the prompt (${JSON.stringify(modelSets(ev1.reqs).map((r) => r.body))})`,
+                    answered(ev1) && setBeforePrompt(ev1.reqs) && modelSets(ev1.reqs).length === 1 && JSON.stringify(modelSets(ev1.reqs)[0].body?.model) === JSON.stringify({ id: "scripted", providerID: "probe", variant: "high" }));
+                const ev1Turn = { participant: "opencodeCopilotBridge.chat", prompt: "effort", result: ev1.result };
+                const ev2 = await evTurn("say more about the cart [[probe:text]]", [ev1Turn]);
+                add(`TW …the next turn without one goes back to the default level: 2.x would keep it (${JSON.stringify(modelSets(ev2.reqs).map((r) => r.body))})`,
+                    answered(ev2) && setBeforePrompt(ev2.reqs) && JSON.stringify(modelSets(ev2.reqs).map((r) => r.body?.model)) === JSON.stringify([{ id: "scripted", providerID: "probe" }]));
+                const ev3 = await evTurn("and one more about the cart [[probe:text]]", [ev1Turn, { participant: "opencodeCopilotBridge.chat", prompt: "more", result: ev2.result }]);
+                add("TW …and a turn with nothing to change sets no model", answered(ev3) && modelSets(ev3.reqs).length === 0);
+                const ev4Log = logLines.length;
+                const ev4 = await evTurn("effort:max explain the cart at max [[probe:text]]");
+                add("TW a level the model does not list is not sent: 2.x would fail the run, and the turn runs at the default", answered(ev4) && modelSets(ev4.reqs).length === 0);
+                add("TW …and the log says why", logLines.slice(ev4Log).some((l) => /effort max not sent/.test(l) && /probe\/scripted/.test(l)));
+                settings.effort = "HIGH";
+                const ev5 = await evTurn("explain the cart by the setting [[probe:text]]");
+                settings.effort = "";
+                add(`TW the effort setting reaches 2.x too, in the catalog's spelling (${JSON.stringify(modelSets(ev5.reqs).map((r) => r.body?.model?.variant))})`,
+                    answered(ev5) && modelSets(ev5.reqs)[0]?.body?.model?.variant === "high");
+                settings.model = "probe/scripted";
+                const ev6 = await evTurn("effort:high explain the cart pinned [[probe:text]]");
+                settings.model = "";
+                add("TW a pinned model carries the level as before, with no extra reads", answered(ev6) && modelSets(ev6.reqs)[0]?.body?.model?.variant === "high" && !ev6.reqs.some((r) => /\/model\/default$/.test(r.path ?? "")));
+                ext.deactivate();
+                process.env.FAKE_OC2_AGENT_MODEL = "probe/other";
+                const ev7 = await evTurn("effort:low explain the cart on the agent's model [[probe:text]]");
+                add(`TW an agent's own model is the one the run would use, so it gets the level (${JSON.stringify(modelSets(ev7.reqs).map((r) => r.body?.model))})`,
+                    answered(ev7) && JSON.stringify(modelSets(ev7.reqs).map((r) => r.body?.model)) === JSON.stringify([{ id: "other", providerID: "probe", variant: "low" }]));
+                // The session's own model outranks the agent's: pinned once, then effort with no pin.
+                settings.model = "probe/scripted";
+                const ev7a = await evTurn("explain the cart, pinned first [[probe:text]]");
+                settings.model = "";
+                const ev7b = await evTurn("effort:high and now without the pin [[probe:text]]", [{ participant: "opencodeCopilotBridge.chat", prompt: "pinned", result: ev7a.result }]);
+                add(`TW a session's own model outranks its agent's (${JSON.stringify(modelSets(ev7b.reqs).map((r) => r.body?.model))})`,
+                    answered(ev7b) && JSON.stringify(modelSets(ev7b.reqs).map((r) => r.body?.model)) === JSON.stringify([{ id: "scripted", providerID: "probe", variant: "high" }]));
+                ext.deactivate();
+                process.env.FAKE_OC2_AGENT_MODEL = "probe/gone";
+                const ev8 = await evTurn("effort:high explain the cart, agent model gone [[probe:text]]");
+                add("TW …one the catalog does not list is not: the run falls back to the default", answered(ev8) && modelSets(ev8.reqs)[0]?.body?.model?.id === "scripted");
+                // Before 2.1.4 a run ignores an agent's own model (source: 2.1.3's runner has no such branch).
+                ext.deactivate();
+                process.env.FAKE_OC2_AGENT_MODEL = "probe/other";
+                process.env.FAKE_OC2_VERSION = "2.1.3";
+                const ev8b = await evTurn("effort:high explain the cart on 2.1.3 [[probe:text]]");
+                add(`TW 2.1.3 ignores an agent's own model, so effort stays on the default (${JSON.stringify(modelSets(ev8b.reqs).map((r) => r.body?.model))})`,
+                    answered(ev8b) && modelSets(ev8b.reqs)[0]?.body?.model?.id === "scripted");
+                delete process.env.FAKE_OC2_VERSION;
+                delete process.env.FAKE_OC2_AGENT_MODEL;
+                for (const [how, label] of [["none", "no default model"], ["gone", "a route that fails"]]) {
+                    ext.deactivate();
+                    process.env.FAKE_OC2_DEFAULT = how;
+                    const log = logLines.length;
+                    const ev = await evTurn(`effort:high explain the cart, ${how} default [[probe:text]]`);
+                    add(`TW ${label}: the turn still answers, no level sent, and the log says so`, answered(ev) && modelSets(ev.reqs).length === 0 && logLines.slice(log).some((l) => /effort high not sent/.test(l)));
+                    delete process.env.FAKE_OC2_DEFAULT;
+                }
+                ext.deactivate();
+            }
 
             // 0.0.223: a later major is tried on the 2.x adapter and says it is
             // outside the tested range; with opencode2 off it is refused as before.

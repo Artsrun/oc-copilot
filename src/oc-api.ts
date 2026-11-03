@@ -63,7 +63,7 @@ export interface ServerApi {
     questionReply(cwd: string, askId: string, body: Record<string, unknown>, timeoutMs: number): Promise<unknown>;
 }
 
-// 1.x (1.18.27–1.19.0): `?directory=` on every scoped call (withDirectory).
+// 1.x: `?directory=` on every scoped call (withDirectory).
 const v1 = (base: string): ServerApi => {
     const at = (path: string, cwd: string): string => withDirectory(`${base}${path}`, cwd);
     return {
@@ -138,7 +138,12 @@ function watch<T>(base: string, sessionId: string, timeoutMs: number | undefined
     return { ready: Promise.race([ready, delay(2000)]), result, abandon: end };
 }
 
-type V2Session = { id?: unknown; parentID?: unknown; time?: Record<string, number>; metadata?: Record<string, unknown>; permissions?: unknown };
+type V2Session = { id?: unknown; parentID?: unknown; time?: Record<string, number>; metadata?: Record<string, unknown>; permissions?: unknown; model?: unknown };
+type ModelRef = { id: string; providerID: string };
+const refOf = (m: unknown): ModelRef | undefined => {
+    const r = m as { id?: unknown; providerID?: unknown } | null | undefined;
+    return typeof r?.id === "string" && typeof r.providerID === "string" ? { id: r.id, providerID: r.providerID } : undefined;
+};
 const v1Session = (s: V2Session): { id: string; title?: string; parentID?: string; time?: Record<string, number> } => ({
     id: String(s.id),
     ...(typeof s.metadata?.title === "string" ? { title: s.metadata.title } : {}),
@@ -172,6 +177,11 @@ const loadsAgentsAtOnce = (base: string): boolean => {
     return Boolean(v) && (Number(v?.[1]) > 2 || (Number(v?.[1]) === 2 && Number(v?.[2]) >= 2));
 };
 
+const runsOnAgentModel = (base: string): boolean => {
+    const [major, minor, patch] = (serverVersion(base)?.match(/\d+/g) ?? []).map(Number);
+    return major > 2 || (major === 2 && (minor > 1 || (minor === 1 && patch >= 4)));
+};
+
 const v2 = (base: string): ServerApi => {
     const auth = (): Record<string, string> => serverAuth(base) ?? {};
     const url = (path: string, query: Record<string, string | number | undefined> = {}): string => {
@@ -185,6 +195,39 @@ const v2 = (base: string): ServerApi => {
     const data = <T>(r: unknown): T => (r as { data?: T } | undefined)?.data as T;
     const list = async (cwd: string, query: Record<string, string | number | undefined>, timeoutMs: number): Promise<ReturnType<typeof v1Session>[]> =>
         (data<V2Session[]>(await get(url("/session", { directory: cwd, ...query }), timeoutMs)) ?? []).map(v1Session);
+    // What to send `POST …/model` with no model named, or nothing. A variant goes
+    // only inside a model ref, a session keeps both until the next switch, and a
+    // level the model lacks fails the run (source: 2.0.18–2.2.5). So the ref is the
+    // one the run would use: the session's, the agent's if listed (from 2.1.4; 2.1.3's
+    // runner has no such branch), the default. OpenCode's own `run --variant` skips
+    // the agent. No level asked puts a kept one back.
+    const unpinnedModel = async (cwd: string, id: string, agent: unknown, asked: string | undefined): Promise<(ModelRef & { variant?: string }) | undefined> => {
+        const session = data<V2Session>(await get(url(`/session/${safeSessionId(id)}`), 5000));
+        const current = refOf(session?.model);
+        const kept = current && ((session?.model as { variant?: unknown }).variant ?? "default") !== "default" ? current : undefined;
+        if (!asked) {
+            return kept;
+        }
+        const models = data<Array<{ id?: unknown; providerID?: unknown; variants?: unknown }>>(await get(at("/model", cwd), 5000)) ?? [];
+        const listed = (r: ModelRef | undefined) => (r ? models.find((m) => m.providerID === r.providerID && m.id === r.id) : undefined);
+        const own = typeof agent === "string" && runsOnAgentModel(base)
+            ? refOf(data<{ model?: unknown }>(await get(at(`/agent/${encodeURIComponent(agent)}`, cwd), 5000))?.model)
+            : undefined;
+        const ref = current ?? (listed(own) ? own : undefined) ?? refOf(data(await get(at("/model/default", cwd), 5000)));
+        if (!ref) {
+            logChannel.appendLine(`[${stamp()}] effort ${asked} not sent: OpenCode names no model for this session`);
+            return kept;
+        }
+        const levels = listed(ref)?.variants;
+        const level = Array.isArray(levels)
+            ? levels.map((v: { id?: unknown }) => v?.id).find((v): v is string => typeof v === "string" && v.toLowerCase() === asked.toLowerCase())
+            : asked;
+        if (!level) {
+            logChannel.appendLine(`[${stamp()}] effort ${asked} not sent: ${ref.providerID}/${ref.id} does not list it, so it runs at its default`);
+            return kept;
+        }
+        return { ...ref, variant: level };
+    };
     return {
         health: async (timeoutMs) => {
             const info = await httpGetJson<{ version?: unknown }>(url("/info"), timeoutMs, auth());
@@ -277,8 +320,19 @@ const v2 = (base: string): ServerApi => {
             if (typeof b.agent === "string") {
                 await send("POST", url(`/session/${safeSessionId(id)}/agent`), { agent: b.agent }, 5000);
             }
+            const asked = typeof b.variant === "string" ? b.variant : undefined;
             if (typeof b.model?.providerID === "string" && typeof b.model.modelID === "string") {
-                await send("POST", url(`/session/${safeSessionId(id)}/model`), { model: { id: b.model.modelID, providerID: b.model.providerID, ...(typeof b.variant === "string" ? { variant: b.variant } : {}) } }, 5000);
+                await send("POST", url(`/session/${safeSessionId(id)}/model`), { model: { id: b.model.modelID, providerID: b.model.providerID, ...(asked ? { variant: asked } : {}) } }, 5000);
+            } else {
+                // Effort is not worth a turn: a read that fails runs at the default, and says so.
+                try {
+                    const model = await unpinnedModel(cwd, id, b.agent, asked);
+                    if (model) {
+                        await send("POST", url(`/session/${safeSessionId(id)}/model`), { model }, 5000);
+                    }
+                } catch (error) {
+                    logChannel.appendLine(`[${stamp()}] effort ${asked ?? "default"} not sent: ${error instanceof Error ? error.message : String(error)}`);
+                }
             }
             const delivered = new Set<string>();
             // A run that failed ends at its idle even undelivered: 2.0.18 failed on

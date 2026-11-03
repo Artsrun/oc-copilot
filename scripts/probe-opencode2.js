@@ -73,8 +73,11 @@ const { runCapture } = out("proc.js");
         "  else if (r.method === 'tools/list') reply(r.id, { tools: [{ name: 'touch', description: 'Create a marker file', inputSchema: { type: 'object', properties: {} } }] });\n" +
         "  else if (r.method === 'tools/call') { fs.writeFileSync(out, 'written'); reply(r.id, { content: [{ type: 'text', text: 'touched' }] }); }\n" +
         "  else reply(r.id, {}); });\n");
+    // A level the effort rows can ask for (0.0.237): the scripted model ignores what it means.
+    const probeConfig = projectConfig(model.url);
+    probeConfig.provider.probe.models.scripted.variants = { high: { reasoningEffort: "high" } };
     fs.writeFileSync(path.join(project, "opencode.json"), JSON.stringify({
-        ...projectConfig(model.url),
+        ...probeConfig,
         mcp: {
             "git-scan": { type: "local", command: [process.execPath, path.join(__dirname, "..", "out", "git-scan-server.js"), project], enabled: true },
             w: { type: "local", command: [process.execPath, writerMcp, mcpTarget], enabled: true }
@@ -128,6 +131,27 @@ const { runCapture } = out("proc.js");
         const r = await turn("[[probe:text]] hi");
         return [/Hello from the scripted model/.test(r.text) && r.metrics.model === "probe/scripted" ? "answered" : "wrong",
             `model=${r.metrics.model} tokens=${r.metrics.tokens.input}/${r.metrics.tokens.output} error=${r.metrics.error ?? "-"} text=${JSON.stringify(r.text.slice(0, 60))}`];
+    });
+    // Effort with no model named (0.0.237, written from source: 2.x takes a variant only
+    // inside a model ref, and a session keeps both). Read back from the session itself.
+    const heldLevel = async (sid) => {
+        const base = await ensureServer(project);
+        const info = await (await fetch(`${base}/api/session/${sid}`, { headers: out("net.js").serverAuth(base) ?? {} })).json();
+        return String(info?.data?.model?.variant ?? "default");
+    };
+    let effortSession;
+    await row("no model named · effort reaches the session", "high", async () => {
+        const r = await turn("[[probe:text]] hi", { model: undefined, variant: "high" });
+        effortSession = r.metrics.sessionId;
+        return [await heldLevel(effortSession), `error=${r.metrics.error ?? "-"}`];
+    });
+    await row("no model named · the next turn without one is back at the default", "default", async () => {
+        const r = await turn("[[probe:text]] hi", { model: undefined, sessionId: effortSession });
+        return [await heldLevel(effortSession), `error=${r.metrics.error ?? "-"}`];
+    });
+    await row("no model named · a level the model lacks runs at the default, and answers", "default answered", async () => {
+        const r = await turn("[[probe:text]] hi", { model: undefined, variant: "nosuchlevel" });
+        return [`${await heldLevel(r.metrics.sessionId)} ${/Hello from the scripted model/.test(r.text) ? "answered" : "no answer"}`, `error=${r.metrics.error ?? "-"}`];
     });
     const base = await ensureServer(project);
     const serverState = log.find((l) => /answered after/.test(l)) ? "up" : "?";

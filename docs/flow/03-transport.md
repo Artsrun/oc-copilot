@@ -112,7 +112,7 @@ is reported, never refused. These are tool permissions, not an OS sandbox.
 | --- | --- |
 | CLI and attached CLI | `opencode run --variant <level>` |
 | Server, 1.x | `"variant": "<level>"` in the `POST /session/:id/message` body |
-| Server, 2.x | `POST /api/session/:id/model`, inside `model`, before the prompt (needs a model named) |
+| Server, 2.x | `POST /api/session/:id/model`, inside `model`, before the prompt. With no model named, `unpinnedModel` picks the one the run would use |
 
 Sent every turn when set; never sent when empty. See page 7.
 

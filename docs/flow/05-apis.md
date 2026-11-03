@@ -106,12 +106,14 @@ SSE events consumed: `message.part.delta` (streamed text and reasoning),
 | `GET /api/info` | Health and version |
 | `GET /api/event` | Shared SSE stream |
 | `GET /api/agent?location[directory]=` | Agents with effective rules, read until settled below 2.2.0 (`AGENTS_SETTLE_MS`) |
-| `GET /api/model?location[directory]=` | Model catalog |
+| `GET /api/agent/:id?location[directory]=` | An agent's own model, for effort with no model named (from 2.1.4) |
+| `GET /api/model?location[directory]=` | Model catalog, and a model's levels |
+| `GET /api/model/default?location[directory]=` | The model a session with none runs on, for effort |
 | `GET /api/session?directory=&limit=&parentID=` | `/sessions`, `/ping`, a session's children (`roots` filtered here) |
 | `GET /api/session/active` | Busy check (`running` read as `busy`) |
 | `POST /api/session` | Create, with `location`, `permissions`, title in `metadata` |
-| `GET`, `PATCH`, `DELETE /api/session/:id` | Read rules back, set rules or archive, delete. A metadata PATCH replaces the object, so it merges |
-| `POST /api/session/:id/agent`, `POST /api/session/:id/model` | Agent, model and variant, set before each prompt |
+| `GET`, `PATCH`, `DELETE /api/session/:id` | Read rules and the kept model back, set rules or archive, delete. A metadata PATCH replaces the object, so it merges |
+| `POST /api/session/:id/agent`, `POST /api/session/:id/model` | Agent, model and variant, set before the prompt: the model when one is named, or a level is asked or must be put back |
 | `POST /api/session/:id/prompt` | Queue a turn; answered at once with an inbox id |
 | `GET /api/session/:id/message?limit=` | Last messages (newest first, reversed here) |
 | `POST /api/session/:id/interrupt` | Stop, timeout, busy |
@@ -126,7 +128,7 @@ SSE events consumed: `message.part.delta` (streamed text and reasoning),
 `session.inbox.delivered` (`v2.delivered`) and `session.compaction.*` (`v2.compaction`).
 
 > Checked in source for this page: `oc-api.ts`, `v2-events.ts` and `connectSse`,
-> read call by call on 0.0.236. Which of them a real server accepts is what the
+> read call by call on 0.0.237. Which of them a real server accepts is what the
 > nightly probes and `scripts/fixtures/wire-v*.json` cover.
 
 ## (っ•ω•)っ git (only `src/worktree.ts` and `src/git-scan-server.ts`)
