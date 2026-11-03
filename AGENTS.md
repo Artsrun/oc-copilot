@@ -35,16 +35,16 @@ no bundler, no test runner: plain TypeScript → `out/`, plain Node for the suit
 | `src/oc-api.ts` | **Every server request**: `api(base)` is the route set of the major `base` named — 1.x, or 2.x's `/api` with `opencode2` (Basic auth, `location`, the async prompt awaited on its own run's events) — `safeSessionId`, `sessionPath`, `sessionRoot`. Callers speak 1.x's shapes. |
 | `src/v2-events.ts` | **OpenCode 2's event stream read as 1.x events** (`v2Translator`, stateful per stream; `shell`→`bash`, `subagent`→`task`), plus `v2.delivered` / `v2.compaction`, which only `oc-api` reads. Leaf. |
 | `src/net.ts` | Bounded HTTP, the managed `opencode serve`, shared SSE demux by session id, the not-OpenCode-1 refusal (`markNotOpenCode1`, `openCode1Refusal`), the data-folder refusal (`noteDataFolderClash`, `dataFolderRefusal`: a 1.x on a folder OpenCode 2 created), `plainError` (stderr without colour codes) and the CLI identity check (`ensureCliIdentity`: one `--version` per executable file). |
-| `src/session.ts` | Session state per chat thread (`threadSession`), the chat's last worktree (`threadWorktree`), handoff chain and the way back after one, completion toasts, status bar. |
-| `src/proc.ts` | Spawning: shim resolution (`~/` paths too), `cmd.exe` quoting, `killTree`, `PWD = cwd`, `runCapture` (a short command's output), `executableStamp` (the files a name runs, as they are on disk). §2 rule 3. |
+| `src/session.ts` | Session state per chat thread (`threadSession`), the chat's last worktree (`threadWorktree`), handoff chain and the way back after one, completion toasts, status bar, what the host's harness allows (`harnessNote`, `getParticipantProblem`, `localSessionProblem`). |
+| `src/proc.ts` | Spawning: shim resolution (`~/` paths too), `cmd.exe` quoting, `killTree`, `PWD = cwd`, `dataHomeEnv` (`XDG_DATA_HOME` from `dataHome`), `runCapture` (a short command's output), `executableStamp` (the files a name runs, as they are on disk). §2 rule 3. |
 | `src/models.ts` | Model catalog (server `GET /config/providers`, else `opencode models --verbose`), names, variant names, cache tiers, the picker, `writeModelPin`, short names, `modelResolver` (one forced refetch per turn), `effortFor` / `higherEffort`, `contextNote`. |
-| `src/agents.ts` | Which agent a read-only turn runs as: `planAgent`, only once OpenCode lists it. A server's list carries each agent's own `permission` rules. |
+| `src/agents.ts` | Which agent a read-only turn runs as: `planAgent`, only once OpenCode lists it. A server's list carries each agent's own `permission` rules. `prewarmFolder`: the server, then the folder's agent list. |
 | `src/context.ts` | Attachments/selection folding, every reference noted kept or dropped (`referenceLogLine`, `contextNotice`: what OpenCode won't get, said in chat), references, answer file pills (`createFileLinker`), `parseChatPrompt`, `splitModelPrefix`, `splitModelsFanout`. |
 | `src/env.ts` | What OpenCode loaded: config, plugins, MCP, commands, skills, agents, instruction files. |
 | `src/followups.ts` + `.json` | **Every word a chip or handoff sends**, the marks, pills (`createBadger`), `followupsProblems`. Leaf: imports only its JSON. |
 | `src/natural.ts` | Answer-derived chips: the agent's own offer or either/or, a named step 1, a review's findings by severity (`findingsOf`: headings, item tags, a Severity column, `<li>`), the file it edited, failing tests, Dig deeper — or nothing. `laneItems` is the lanes rule for the chip and for `autoParallel: auto`. |
 | `src/core.ts` | **The foundation**: imports nothing local. `config()`, `logChannel`, text helpers, status bar, folder resolution, `underRoot` (a file's path under a root, links resolved). |
-| `src/extension.ts` | `activate()` (panel + guarded inline participant), the `__test` handle, `deactivate()`. |
+| `src/extension.ts` | `activate()` (panel and inline participant, each guarded; commands and gitScan register regardless; the one warning when `@opencode` cannot run or Local is hidden), the `__test` handle, `deactivate()`. |
 | `src/commands.ts`, `commands-registry.ts` | Palette commands, worktree buttons, config listener. |
 | `src/worktree.ts`, `chat-worktree.ts` | `/worktree`: git via `execFile`, an isolated dev run from HEAD (the uncommitted count is said); a follow-up in the same chat continues its worktree and session (`reopenWorktree` checks what the metadata names); its turns read `model:`, `effort:`, attachments and the vague-prompt gate as a chat turn does, and `/session` and `/compact` reach its session (`threadWorktree`). OpenCode: Worktrees lists them (`listWorktrees`, `pickWorktree` in `commands.ts`); Show full diff is `vscode.changes` with the base side from a read-only `ocb-base:` provider (`changedFiles`, `baseText`). |
 | `src/format.ts`, `metrics.ts`, `prompt.ts` | Metrics → markdown; run types; timeouts and vague-prompt detection. |
@@ -58,18 +58,20 @@ Layering has no cycles:
 extension.ts  →  chat · chat-boot · commands-registry · git-scan-mcp · session · worktree · leaf modules (for __test)
      chat     →  agents · chat-boot · chat-commands · chat-parallel · chat-turn · chat-worktree · context · models · natural · prompt · session · core
 chat-parallel →  agents · chat-boot · compose · context · models · net · runs · core
-  chat-turn   →  agents · chat-boot · context · enforce · env · format · metrics · models · net · oc-api · runs · session · core
+  chat-turn   →  agents · chat-boot · context · enforce · env · format · metrics · models · net · oc-api · runs · server-session · session · core
  chat-commands →  chat-boot · chat-sessions · context · env · models · net · oc-api · prompt · proc · runs · session · worktree · core
  chat-sessions →  net · sessions (→ oc-api · runs) · session · core
  chat-worktree →  chat-boot · context · format · models · net · prompt · runs · session · worktree · core
     compose   →  chat-boot · models · core   (used by chat-parallel and commands-registry)
   chat-boot   →  heartbeat · lanes · chips (re-exported) · core · metrics
-    lanes     →  runs · format · metrics · models · core      chips → lanes · natural
+    lanes     →  enforce · runs · format · metrics · models · core      chips → lanes · natural
       runs    →  run-cli · run-server · run-steps · asks (re-exported) · server-session · session
  run-cli, run-server →  asks · run-steps · server-session · net · proc (cli) · metrics      run-cli → enforce · run-server (2.x)
       asks    →  oc-api · net · run-steps · metrics      server-session → agents · enforce · oc-api · net · metrics
     oc-api    →  enforce · net · core   (every server request: agents, models, sessions, chat-commands, commands, run-server)
-     agents   →  oc-api · net · proc      net → enforce · proc · v2-events      proc → enforce · core      enforce → core
+     agents   →  enforce · oc-api · net · proc      net → enforce · proc · v2-events      proc → enforce · core      enforce → core
+    models    →  context · env · net · oc-api · proc      commands → env · models · net · oc-api · proc · session · worktree
+commands-registry → commands · compose · models · net · session · worktree
      all      →  core.ts · followups.ts (JSON only) · natural.ts (→ followups)
 ```
 
@@ -180,6 +182,11 @@ A probe measures one thing on this machine and prints it. Paste its output.
 | `scripts/probe-opencode2.js` | With `opencode2`, against a real 2.x through `out/`: text turn, plan writes (absent ×3), `/dev` and enforcement-off controls (`CREATED`), a subagent, Stop, `/sessions`; reads outside the folder and `.env` (refused), `/dev` outside (known), MCP only via `readOnlyTools`, plan first on a fresh server. Expectations that differ by version name the version measured. |
 | `scripts/record-wire-fixtures.js` | Records a real 1.x and 2.x server's frames per scripted turn into `scripts/fixtures/wire-v*.json`, the `TW` fakes' input. |
 | `scripts/probe-model.js` | The scripted OpenAI-compatible model both use (`[[probe:<action>]]`): every tool attempt certain, no provider, no cost. |
+
+`probes.yml` runs on Linux only. Open on Windows (0.0.236, 2.2.5): `probe-opencode2.js`
+is 21 of 22. The red row is the control `first turn, no agent list read before it`:
+the turn's own read-only read took ~900 ms there, long enough to start MCP, so the
+prewarm row's green proves nothing on that machine. Not a safety finding (REFS).
 
 *Write to the OS temp dir, never the repo* — the suite sweeps `ocb-*` at
 startup, not exit (Windows holds a just-exited child's cwd).
@@ -417,8 +424,8 @@ history belongs in `CHANGELOG.md`, not in the source.
   refusal after the executable is replaced with 1.x.
 - **A turn refused before sending is not a failed run.** Not OpenCode 1, an
   identity `--version` could not confirm, permission rules that could not be
-  set: nothing reached OpenCode, and Continue would send "continue" to a
-  session that never got the task. `failTurn` marks them `notSent`: Retry (the
+  set, a data folder this 1.x cannot open: nothing reached OpenCode, and
+  Continue would send "continue" to a session that never got the task. `failTurn` marks them `notSent`: Retry (the
   user's words) with New session or Ping (`PM`, `OC`).
 - **A fixed `serverPort` can be held by a listener that never answers**: the
   window's own server cannot bind and exits 1 after its boot. `ensureServer`

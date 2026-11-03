@@ -78,7 +78,33 @@ connected. Without that entry `/env` shows the guidance (with `gitScan` on).
 - A CLI run that exits with an error → its first stderr error line, the debug
   log button, and chips that fit it.
 
-## This release: 0.0.222–0.0.223 — quick pass (about 20 minutes)
+## This release: 0.0.231–0.0.236 — quick pass (about 15 minutes)
+
+VS Code 1.142 or later for items 1 and 2; items 4 and 5 need the 2.x versions
+named, with `opencode2` on. Windows and macOS have the least coverage: say which
+OS each line ran on.
+
+1. **Harness** (0.0.231): a new chat in the Local session target: `@opencode /ping`
+   answers. **OpenCode: Diagnose** has the rows `chat harness` and `harness
+   settings`, and Output › OpenCode has one `chat harness:` line at activation.
+   Record what a new chat in the Copilot target does with `@opencode`.
+2. **Local hidden** (0.0.235): set `chat.editor.localAgent.enabled` to `false`,
+   reload: one warning outside chat, with **Open Settings**; another reload does
+   not repeat it; Diagnose names it. Set it back: reload, then off again warns again.
+3. **Tested tops** (0.0.232): on 1.19.5 and on 2.2.5, a turn shows no
+   "outside the versions" note.
+4. **First plan turn, 2.0 or 2.1** (0.0.233): reload, send a plan turn at once:
+   it is sent, not refused as unverified.
+5. **First-turn MCP tools, 2.2** (0.0.234): with gitScan merged into
+   `opencode.json` (**OpenCode: gitScan config for opencode.json**), reload, wait for
+   `serve on … answered` in the log and a few seconds more, then `Use gitScan and
+   report the branch.` as the first message: it runs. The default `readOnlyTools`
+   covers it.
+6. **Symlinked checkout** (0.0.236; macOS or Linux): open the repo through a
+   symlink, then `/worktree add a comment to this file` with a `#file` attached:
+   the run gets the file, and no outside-the-repo note appears.
+
+## 0.0.222–0.0.223 — quick pass (about 20 minutes)
 
 A real VS Code and a real model. Needs a 1.x and a 2.x OpenCode side by side
 (README, *OpenCode 2*: `npm i --prefix ~/.opencode1 opencode-ai@1`; 2.x is

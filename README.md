@@ -127,10 +127,13 @@ plus your own in `commandAliases` (`{ "zg": "parallel" }`). Typed, not in the
 
 Attached files (`#file:`, drag-and-drop, **Add context**) go as context, by path
 (OpenCode reads them), and come back as clickable references, with every file
-the agent touched. The editor selection is opt-in (`includeEditorSelection`).
-What OpenCode won't get is said before the answer: an image, Problems, an
-unsaved editor, VS Code's current-file chip (once per window), and on a
-read-only turn a file outside the folder, which it cannot open (`/dev` can).
+the agent touched. An open file with unsaved edits or a line range, an untitled
+editor and `#problems` go as bounded text excerpts. The editor selection is
+opt-in (`includeEditorSelection`). What OpenCode won't get is said before the
+answer: an image or other binary, an unsaved editor when no excerpt fits, VS
+Code's current-file chip (once per window), `.env` text on a read-only turn, and
+on a read-only turn a file outside the folder with no excerpt, which it cannot
+open (`/dev` can).
 Output › OpenCode logs every reference VS Code sent, kept or dropped and why
 (`references (3): kept …; dropped …`).
 
@@ -205,7 +208,8 @@ OpenCode's server (started on demand). Debug: the output channel logs
 - **Subagents are named**: a row for OpenCode's `task` tool reads
   `explore: find the auth handlers`, not only the description.
 - **Two transports**: `plan` over a warm `opencode serve` (SSE), `dev` as
-  `opencode run --auto` attached to it. Every call is scoped with `?directory=`.
+  `opencode run --auto` attached to it. Every call is scoped to the folder
+  (`?directory=`). OpenCode 2 runs every turn through the server.
 - **Sessions are per chat thread**; a timed-out turn can hand off to the next
   model, in the same session. Long conversations compact themselves, sized as
   OpenCode sizes them (the last step's tokens, cache reads in); `/session` shows
@@ -243,14 +247,16 @@ Set `opencodeCopilotBridge.executable` to `~/.opencode1/node_modules/.bin/openco
 (Windows: `~/.opencode1/node_modules/.bin/opencode.cmd`) and run `/ping`. The
 two share OpenCode's data folder — sessions show in both (measured: 1.19.0 and
 2.0.27) — and its config files, and OpenCode's migration guide says a config
-converted for 2.x is not for 1.x. `…/.bin/opencode auth list` shows whether
+converted for 2.x is not for 1.x. If OpenCode 2 created that folder, the 1.x
+cannot open it: set `dataHome` (below). `…/.bin/opencode auth list` shows whether
 the 1.x has your credentials; if not, log it in as your organization says.
 
 #### Experimental: `opencode2`  <!-- claim:opencode-2-api -->
 
 With `opencodeCopilotBridge.opencode2` on, an `opencode` whose `--version`
 says 2.x is driven through its HTTP API instead (tested on 2.0.18 to 2.2.5: every
-check on 2.0.29 and 2.0.32, the nightly probes on the others):
+manual check on 2.0.29 and 2.0.32, the probe's rows on 2.0.18, 2.1.4, 2.2.0 and
+2.2.5; nightly on 2.0.29, 2.2.5 and the latest):
 
 - **One server, this window's own.** Every turn — plan, `/dev`, lanes,
   `/worktree`, `transport: cli` too — goes through the `opencode serve` the
@@ -262,9 +268,11 @@ check on 2.0.29 and 2.0.32, the nightly probes on the others):
   turn ran `echo > file`, and so did its `explore` and `general` subagents, on
   both versions). The bridge's overrides go in 2.x's format, and a plan turn is
   sent only when the server lists them for `plan`; otherwise nothing is sent.
-- **Not yet:** MCP tools on read-only turns (2.x reaches them through Code
-  Mode's `execute`, which stays denied) and answering OpenCode's questions.
-  **Close** in `/sessions` archives the session in OpenCode itself from 2.1 on;
+- **MCP tools on read-only turns: 2.2 and later.** From 2.2.0 a read-only turn
+  is offered the tools `readOnlyTools` lists, by name, and no other. On 2.0 and
+  2.1 it has none: they live inside Code Mode's `execute`, which stays denied.
+- **Not yet:** answering OpenCode's questions.
+- **Close** in `/sessions` archives the session in OpenCode itself from 2.1 on;
   2.0.x has no archive, so there the bridge hides it for itself.
 
 - **Your own permission rules.** OpenCode 2 reads `permission:` in
@@ -298,8 +306,8 @@ merges over your config files (your own agent settings, such as a model, stay):
 - no shell: inspection commands can execute writing helpers too;
 - reading (`.env` files aside), searching and the web;
 - MCP tools only as `readOnlyTools` lists them (default: the bridge's gitScan;
-  1.x names them `<server>_<tool>`, e.g. `jira_get*`); on 2.x none, as they run
-  inside Code Mode, which can send any request;
+  1.x names them `<server>_<tool>`, e.g. `jira_get*`; 2.2 and later by name too);
+  on 2.0 and 2.1 none, as they run inside Code Mode, which can send any request;
 - subagents only from `readOnlySubagents`, which get the same rules — in `/dev`
   turns too: `explore` is a search agent.
 
@@ -523,7 +531,7 @@ All under `opencodeCopilotBridge.`.
 | `readOnlySubagents` | `["explore"]` | Literal subagent names a read-only turn may start via `task`; trimmed and deduplicated, `*` and `?` rejected. With `enforceReadOnly` only agents with verified shell-free permissions are available. |
 | `opencode2` | `false` | Experimental: drive OpenCode 2 through its HTTP API (tested on 2.0.18–2.2.5) instead of refusing it — every turn through this window's own server, read-only turns only when it lists the bridge's rules (see *OpenCode 2*). |
 | `enforceReadOnly` | `true` | Read-only turns read-only by permission in every OpenCode process the bridge starts: no edits or shell, `readOnlyTools`, read-only subagents (see *Read-only turns*). `/dev` is unchanged. Off: 0.0.214, read-only by instruction. |
-| `readOnlyTools` | `["git-scan_gitScan"]` | With `enforceReadOnly`, the MCP tools a read-only turn may use, by OpenCode permission name (`<server>_<tool>`, wildcards allowed). A name that would allow a tool that writes, runs commands or starts subagents is left out. 1.x only. |
+| `readOnlyTools` | `["git-scan_gitScan"]` | With `enforceReadOnly`, the MCP tools a read-only turn may use, by OpenCode permission name (`<server>_<tool>`, wildcards allowed). A name that would allow a tool that writes, runs commands or starts subagents is left out. On OpenCode 2 from 2.2.0; 2.0 and 2.1 offer none. |
 | `attachDevToServer` | `true` | With transport `auto`, `/dev` attaches to the warm server instead of booting OpenCode per turn. |
 | `prewarmServer` | `true` | Start (or adopt) the OpenCode server a few seconds after VS Code starts, so the first message does not wait for its boot. Trusted workspaces only. Transport `cli` starts no server; it only checks `--version` (OpenCode 2). |
 | `toolQuietMs` | `600000` | How long a tool the server reports as running may stay silent. 0 = `idleTimeoutMs`. |

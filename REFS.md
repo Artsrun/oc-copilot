@@ -1121,7 +1121,14 @@ checks in `docs/manual-checks.md` (then `docs/test-vsix-0.0.210.txt`); no VSIX w
 
 ## Agent Host Protocol — no third-party harness adapter
 
-**Dated 2026-09-09. Closed. Do not re-investigate.**
+**Dated 2026-09-09. Closed for an adapter inside VS Code's host.**
+
+**Note, 2026-11-02 (source and third-party READMEs, not run by us):** a host
+outside VS Code is a separate question this entry did not ask. AHP v1.0 is
+published, and VS Code connects to separate hosts over websocket
+(`chat.remoteAgentHosts`; `chat.remoteAgentHostsEnabled` defaults to true in 1.144),
+so no adapter would be needed.
+Rewrite this entry once a smoke test has run; until then its Consequence holds.
 
 The question: can OpenCode be plugged into VS Code's Agent Host as a harness, so
 the bridge stops being a chat participant and becomes a first-class backend?

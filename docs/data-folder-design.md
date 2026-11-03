@@ -1,8 +1,12 @@
 # OpenCode 1's own data folder — design note
 
-Dated 2026-10-27 (0.0.227). Status: **not built**. The bridge was switched to
-`opencode2` on this machine instead; this note is the fix for when a 1.x is
-needed again.
+Dated 2026-10-27 (0.0.227). Status: **built in 0.0.230** (`dataHome`, checks `SE`;
+`dataHomeEnv` in `src/proc.ts`, the listener in `src/commands-registry.ts`). It also
+stops the managed server when the setting changes, which the design below does not
+say. Kept as the record of why; what follows is as written on 2026-10-27.
+
+At the time, the bridge was switched to `opencode2` on this machine instead; this
+note was the fix for when a 1.x is needed again.
 
 ## The problem, measured
 
