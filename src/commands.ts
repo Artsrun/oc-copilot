@@ -110,7 +110,7 @@ export async function diagnose(): Promise<void> {
                 ? `${mark("fail")} @opencode not registered: ${truncate(problem, 80).replace(/\|/g, "\\|")} — this host has no chat participants; palette commands and gitScan still work`
                 : local
                     ? `${mark("fail")} @opencode is registered, but ${local}: turn the setting on (README, *Copilot harness*)`
-                    : "@opencode answers in a **Local** session only: the Copilot harness has no chat participants (README, *Copilot harness*)"
+                    : "@opencode answers in a **Local** session only: the Copilot harness has no chat participants, and VS Code's docs say Local is removed in February 2027 (README, *Copilot harness*)"
         )
     );
     lines.push(row("harness settings", harnessNote()));

@@ -215,9 +215,10 @@ export function configStamp(cwd: string): string {
 }
 
 /** claim:prewarm-server — the server, then the folder's agent list. Reading it starts
- * the folder's MCP servers on 2.x, whose tools reach a turn 0.5–1 s later (2.2.5: none
- * on a first turn without it), and settles the list below 2.2.0 (AGENTS_SETTLE_MS),
- * both off the turn path; the turn reads the cached list (REFS 0.0.234). */
+ * the folder's MCP servers on 2.x, whose tools reach a turn 0.5–1 s later, and settles
+ * the staged list (AGENTS_SETTLE_MS). A first turn's own read does both too, a second
+ * later: here they are off the turn path, and the turn reads the cached list
+ * (REFS 0.0.234, 0.0.239). */
 export function prewarmFolder(): Promise<string | undefined> | undefined {
     const cwd = resolveFolder()?.folder.uri.fsPath;
     return prewarmServer()?.then(async (base) => {

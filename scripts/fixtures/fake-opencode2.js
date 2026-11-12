@@ -57,10 +57,11 @@ module.exports = (argv) => {
         ...(id === "plan" && process.env.FAKE_OC2_AGENT_MODEL ? { model: { providerID: process.env.FAKE_OC2_AGENT_MODEL.split("/")[0], id: process.env.FAKE_OC2_AGENT_MODEL.split("/")[1] } } : {}),
         permissions: [...stock[id], ...(stockOnly || process.env.FAKE_OC2_DROP === "1" ? [] : occ.agents?.[id]?.permissions ?? []), R("browser", "deny")]
     });
-    // Before 2.2.0 a folder's agents load in stages, started by its first request: `[]`, then
-    // the stock rules alone for ~200–280 ms, then with the injected ones (2.0.29, 2.1.4
-    // measured). 2.2.0+ answers the first request with the loaded list (REFS 0.0.233).
-    const STAGED = (([a, b]) => a === 2 && b < 2)(VERSION.split(".").map(Number));
+    // A folder's agents load in stages, started by its first request: `[]`, then the stock
+    // rules alone for ~200–430 ms, then with the injected ones. Measured: staged on 2.0.29,
+    // 2.1.4 and again on 2.2.7; 2.2.0, 2.2.5 and 2.2.6 answer the first request loaded
+    // (REFS 0.0.233, 0.0.239).
+    const STAGED = (([a, b, c]) => a === 2 && (b < 2 || b > 2 || c >= 7))(VERSION.split(".").map(Number));
     const firstAsked = new Map();
     const agentList = (dir) => {
         if (!STAGED) return Object.keys(stock).map((id) => agentInfo(id));

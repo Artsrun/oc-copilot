@@ -3,6 +3,37 @@
 Full release history, newest first; releases before the last one are condensed
 to their summary and headlines. The README ships the last five.
 
+### 0.0.239
+
+OpenCode 2.2.7, today's latest, sends its first plan turn again, and the tested range
+ends there. Found while checking the verification notes of 2026-11-11 (REFS 0.0.239).
+
+- **Fixed: on 2.2.7 the default first turn after a server start was refused.** 2.2.7
+  loads a folder's agent list in stages again (`[]`, the stock rules for 190–430 ms,
+  then with the overrides), as 2.0 and 2.1 did; 2.2.0–2.2.6 answered loaded. 0.0.233
+  read 2.2.0 and later once, so the bridge took the stock stage and judged plan
+  unverified: `probe-opencode2.js` on a real 2.2.7, three rows "Nothing was sent", and
+  the nightly `latest` cell from 2026-11-11. No version is trusted to answer loaded
+  now: every 2.x list is read until it holds for `AGENTS_SETTLE_MS`, once per server
+  start and folder. Checks `TW` (red first: 4; the fake 2.2.7 stages).
+- **A first turn has its MCP tools without prewarm too.** Its own settled read gives
+  the folder's MCP servers their second (2.2.5, 2.2.6, 2.2.7 measured). The probe's
+  control row expected "not offered" on 2.2.5; both rows expect "runs" from 2.2.0.
+- **A start waits for the server just stopped** (`serveGone`, at most
+  `STOP_WAIT_MS`). The nightly 2.2.5 cell was red three nights of four: the probe
+  stops a server and starts the next at once, and the new one exited "SQLiteError:
+  database is locked". Not reproduced locally (12 of 12 came up). Check `SV` (red
+  first: the second boot saw the first still alive).
+- **Tested range 2.0.18–2.2.7.** `probe-opencode2.js` 26 of 26 on real 2.0.29,
+  2.2.5, 2.2.6 and 2.2.7; `probe-readonly.js` over ACP 9 of 9 on 2.2.7; wire frames
+  recorded on 2.2.7 match the 2.2.5 fixture field for field (0 differences), and
+  `wire-v2.json` is now 2.2.7's. The nightly pins 2.2.7 as well.
+- **Local has an end date.** VS Code's docs and 1.146 release notes say the Local
+  harness "will be removed in February 2027". README, Diagnose, AGENTS and the flow
+  pages say so; what replaces `@opencode` is not built.
+- Measured, nothing changed for it: two servers on one data folder are fine, except
+  on a brand-new folder's first run (REFS 0.0.239).
+
 ### 0.0.238
 
 Milestone 2 of the roadmap: an OpenCode 2 install just works. Merging this is not its
