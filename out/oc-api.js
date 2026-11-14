@@ -107,10 +107,6 @@ const v1Messages = (list) => (Array.isArray(list) ? list : [])
     });
 const AGENTS_SETTLE_MS = 1000;
 const agentsSettled = new Set();
-const loadsAgentsAtOnce = (base) => {
-    const v = (0, net_1.serverVersion)(base)?.match(/^v?(\d+)\.(\d+)\./);
-    return Boolean(v) && (Number(v?.[1]) > 2 || (Number(v?.[1]) === 2 && Number(v?.[2]) >= 2));
-};
 const runsOnAgentModel = (base) => {
     const [major, minor, patch] = ((0, net_1.serverVersion)(base)?.match(/\d+/g) ?? []).map(Number);
     return major > 2 || (major === 2 && (minor > 1 || (minor === 1 && patch >= 4)));
@@ -161,7 +157,7 @@ const v2 = (base) => {
         agents: async (cwd, timeoutMs) => {
             const until = Date.now() + timeoutMs;
             const key = `${base}\0${(0, net_1.currentServerGeneration)()}\0${cwd}`;
-            const settle = !agentsSettled.has(key) && !loadsAgentsAtOnce(base);
+            const settle = !agentsSettled.has(key);
             let found = [];
             let seen = "";
             let since = 0;

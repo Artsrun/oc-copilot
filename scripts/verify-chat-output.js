@@ -8637,8 +8637,8 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
             const tw7 = stream();
             await global.__handler({ prompt: "explain the cart on three [[probe:text]]" }, { history: [] }, tw7.response, tw7.token);
             const tw7Chat = plain(tw7.chatMarkdown.join(""));
-            add(`TW a 3.x with opencode2 runs on the 2.x adapter and says it is outside the tested 2.0.18–2.2.5${/Hello from the scripted model/.test(tw7Chat) ? "" : ` [chat: ${tw7Chat.slice(0, 400)}]`}`,
-                /Hello from the scripted model\./.test(tw7Chat) && /3\.0\.0 is outside the versions this bridge was tested with \(2\.0\.18–2\.2\.5\)/.test(tw7Chat));
+            add(`TW a 3.x with opencode2 runs on the 2.x adapter and says it is outside the tested 2.0.18–2.2.7${/Hello from the scripted model/.test(tw7Chat) ? "" : ` [chat: ${tw7Chat.slice(0, 400)}]`}`,
+                /Hello from the scripted model\./.test(tw7Chat) && /3\.0\.0 is outside the versions this bridge was tested with \(2\.0\.18–2\.2\.7\)/.test(tw7Chat));
             add("TW …its own `--version` was read (3.0.0), not a cached 2.x identity",
                 logLines.slice(tw7Log).some((l) => /fake-tw3\.js --version/.test(l)) && logLines.slice(tw7Log).some((l) => /CLI identity verified/.test(l)));
             ext.deactivate();
@@ -8675,9 +8675,25 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
             await global.__handler({ prompt: "explain the cart on 2.2.5 [[probe:text]]" }, { history: [] }, tw225.response, tw225.token);
             const tw225Chat = plain(tw225.chatMarkdown.join(""));
             const tw225Lists = twReqs().filter((r) => r.method === "GET" && r.path === "/api/agent").length;
-            add(`TW 2.2.5 answers the first agent request loaded: one read, no settling wait (${tw225Lists} reads)`, tw225Lists === 1);
+            // 0.0.239: 2.2.7 stages the list again, so no version is trusted to answer loaded:
+            // every 2.x list is read until it holds (0.0.233 read 2.2.0+ once).
+            add(`TW 2.2.5, which answers loaded, is read until the list holds all the same (${tw225Lists} reads)`, tw225Lists >= 4);
             add(`TW 2.2.5 runs inside the tested range: no outside-the-range line${/Hello from the scripted model/.test(tw225Chat) ? "" : ` [chat: ${tw225Chat.slice(0, 300)}]`}`,
                 /Hello from the scripted model\./.test(tw225Chat) && !/outside the versions/.test(tw225Chat));
+            ext.deactivate();
+            // 0.0.239: 2.2.7 (today's latest) loads the list in stages again (real binary: `[]`,
+            // plan 7 rules at ~520-610 ms, 40 at ~800-1020 ms). The bridge read 2.2.0+ once,
+            // took the stock stage and refused the default first turn (probe-opencode2: 3 rows).
+            process.env.FAKE_OC2_VERSION = "2.2.7";
+            settings.executable = writeFake("fake-tw227.js", [], `if (!process.argv.includes('--version') || true) require(${JSON.stringify(path.join(__dirname, "fixtures", "fake-opencode2.js"))})(process.argv);\n`);
+            fs.rmSync(twRecord, { force: true });
+            const tw227 = stream();
+            await global.__handler({ prompt: "explain the cart on 2.2.7 [[probe:text]]" }, { history: [] }, tw227.response, tw227.token);
+            const tw227Chat = plain(tw227.chatMarkdown.join(""));
+            const tw227Lists = twReqs().filter((r) => r.method === "GET" && r.path === "/api/agent").length;
+            add(`TW 2.2.7 lists agents in stages again: the first plan turn reads past the stock stage and is sent (${tw227Lists} reads)${/Hello from the scripted model/.test(tw227Chat) ? "" : ` [chat: ${tw227Chat.slice(0, 200)}]`}`,
+                tw227Lists >= 4 && /Hello from the scripted model\./.test(tw227Chat) && !/Nothing was sent/.test(tw227Chat));
+            add("TW 2.2.7 runs inside the tested range: no outside-the-range line", /Hello from the scripted model\./.test(tw227Chat) && !/outside the versions/.test(tw227Chat));
             ext.deactivate();
             process.env.FAKE_OC2_VERSION = "3.0.0";
             settings.executable = writeFake("fake-tw3.js", [], `if (!process.argv.includes('--version') || true) require(${JSON.stringify(path.join(__dirname, "fixtures", "fake-opencode2.js"))})(process.argv);\n`);
@@ -9200,6 +9216,40 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
             ext.deactivate();
             delete vscodeStub.workspace.isTrusted;
             Object.assign(settings, { executable: pvSaved.exe, serverPort: pvSaved.port, transport: pvSaved.t, serverStartupPollMs: pvSaved.poll, prewarmServer: pvSaved.pre });
+        }
+
+        // SV (0.0.239): a start right after a stop must not overlap the stopped server.
+        // A real 2.2.5 started that way exited "SQLiteError: database is locked" (nightly
+        // probe). This fake takes 600 ms to exit on SIGTERM and notes, at its boot, whether
+        // an earlier instance is still alive. (Windows kills at once: taskkill /F.)
+        {
+            const svSaved = { exe: settings.executable, port: settings.serverPort, t: settings.transport, poll: settings.serverStartupPollMs };
+            const svPids = path.join(work, "sv-pids.txt");
+            const svBoots = path.join(work, "sv-boots.txt");
+            const svFake = writeFake(
+                "fake-sv-slow-exit.js",
+                [],
+                "const i = process.argv.indexOf('--port');\n" +
+                "if (process.argv.includes('serve') && i > 0) {\n" +
+                "  const pids = fs.existsSync(" + JSON.stringify(svPids) + ") ? fs.readFileSync(" + JSON.stringify(svPids) + ", 'utf8').split('\\n').filter(Boolean) : [];\n" +
+                "  const alive = pids.filter((p) => { try { process.kill(Number(p), 0); return true; } catch { return false; } });\n" +
+                "  fs.appendFileSync(" + JSON.stringify(svBoots) + ", alive.length + '\\n');\n" +
+                "  fs.appendFileSync(" + JSON.stringify(svPids) + ", process.pid + '\\n');\n" +
+                "  process.on('SIGTERM', () => setTimeout(() => process.exit(0), 600));\n" +
+                "  require('http').createServer((q, s) => { s.setHeader('content-type', 'application/json'); s.end(q.url.startsWith('/global/health') ? JSON.stringify({ healthy: true, version: '1.18.34' }) : '[]'); }).listen(Number(process.argv[i + 1]), '127.0.0.1');\n" +
+                "}\n"
+            );
+            Object.assign(settings, { executable: svFake, serverPort: 0, transport: "auto", serverStartupPollMs: 50 });
+            vscodeStub.workspace.isTrusted = true;
+            const sv1 = await ext.__test.prewarmServer();
+            ext.deactivate();
+            const sv2 = await ext.__test.prewarmServer();
+            ext.deactivate();
+            const svSeen = fs.existsSync(svBoots) ? fs.readFileSync(svBoots, "utf8").trim().split("\n") : [];
+            add(`SV a start right after a stop waits for the stopped server to exit (alive at each boot: ${svSeen.join(", ")})`,
+                typeof sv1 === "string" && typeof sv2 === "string" && svSeen.length === 2 && svSeen.every((n) => n === "0"));
+            delete vscodeStub.workspace.isTrusted;
+            Object.assign(settings, { executable: svSaved.exe, serverPort: svSaved.port, transport: svSaved.t, serverStartupPollMs: svSaved.poll });
         }
 
         // SA: serverPort 0 (the default) starts the server on a free port of the

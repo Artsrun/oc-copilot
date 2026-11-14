@@ -1,6 +1,6 @@
 # (・∀・) Chat flow: from Copilot Chat to OpenCode and back
 
-As of 0.0.238 (tested OpenCode: 2.0.18–2.2.5, and 1.18.27–1.19.5).
+As of 0.0.239 (tested OpenCode: 2.0.18–2.2.7, and 1.18.27–1.19.5).
 
 > **One-line truth** (´-ω-)
 > Copilot only routes a prompt, attachments and turn history to the `@opencode`
@@ -20,6 +20,10 @@ As of 0.0.238 (tested OpenCode: 2.0.18–2.2.5, and 1.18.27–1.19.5).
 | 6 | [Trust, pros and cons](06-trust-and-tradeoffs.md) | Risks, strengths, next steps |
 | 7 | [Lanes, chips, effort, context](07-lanes-chips-effort.md) | What the next turn costs: fan-out, chips, variants, compaction |
 | 8 | [OpenCode 2 and the Copilot harness](08-opencode2-and-harness.md) | Which major runs, what differs, where `@opencode` can answer |
+
+Not a flow page: [../local-agent.md](../local-agent.md) holds the steps for a
+coding agent on the owner's machine (release, and the two route measurements
+that page 6 lists as open).
 
 ## Marks and colours
 

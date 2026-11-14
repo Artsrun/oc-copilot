@@ -147,7 +147,7 @@ does not run the suite.
 
 CI runs the same gate (`.github/workflows/ship.yml`: Linux, Windows, macOS, every
 push and pull request) and, nightly, the real-binary probes, one job per
-OpenCode version (`probes.yml`: 1.19.0, 1.19.5, 2.0.29 and 2.2.5 must pass, the latest 2.x may fail;
+OpenCode version (`probes.yml`: 1.19.0, 1.19.5, 2.0.29, 2.2.5 and 2.2.7 must pass, the latest 2.x may fail;
 one job per 2.x for `probe-data-folder.js`),
 and the chat participant API (`api-watch.yml`: `scripts/check-vscode-api.js` on
 `vscode.d.ts`'s main branch, and a typecheck against the newest `@types/vscode`).
@@ -163,6 +163,10 @@ and the chat participant API (`api-watch.yml`: `scripts/check-vscode-api.js` on
   hash>` to `docs/released.txt` (commit it). From then on any change to `src/`
   or `package.json` fails the gate until the version is bumped — moving the VSIX
   out of `dist/` no longer hides a rebuild (0.0.214 was rebuilt that way).
+- What a cloud session cannot do (package and install into a real VS Code, a
+  chat that renders, Windows and macOS) is written for a coding agent on the
+  owner's machine in `docs/local-agent.md`: the release steps above, and the
+  two route measurements (REFS 0.0.239).
 
 ---
 
@@ -331,13 +335,15 @@ history belongs in `CHANGELOG.md`, not in the source.
   (2.0.29, 2.1.4 none; 2.2.0, 2.2.5 by name; `probe-opencode2.js`). A folder's
   MCP servers start with its first request, and their tools reach a turn 0.5–1 s
   later: prewarm reads the folder's agents for that (`prewarmFolder`, `PV`).
-- **Before 2.2.0 a folder's agent list loads in stages**, started by its first
-  `GET /agent`: `[]`, then the stock rules alone for ~200–280 ms, then with the
-  injected overrides (2.0.29: plan 7 → 39 rules; bisected: 2.1.4 the last, 2.2.0
-  the first that answers loaded). Taking the first non-empty list judged plan
-  `unverified` and refused the default first turn — never the unsafe way. So
-  those versions are read until the list holds for `AGENTS_SETTLE_MS`, once per
-  server start and folder (`TW`, REFS 0.0.233).
+- **A folder's agent list can load in stages**, started by its first
+  `GET /agent`: `[]`, then the stock rules alone for ~200–430 ms, then with the
+  injected overrides (2.0.29: plan 7 → 39 rules). Which versions stage is not
+  stable: 2.0.29 and 2.1.4 did, 2.2.0–2.2.6 answered loaded, 2.2.7 stages again.
+  Taking the first non-empty list judged plan `unverified` and refused the
+  default first turn — never the unsafe way. So no version is trusted to answer
+  loaded: every 2.x list is read until it holds for `AGENTS_SETTLE_MS`, once per
+  server start and folder (`TW`, REFS 0.0.233, 0.0.239). Never key this on a
+  version again: 0.0.233 read 2.2.0+ once, and 2.2.7 broke it within two weeks.
 - **Nobody can answer OpenCode's prompts from a chat turn**: sessions the bridge
   creates deny question/plan_enter/plan_exit, and every ask of the session and its
   subagents is answered (`HQ`).
@@ -450,13 +456,21 @@ history belongs in `CHANGELOG.md`, not in the source.
   waiter is told after 1.5 s, and the log records each start's time (`SB`).
   **`untilStop` reads a rejection as Stop**: keep the error yourself when it
   must be reported.
+- **A server just stopped can still hold its data folder**: a real 2.2.5 started
+  right after a stop exited "SQLiteError: database is locked" (nightly probe). A
+  start waits for the stopped server's exit, at most `STOP_WAIT_MS` (`serveGone`,
+  `SV`). Two servers on one folder are otherwise fine (2.2.5, 2.2.7: together, or
+  one after the other, 0 of 12 each), except on a brand-new folder's first run:
+  started together, one exits "table `account_state` already exists" (9 of 12).
+  The next start works; the bridge does nothing about it (REFS 0.0.239).
 - **A parent's `task` row runs as long as its subagent**: child events are the
   run's activity, or the idle cap stops a parent whose subagent works (`SU`).
 - **A task result carries no cost or tokens** (OpenCode #47822): a subagent's
   spend is read from its own session's `message.updated` (`SC`).
 - **The Copilot harness has no chat participants** (VS Code 1.142+; the API
   is "deprecated", kept for Local sessions). `@opencode` answers in a Local
-  session only. Registering it can throw on a host without the API, so it is
+  session only, and VS Code's docs give Local an end: "will be removed in
+  February 2027" (1.146 notes, 2026-11-11; REFS 0.0.239). Registering it can throw on a host without the API, so it is
   guarded: activation must still register the commands and gitScan, and
   Diagnose names the harness settings (`harnessNote`, `getParticipantProblem`, `HR`).
   With `chat.editor.localAgent.enabled` false VS Code offers no Local session

@@ -105,7 +105,7 @@ SSE events consumed: `message.part.delta` (streamed text and reasoning),
 | --- | --- |
 | `GET /api/info` | Health and version |
 | `GET /api/event` | Shared SSE stream |
-| `GET /api/agent?location[directory]=` | Agents with effective rules, read until settled below 2.2.0 (`AGENTS_SETTLE_MS`) |
+| `GET /api/agent?location[directory]=` | Agents with effective rules, read until settled (`AGENTS_SETTLE_MS`) |
 | `GET /api/agent/:id?location[directory]=` | An agent's own model, for effort with no model named (from 2.1.4) |
 | `GET /api/model?location[directory]=` | Model catalog, and a model's levels |
 | `GET /api/model/default?location[directory]=` | The model a session with none runs on, for effort |

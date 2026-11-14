@@ -5,6 +5,113 @@ actually measured, so nobody re-derives it.
 
 ---
 
+## 0.0.239: 2.2.7 stages the agent list again; two servers on one folder; Local's end date (2026-11-12)
+
+**Dated 2026-11-12. Fixed in 0.0.239.** Linux, Node 22.22.0, the scripted model, real
+binaries in scratch prefixes: `@opencode/cli` 2.0.29, 2.2.5, 2.2.6 and 2.2.7 (the latest,
+published 2026-11-10); `opencode-ai` 1.19.5 is still the latest 1.x.
+
+**2.2.7 stages the agent list again.** `GET /api/agent` polled every 50 ms from the
+server's start, three runs each:
+
+| Version | What the list showed |
+| --- | --- |
+| 2.2.5 | plan 40 rules at 913–1946 ms, the first answer |
+| 2.2.6 | plan 40 at 927–988 ms, the first answer |
+| 2.2.7 | `[]` at 135 ms (one run) · plan 7, the stock rules, at 523–612 ms · plan 40 at 804–1018 ms |
+
+The stock stage lasted 190–430 ms. 2.2.7's changelog: "`agent.list` returns the agents
+loaded so far". 0.0.233 read 2.2.0 and later once, so the bridge took the stock stage.
+`probe-opencode2.js` on 0.0.238 with 2.2.7: three rows "Nothing was sent: the OpenCode 2
+server … does not list the bridge's read-only rules for `plan`" (plan first on a fresh
+server, and both first-turn MCP rows: the prewarmed one too, the stock list being cached).
+The nightly `latest` cell logged the same from 2026-11-11. On 2.2.6 the unfixed bridge
+passed that row.
+
+**Fix:** no version shortcut. Every 2.x list is read until it holds for
+`AGENTS_SETTLE_MS`, once per server start and folder. After it, with every change of
+0.0.239 built: `probe-opencode2.js` `ALL 26 ROWS AS EXPECTED` on 2.0.29, 2.2.5, 2.2.6 and
+2.2.7; `probe-readonly.js` over ACP on 2.2.7: 9 of 9; `record-wire-fixtures.js --v2` on
+2.2.7 against the 2.2.5 fixture: 5 turns, the same frame counts, 0 field differences
+(`wire-v2.json` is now 2.2.7's). The suite's fake 2.x stages below
+2.2.0 and from 2.2.7: `TW` red first (4: the fake 2.2.7 got 3 reads and was refused),
+then 11 reads and sent.
+
+**2.3.0, published 2026-11-13, stages too** (added 2026-11-14). The same poll, three
+runs: `[]` at 180 ms (one run) · plan 7 at 500–816 ms · plan 40 at 924–1112 ms; the
+stock stage lasted 261–424 ms. Nightly run 43551262378 on main, 0.0.238: the `latest`
+cell, now 2.3.0, fails the same three rows, "Nothing was sent". `probe-opencode2.js` on
+a real 2.3.0 with 0.0.239: `ALL 26 ROWS AS EXPECTED` (one run). No ACP probe and no wire
+recording, so 2.3.0 is not in the tested range.
+
+**The settled read also starts MCP.** A first turn with no earlier folder request is now
+offered gitScan on 2.2.5, 2.2.6 and 2.2.7: the turn's own read takes the second the MCP
+servers need. Before the fix, 2.2.5 offered none there (0.0.234) and 2.2.6 already did.
+The probe's control row no longer differs from its prewarm row.
+
+**A start right after a stop.** Nightly run 43147893522 (2026-11-12), the pinned 2.2.5
+cell: after "plan as the first turn on a fresh server: sent", the next `ensureServer`
+threw "OpenCode server process exited (code 1): SQLiteError: database is locked". Red on
+11-09, 11-11 and 11-12, green on 11-10. The probe stops a server and starts the next at
+once. Not reproduced here: kill, then start at once, came up 12 of 12. `stopServer` now
+keeps the stopped process's exit (`serveGone`) and the next spawn waits for it, at most
+`STOP_WAIT_MS`. `SV`: a fake that takes 600 ms to exit on SIGTERM; red first ("alive at
+each boot: 0, 1"), green after.
+
+**Two servers on one data folder**, the question the notes left open. Six trials each on
+2.2.5 and 2.2.7, plain `opencode serve`, one `XDG_DATA_HOME`:
+
+| Case | Result |
+| --- | --- |
+| a brand-new folder, both started together | one exits 1, "SQLiteError: table `account_state` already exists": 4 of 6 (2.2.5), 5 of 6 (2.2.7) |
+| the database exists, both started together | both healthy, 12 of 12 |
+| one running, a second started | both healthy, the first still running, 12 of 12 |
+| one killed, the next started at once | healthy, 12 of 12 |
+
+So two windows on one folder are fine, except on a first-ever run with both starting
+together, where OpenCode's own schema creation races. The window whose server exited
+starts one on its next turn. The bridge does nothing about it.
+
+**OpenCode's shared service.** 2.2.7's own help: `opencode service
+start|restart|status|stop|get|set|unset` ("Manage the background server"); `--standalone`
+"Run with a private server instead of the background service"; `serve` takes `--service`
+and `--stdio`. Docs: "By default, OpenCode discovers or starts one shared background server
+for your user account." The bridge keeps its own `opencode serve`: the read-only overrides
+ride on that process's `OPENCODE_CONFIG_CONTENT`, and a service someone else started does
+not have them. Measured in an isolated home on 2.2.7: `opencode service start` listens on
+`http://127.0.0.1:49374` and writes `$XDG_STATE_HOME/opencode/service.json` (`id`,
+`version`, `url`, `pid`, `password`); a private `opencode serve` on the same data folder
+beside it came up and created a session, 4 of 4, and the service was still up after.
+
+**VS Code: Local has an end date** (pages read 2026-11-12). "The Local harness is
+deprecated and will be removed in February 2027." stands on the MCP configuration, agent
+plugin, custom agent file, agent skills and Agent Host pages; the 1.146 release notes
+(2026-11-11): "will be removed in three months (February 2027)", and
+`vscode.temporaryDefaultToLocalHarness` "will also be removed". `@opencode` is a chat
+participant, so it has no surface after that.
+
+**The verification notes of 2026-11-11, checked against their pages.** They hold on what
+decides the plan: the date above; the Copilot harness reads `.mcp.json` and
+`~/.copilot/mcp-config.json` directly (`mcpServers`); extension-provided MCP servers are
+"simply absent from the list that gets forwarded to the Agent Host" (vscode#343729, open);
+an agent's `mcp-servers` and `strict-tools-list` are not forwarded; VS Code connects to
+separate AHP hosts (`chat.remoteAgentHosts` for the Agents window,
+`chat.workspaceRemoteAgentHosts` for editor windows from milestone 1.145.0, and "Connected
+hosts do receive your GitHub credentials"); AHP 1.0.0 is released, 1.1.0 is not, and there
+is no official host SDK; no Microsoft page endorses a third-party host. Stale or wrong:
+the latest OpenCode (2.2.7, not 2.2.6); `opencode-mcp` (3.1.0, still 1.x only); the "180
+seconds" quote is not shown to be a maintainer's, and the ceiling and the working `timeout`
+are one reporter's test (vscode#343135; copilot-cli#4749 open, no maintainer word);
+`timeout` is not a documented field; copilot-cli#4731 is closed as fixed in 1.0.92; the
+gateway's issues #2 and #4 are closed, and it is listed in the AHP README but only in the
+draft implementations guide; plugin MCP servers are not said to start by themselves.
+MCP 2026-07-28 (spec changelog, read directly): no `initialize` handshake, `server/discover`
+required, `resultType` on results, `ttlMs` and `cacheScope` on `tools/list`; clients "MUST
+treat results from earlier-protocol servers that omit the field as `complete`", so gitScan's
+2025-11-25 server stays valid. Not measured: which revision Copilot or OpenCode speaks to it.
+
+---
+
 ## 0.0.238: what 2.x does to a folder 1.x uses (2026-11-03)
 
 **Dated 2026-11-03. Measured:** `scripts/probe-data-folder.js` through `out/`, `probes.yml`

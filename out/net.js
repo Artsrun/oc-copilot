@@ -196,7 +196,7 @@ function setStartupDeadline(ms) {
 }
 const SLOW_START_MS = 1500;
 exports.TESTED_OPENCODE = { min: "1.18.27", max: "1.19.5" };
-exports.TESTED_OPENCODE2 = { min: "2.0.18", max: "2.2.5" };
+exports.TESTED_OPENCODE2 = { min: "2.0.18", max: "2.2.7" };
 const serverVersions = new Map();
 const serverVersion = (base) => serverVersions.get(base);
 exports.serverVersion = serverVersion;
@@ -365,9 +365,20 @@ function knownServerBase() {
 let serverGeneration = 0;
 const currentServerGeneration = () => serverGeneration;
 exports.currentServerGeneration = currentServerGeneration;
+const STOP_WAIT_MS = 3000;
+let serveGone;
 function stopServer() {
     if (serveProcess && serveProcess.exitCode === null) {
-        (0, proc_1.killTree)(serveProcess);
+        const stopped = serveProcess;
+        serveGone = new Promise((resolve) => {
+            const timer = setTimeout(resolve, STOP_WAIT_MS);
+            timer.unref?.();
+            stopped.once("exit", () => {
+                clearTimeout(timer);
+                resolve();
+            });
+        });
+        (0, proc_1.killTree)(stopped);
     }
     serveProcess = undefined;
     managedPort = undefined;
@@ -497,6 +508,10 @@ async function ensureServerOnce(cwd, onSlowStart) {
         const refused = (0, exports.openCode1Refusal)(executable) ?? dataFolderRefusal(executable);
         if (refused) {
             throw refused;
+        }
+        if (serveGone) {
+            await serveGone;
+            serveGone = undefined;
         }
         const serveCwd = cwd ?? (0, core_1.resolveFolder)()?.folder.uri.fsPath;
         serveSpawnError = undefined;

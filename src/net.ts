@@ -239,9 +239,10 @@ const SLOW_START_MS = 1500;
 // them it still runs, and says so once per window and version.
 // 1.19.5: probe-readonly.js's 48 rows, wire frames as 1.19.0's (REFS 0.0.232).
 export const TESTED_OPENCODE = { min: "1.18.27", max: "1.19.5" } as const;
-// 2.0.29 and 2.0.32 through every manual check; 2.0.18, 2.1.4, 2.2.0 and 2.2.5
-// through the probe's rows (scripts/probe-opencode2.js, REFS 0.0.227, 0.0.232).
-export const TESTED_OPENCODE2 = { min: "2.0.18", max: "2.2.5" } as const;
+// 2.0.29 and 2.0.32 through every manual check; 2.0.18, 2.1.4, 2.2.0, 2.2.5, 2.2.6
+// and 2.2.7 through the probe's rows (scripts/probe-opencode2.js, REFS 0.0.227,
+// 0.0.232, 0.0.239).
+export const TESTED_OPENCODE2 = { min: "2.0.18", max: "2.2.7" } as const;
 const serverVersions = new Map<string, string>();
 /** The version `base` named at `/global/health`, if it named one. */
 export const serverVersion = (base: string): string | undefined => serverVersions.get(base);
@@ -474,9 +475,26 @@ let serverGeneration = 0;
 /** Monotonic generation incremented whenever a server is started, adopted or stopped. */
 export const currentServerGeneration = (): number => serverGeneration;
 
+// A server just stopped can still hold its data folder when the next one opens
+// it: a start right after a stop exited with "SQLiteError: database is locked"
+// (2.2.5, nightly probe, 3 nights of 4; not reproduced locally in 12 tries). So
+// the next start waits for that exit, bounded: a process that will not die is
+// not waited on for longer.
+const STOP_WAIT_MS = 3000;
+let serveGone: Promise<void> | undefined;
+
 export function stopServer(): void {
     if (serveProcess && serveProcess.exitCode === null) {
-        killTree(serveProcess);
+        const stopped = serveProcess;
+        serveGone = new Promise<void>((resolve) => {
+            const timer = setTimeout(resolve, STOP_WAIT_MS);
+            timer.unref?.();
+            stopped.once("exit", () => {
+                clearTimeout(timer);
+                resolve();
+            });
+        });
+        killTree(stopped);
     }
     serveProcess = undefined;
     managedPort = undefined;
@@ -636,6 +654,10 @@ async function ensureServerOnce(cwd?: string, onSlowStart?: (text: string) => vo
         const refused = openCode1Refusal(executable) ?? dataFolderRefusal(executable);
         if (refused) {
             throw refused;
+        }
+        if (serveGone) {
+            await serveGone;
+            serveGone = undefined;
         }
         const serveCwd = cwd ?? resolveFolder()?.folder.uri.fsPath;
         serveSpawnError = undefined;
