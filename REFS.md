@@ -37,6 +37,13 @@ passed that row.
 2.2.0 and from 2.2.7: `TW` red first (4: the fake 2.2.7 got 3 reads and was refused),
 then 11 reads and sent.
 
+**2.3.0, published 2026-11-13, stages too** (added 2026-11-14). The same poll, three
+runs: `[]` at 180 ms (one run) · plan 7 at 500–816 ms · plan 40 at 924–1112 ms; the
+stock stage lasted 261–424 ms. Nightly run 43551262378 on main, 0.0.238: the `latest`
+cell, now 2.3.0, fails the same three rows, "Nothing was sent". `probe-opencode2.js` on
+a real 2.3.0 with 0.0.239: `ALL 26 ROWS AS EXPECTED` (one run). No ACP probe and no wire
+recording, so 2.3.0 is not in the tested range.
+
 **The settled read also starts MCP.** A first turn with no earlier folder request is now
 offered gitScan on 2.2.5, 2.2.6 and 2.2.7: the turn's own read takes the second the MCP
 servers need. Before the fix, 2.2.5 offered none there (0.0.234) and 2.2.6 already did.

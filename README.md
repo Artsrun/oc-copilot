@@ -476,6 +476,8 @@ clean up with `git worktree remove --force <path> && git branch -D <branch>`.
 is the one `docs/released.txt` records for its version. `--from <folder>` takes
 VSIXes from a shared folder or a download, `--editor code` limits it to one
 editor, `--check` reports without installing. Reload the windows afterwards.
+The whole sequence from a checkout (gate, package, record, install, check) is
+written for a coding agent in `docs/local-agent.md`.
 
 ## Commands
 

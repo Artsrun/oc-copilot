@@ -163,6 +163,10 @@ and the chat participant API (`api-watch.yml`: `scripts/check-vscode-api.js` on
   hash>` to `docs/released.txt` (commit it). From then on any change to `src/`
   or `package.json` fails the gate until the version is bumped — moving the VSIX
   out of `dist/` no longer hides a rebuild (0.0.214 was rebuilt that way).
+- What a cloud session cannot do (package and install into a real VS Code, a
+  chat that renders, Windows and macOS) is written for a coding agent on the
+  owner's machine in `docs/local-agent.md`: the release steps above, and the
+  two route measurements (REFS 0.0.239).
 
 ---
 

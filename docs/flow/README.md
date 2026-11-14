@@ -21,6 +21,10 @@ As of 0.0.239 (tested OpenCode: 2.0.18–2.2.7, and 1.18.27–1.19.5).
 | 7 | [Lanes, chips, effort, context](07-lanes-chips-effort.md) | What the next turn costs: fan-out, chips, variants, compaction |
 | 8 | [OpenCode 2 and the Copilot harness](08-opencode2-and-harness.md) | Which major runs, what differs, where `@opencode` can answer |
 
+Not a flow page: [../local-agent.md](../local-agent.md) holds the steps for a
+coding agent on the owner's machine (release, and the two route measurements
+that page 6 lists as open).
+
 ## Marks and colours
 
 The marks are the extension's own kaomoji (`marks` and chip `kao` in
