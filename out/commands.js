@@ -116,7 +116,7 @@ async function diagnose() {
         ? `${(0, followups_1.mark)("fail")} @opencode not registered: ${(0, core_1.truncate)(problem, 80).replace(/\|/g, "\\|")} — this host has no chat participants; palette commands and gitScan still work`
         : local
             ? `${(0, followups_1.mark)("fail")} @opencode is registered, but ${local}: turn the setting on (README, *Copilot harness*)`
-            : "@opencode answers in a **Local** session only: the Copilot harness has no chat participants (README, *Copilot harness*)"));
+            : "@opencode answers in a **Local** session only: the Copilot harness has no chat participants, and VS Code's docs say Local is removed in February 2027 (README, *Copilot harness*)"));
     lines.push(row("harness settings", (0, session_1.harnessNote)()));
     lines.push(row("extension host", vscode.env?.remoteName ?? "local"));
     lines.push(row("ui kind", String(vscode.env?.uiKind ?? "?")));

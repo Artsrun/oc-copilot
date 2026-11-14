@@ -122,10 +122,10 @@ OS each line ran on.
 2. **Local hidden** (0.0.235): set `chat.editor.localAgent.enabled` to `false`,
    reload: one warning outside chat, with **Open Settings**; another reload does
    not repeat it; Diagnose names it. Set it back: reload, then off again warns again.
-3. **Tested tops** (0.0.232): on 1.19.5 and on 2.2.5, a turn shows no
+3. **Tested tops** (0.0.232, 0.0.239): on 1.19.5 and on 2.2.7, a turn shows no
    "outside the versions" note.
-4. **First plan turn, 2.0 or 2.1** (0.0.233): reload, send a plan turn at once:
-   it is sent, not refused as unverified.
+4. **First plan turn, 2.0, 2.1 or 2.2.7** (0.0.233, 0.0.239): reload, send a plan
+   turn at once: it is sent, not refused as unverified.
 5. **First-turn MCP tools, 2.2** (0.0.234): with gitScan merged into
    `opencode.json` (**OpenCode: gitScan config for opencode.json**), reload, wait for
    `serve on … answered` in the log and a few seconds more, then `Use gitScan and

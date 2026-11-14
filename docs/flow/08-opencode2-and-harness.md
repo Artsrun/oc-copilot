@@ -54,7 +54,8 @@ answering health with a web page is the second way a 2.x is recognised.
 
 ## First turn on a fresh 2.x server
 
-Both found in 0.0.232–0.0.234 by the probes, on real binaries:
+Found in 0.0.232–0.0.234 by the probes, on real binaries, and again in 0.0.239 when
+2.2.7 went back to staging:
 
 ```mermaid
 flowchart LR
@@ -62,15 +63,18 @@ flowchart LR
   classDef oc fill:#dcfce7,stroke:#16a34a,color:#14532d
   classDef stop fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
 
-  R["the folder's first request"]:::bridge --> L1["below 2.2.0: agent list [] , then stock rules for ~200-280 ms, then with the overrides"]:::oc
-  R --> L2["2.2.0+: the first answer is loaded"]:::oc
+  R["the folder's first request"]:::bridge --> L1["2.0, 2.1 and 2.2.7: agent list [] , then stock rules for ~200-430 ms, then with the overrides"]:::oc
+  R --> L2["2.2.0 to 2.2.6: the first answer is loaded"]:::oc
   R --> M["MCP servers start; tools reach a turn 0.5-1 s later"]:::oc
-  L1 --> S["agents reads until unchanged for AGENTS_SETTLE_MS, once per server start and folder"]:::bridge
+  L1 --> S["agents reads until unchanged for AGENTS_SETTLE_MS, once per server start and folder, on every version"]:::bridge
+  L2 --> S
   M --> P["prewarmFolder makes that request off the turn path"]:::bridge
 ```
 
 Taking the first non-empty list judged `plan` unverified and refused the default
-first turn: only ever the safe way. On Windows the first agent-list read took about
+first turn: only ever the safe way. No version is trusted to answer loaded any more
+(0.0.233 read 2.2.0+ once; 2.2.7 broke that). The settled read also gives the MCP
+servers their start, so a first turn has them with or without prewarm. On Windows the first agent-list read took about
 900 ms, so one control row of `scripts/probe-opencode2.js` reads differently there
 (21 of 22, REFS, *0.0.236 on Windows*). Not a safety finding.
 
@@ -90,7 +94,8 @@ new `dataHome`. `dataHome` is `XDG_DATA_HOME` for every process the bridge start
 ## (◕‿◕) Where `@opencode` can answer
 
 VS Code 1.142 started moving new chats to the Copilot harness, which has no chat
-participants. The API is documented as deprecated, kept for Local sessions.
+participants. The API is documented as deprecated, kept for Local sessions, and
+the docs give Local an end: "will be removed in February 2027" (1.146 notes).
 
 ```mermaid
 flowchart TD

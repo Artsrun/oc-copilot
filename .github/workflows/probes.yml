@@ -31,8 +31,13 @@ jobs:
             package: "@opencode/cli@2.2.5"
             probe: scripts/probe-opencode2.js
             optional: false
-          - cell: opencode 2.2.5 (pinned) · read-only over ACP
-            package: "@opencode/cli@2.2.5"
+          # 2.2.7 loads a folder's agent list in stages again, as 2.0 and 2.1 did.
+          - cell: opencode 2.2.7 (pinned)
+            package: "@opencode/cli@2.2.7"
+            probe: scripts/probe-opencode2.js
+            optional: false
+          - cell: opencode 2.2.7 (pinned) · read-only over ACP
+            package: "@opencode/cli@2.2.7"
             probe: scripts/probe-readonly.js
             optional: false
           - cell: opencode 2 latest

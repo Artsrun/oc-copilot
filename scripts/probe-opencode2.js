@@ -263,8 +263,10 @@ const { runCapture } = out("proc.js");
     });
     delete settings.readOnlyTools;
     // 0.0.234: prewarm reads the folder's agent list (prewarmFolder), which starts its MCP
-    // servers. The first message comes after it: 1 s stands for that gap here (2.2.5: 0.5 s
-    // was enough; a wait with no request starts nothing). The pair isolates the read.
+    // servers; their tools reach a turn 0.5–1 s later. 0.0.239: every 2.x list is read until
+    // it holds for a second, so a first turn's own read gives them that start too: gitScan
+    // is there with or without the earlier read (2.2.5, 2.2.6, 2.2.7 measured; before 0.0.239,
+    // 2.2.5 offered none without it). Prewarm still takes that second off the turn path.
     const firstTurnMcp = async (readList) => {
         stopServer();
         const warmed = await out("net.js").warmServer(project);
@@ -273,8 +275,8 @@ const { runCapture } = out("proc.js");
         const r = await plan("call:gitScan");
         return [mcpGot(r, /Working tree|Branch/i.test(r.text) && "runs"), note(r)];
     };
-    await row("control: first turn, no agent list read before it · gitScan", vMajor === 1 ? "runs" : "not offered", () => firstTurnMcp(false));
-    await row("prewarm: first turn after the folder's agent list was read · gitScan", mcpByName ? "runs" : "not offered", () => firstTurnMcp(true));
+    await row("first turn, no agent list read before it · gitScan", mcpByName ? "runs" : "not offered", () => firstTurnMcp(false));
+    await row("first turn after the folder's agent list was read (prewarm) · gitScan", mcpByName ? "runs" : "not offered", () => firstTurnMcp(true));
     stopServer();
     settings.enforceReadOnly = false;
     await row("control: enforceReadOnly off · plan shell echo > file", "CREATED", async () => {

@@ -164,18 +164,15 @@ const v1Messages = (list: unknown): unknown[] =>
                 parts: (Array.isArray(m.content) ? m.content : []).filter((c: { type?: unknown }) => c?.type === "text" || c?.type === "reasoning")
             });
 
-// Before 2.2.0 a folder's agents load in stages, started by its first request:
-// `[]`, then the stock rules alone for ~200–280 ms, then with the injected
-// overrides (2.0.29, 2.1.4 measured; 2.2.0 and 2.2.5 answer the first request
-// loaded). The stock stage judged "unverified" and refused the first plan turn,
-// so those versions are read until the list has not changed for AGENTS_SETTLE_MS, once
-// per server start and folder (REFS 0.0.233).
+// A folder's agents can load in stages, started by its first request: `[]`, then
+// the stock rules alone for ~200–430 ms, then with the injected overrides. Which
+// versions do it is not stable: 2.0.29 and 2.1.4 did, 2.2.0–2.2.6 answered the
+// first request loaded, 2.2.7 stages again. The stock stage judged "unverified"
+// and refused the first plan turn, so no version is trusted to answer loaded:
+// every list is read until it has not changed for AGENTS_SETTLE_MS, once per
+// server start and folder (REFS 0.0.233, 0.0.239).
 const AGENTS_SETTLE_MS = 1000;
 const agentsSettled = new Set<string>();
-const loadsAgentsAtOnce = (base: string): boolean => {
-    const v = serverVersion(base)?.match(/^v?(\d+)\.(\d+)\./);
-    return Boolean(v) && (Number(v?.[1]) > 2 || (Number(v?.[1]) === 2 && Number(v?.[2]) >= 2));
-};
 
 const runsOnAgentModel = (base: string): boolean => {
     const [major, minor, patch] = (serverVersion(base)?.match(/\d+/g) ?? []).map(Number);
@@ -234,11 +231,11 @@ const v2 = (base: string): ServerApi => {
             return { healthy: typeof info?.version === "string", version: info?.version };
         },
         // A folder's agents load lazily: 400 ms after boot the list was `[]` (2.0.29),
-        // and before 2.2.0 the first non-empty list is not the last (AGENTS_SETTLE_MS).
+        // and the first non-empty list may not be the last (AGENTS_SETTLE_MS).
         agents: async (cwd, timeoutMs) => {
             const until = Date.now() + timeoutMs;
             const key = `${base}\0${currentServerGeneration()}\0${cwd}`;
-            const settle = !agentsSettled.has(key) && !loadsAgentsAtOnce(base);
+            const settle = !agentsSettled.has(key);
             let found: Array<Record<string, unknown>> = [];
             let seen = "";
             let since = 0;
