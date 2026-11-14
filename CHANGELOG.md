@@ -5,8 +5,8 @@ to their summary and headlines. The README ships the last five.
 
 ### 0.0.239
 
-OpenCode 2.2.7, today's latest, sends its first plan turn again, and the tested range
-ends there. Found while checking the verification notes of 2026-11-11 (REFS 0.0.239).
+OpenCode 2.2.7, the latest on 2026-11-12, sends its first plan turn again, and the tested
+range ends there. Found while checking the verification notes of 2026-11-11 (REFS 0.0.239).
 
 - **Fixed: on 2.2.7 the default first turn after a server start was refused.** 2.2.7
   loads a folder's agent list in stages again (`[]`, the stock rules for 190–430 ms,
@@ -33,6 +33,14 @@ ends there. Found while checking the verification notes of 2026-11-11 (REFS 0.0.
   pages say so; what replaces `@opencode` is not built.
 - Measured, nothing changed for it: two servers on one data folder are fine, except
   on a brand-new folder's first run (REFS 0.0.239).
+- **2.3.0, published 2026-11-13, is outside the range and runs.** `probe-opencode2.js`
+  on a real 2.3.0: 26 of 26 with this version; on 0.0.238 the nightly `latest` cell
+  fails three rows on it, "Nothing was sent" (2026-11-14). One probe run is not the
+  range's evidence, so the range and the pins stay at 2.2.7.
+- **New: `docs/local-agent.md`.** What a cloud session cannot do, written for a coding
+  agent on the owner's machine: the release (gate, package, record, install, check)
+  and the two route measurements. AGENTS §3, the README, `docs/manual-checks.md` and
+  the flow pages point to it.
 
 ### 0.0.238
 

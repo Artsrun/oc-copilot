@@ -5,6 +5,9 @@ cover what it cannot: the real host, a real OpenCode, a real model. Record each
 as PASS, FAIL, INCONCLUSIVE (the model did not do what was asked) or NOT
 OBSERVED — an unobserved condition is never a pass.
 
+Building, recording and installing the VSIX first is task 1 of
+[local-agent.md](local-agent.md), written for a coding agent on your machine.
+
 ## Setup
 
 1. **Extensions: Install from VSIX…** → `dist/opencode-copilot-bridge-<version>.vsix`,

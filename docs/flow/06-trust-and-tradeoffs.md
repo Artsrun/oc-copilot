@@ -99,11 +99,13 @@ Open:
 
 8. **Decide the proposed-API stance:** sideloaded VSIX only, or wait.
 9. **Prove `opencode2` on by default (0.0.238).** Still to measure: a real model, macOS
-   and Windows by hand on 2.2.5, and a large 1.x folder's import.
+   and Windows by hand on 2.2.5, and a large 1.x folder's import. The steps for
+   the first three are task 1 of [local-agent.md](../local-agent.md).
 10. **Freeze the participant to bug fixes**, awaiting Jan's answer (CHANGELOG 0.0.235).
 11. **Try a separate front end** before Local goes, which VS Code's docs now date:
     February 2027. An Agent Host Protocol host, or an MCP server Copilot's agent
-    calls. Neither has been run (REFS, *Agent Host Protocol* and 0.0.239).
+    calls. Neither has been run (REFS, *Agent Host Protocol* and 0.0.239); the
+    two measurements are task 2 of [local-agent.md](../local-agent.md).
 
 (°ロ°) Items 8 to 11 change code, the suite or the gate, so each needs a version
 bump and a green `npm run ship`.
