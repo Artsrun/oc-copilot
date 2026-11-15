@@ -1,6 +1,7 @@
 import * as path from "node:path";
 import * as vscode from "vscode";
-import { activeCwd, config, logChannel, resolveFolder } from "./core";
+import { config, logChannel } from "./core";
+import { activeCwd, resolveFolder } from "./host";
 import { getModelCatalog, setDefaultModel } from "./models";
 import { diagnose, pickWorktree, quickActions } from "./commands";
 import { chatQuery, composeParallel, insertIntoChat } from "./compose";

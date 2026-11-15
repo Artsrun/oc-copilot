@@ -1780,6 +1780,58 @@ function collectConfigProperties(configuration) {
     const lyLeaves = ["core", "env", "metrics", "context-markers", "git-scan-server", "followups"];
     const lyBusy = lyLeaves.filter((m) => !lyImports[m] || lyImports[m].length);
     add(`LY the leaves AGENTS names import nothing local${lyBusy.length ? ` (${lyBusy.join(", ")})` : ""}`, lyBusy.length === 0);
+    // EN (0.0.240): the engine (the running layer and everything it imports)
+    // loads and runs in a plain Node process, where the next front ends (an MCP
+    // server, an Agent Host) live. The closure is read from the source, so a new
+    // import pulls its module in. Red first: 11 of 15 modules failed to load.
+    const enModules = new Set();
+    for (const queue = ["run-cli", "run-server", "server-session", "asks", "agents", "worktree"]; queue.length;) {
+        const m = queue.pop();
+        if (!enModules.has(m) && lyImports[m]) {
+            enModules.add(m);
+            queue.push(...lyImports[m]);
+        }
+    }
+    const enTyped = [...enModules].filter((m) => /from "vscode"/.test(fs.readFileSync(path.join(srcDir, `${m}.ts`), "utf8")));
+    add(`EN no engine module imports vscode, not even its types (${enModules.size} modules${enTyped.length ? `: ${enTyped.join(", ")}` : ""})`, enModules.size >= 15 && enTyped.length === 0);
+    const enScript = path.join(work, "engine-load.js");
+    fs.writeFileSync(enScript, [
+        `"use strict";`,
+        `const Module = require("node:module");`,
+        `const path = require("node:path");`,
+        `const out = ${JSON.stringify(path.join(__dirname, "..", "out"))};`,
+        `let asked = 0;`,
+        `const load = Module._load;`,
+        `Module._load = function (request, ...rest) { if (request === "vscode") { asked += 1; throw new Error("no vscode here"); } return load.call(this, request, ...rest); };`,
+        `const failed = [];`,
+        `for (const m of ${JSON.stringify([...enModules].sort())}) { try { require(path.join(out, m + ".js")); } catch (e) { failed.push(m + ": " + e.message); } }`,
+        `const core = require(path.join(out, "core.js"));`,
+        `const net = require(path.join(out, "net.js"));`,
+        `const lines = [];`,
+        `core.setLogChannel({ appendLine: (l) => lines.push(l), show() {} });`,
+        `const bare = { fallback: core.config().get("executable", "opencode"), prewarm: net.prewarmServer() === undefined };`,
+        `core.setHost({ settings: () => ({ get: (k, d) => (k === "debugLog" ? true : k === "executable" ? "oc-x" : d) }), folder: () => "/work", trusted: () => false, state: () => undefined });`,
+        `core.debugLine("engine-probe");`,
+        `const hosted = { executable: core.config().get("executable", "opencode"), folder: core.hostFolder(), logged: lines.some((l) => l.endsWith("engine-probe")), prewarm: net.prewarmServer() === undefined };`,
+        `console.log(JSON.stringify({ failed, asked, bare, hosted }));`
+    ].join("\n"));
+    let enRun = { failed: ["did not run"], asked: -1, bare: {}, hosted: {} };
+    try {
+        enRun = JSON.parse(require("node:child_process").execFileSync(process.execPath, [enScript], { encoding: "utf8", timeout: 30000 }).trim().split("\n").pop());
+    } catch (e) {
+        enRun.failed = [String(e.message).slice(0, 200)];
+    }
+    add(`EN every engine module loads where vscode does not resolve${enRun.failed.length ? ` (${enRun.failed.join("; ")})` : ""}`, enRun.failed.length === 0 && enRun.asked === 0);
+    add("EN with no host, settings fall back to their defaults and an untrusted folder prewarms nothing", enRun.bare.fallback === "opencode" && enRun.bare.prewarm === true);
+    add("EN a host's settings, folder and log reach the engine", enRun.hosted.executable === "oc-x" && enRun.hosted.folder === "/work" && enRun.hosted.logged === true && enRun.hosted.prewarm === true);
+    const enHost = fs.readFileSync(path.join(srcDir, "host.ts"), "utf8");
+    const enExt = fs.readFileSync(path.join(srcDir, "extension.ts"), "utf8");
+    add(
+        "EN inside VS Code the host is installed when host.ts loads, before any engine module",
+        /^setHost\(\s*\{[\s\S]*\},\s*false\s*\);\s*$/m.test(enHost) &&
+            enExt.indexOf('from "./host"') > -1 &&
+            [...enModules].every((m) => m === "core" || enExt.indexOf(`from "./${m}"`) === -1 || enExt.indexOf(`from "./${m}"`) > enExt.indexOf('from "./host"'))
+    );
     // OA (0.0.221): every server request goes through ./oc-api, one route set
     // per OpenCode major, so v2 (another API under /api, REFS) is one new set
     // and no call site branches on the version. Read from the source.
@@ -8637,8 +8689,8 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
             const tw7 = stream();
             await global.__handler({ prompt: "explain the cart on three [[probe:text]]" }, { history: [] }, tw7.response, tw7.token);
             const tw7Chat = plain(tw7.chatMarkdown.join(""));
-            add(`TW a 3.x with opencode2 runs on the 2.x adapter and says it is outside the tested 2.0.18–2.2.7${/Hello from the scripted model/.test(tw7Chat) ? "" : ` [chat: ${tw7Chat.slice(0, 400)}]`}`,
-                /Hello from the scripted model\./.test(tw7Chat) && /3\.0\.0 is outside the versions this bridge was tested with \(2\.0\.18–2\.2\.7\)/.test(tw7Chat));
+            add(`TW a 3.x with opencode2 runs on the 2.x adapter and says it is outside the tested 2.0.18–2.3.0${/Hello from the scripted model/.test(tw7Chat) ? "" : ` [chat: ${tw7Chat.slice(0, 400)}]`}`,
+                /Hello from the scripted model\./.test(tw7Chat) && /3\.0\.0 is outside the versions this bridge was tested with \(2\.0\.18–2\.3\.0\)/.test(tw7Chat));
             add("TW …its own `--version` was read (3.0.0), not a cached 2.x identity",
                 logLines.slice(tw7Log).some((l) => /fake-tw3\.js --version/.test(l)) && logLines.slice(tw7Log).some((l) => /CLI identity verified/.test(l)));
             ext.deactivate();
@@ -8694,6 +8746,20 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
             add(`TW 2.2.7 lists agents in stages again: the first plan turn reads past the stock stage and is sent (${tw227Lists} reads)${/Hello from the scripted model/.test(tw227Chat) ? "" : ` [chat: ${tw227Chat.slice(0, 200)}]`}`,
                 tw227Lists >= 4 && /Hello from the scripted model\./.test(tw227Chat) && !/Nothing was sent/.test(tw227Chat));
             add("TW 2.2.7 runs inside the tested range: no outside-the-range line", /Hello from the scripted model\./.test(tw227Chat) && !/outside the versions/.test(tw227Chat));
+            ext.deactivate();
+            // 0.0.240: 2.3.0 (the latest, 2026-11-13) stages as 2.2.7 does (real binary: plan 7
+            // rules from ~110 ms, 10 at 613-751 ms) and is inside the range now. Red first: 1.
+            process.env.FAKE_OC2_VERSION = "2.3.0";
+            settings.executable = writeFake("fake-tw230.js", [], `if (!process.argv.includes('--version') || true) require(${JSON.stringify(path.join(__dirname, "fixtures", "fake-opencode2.js"))})(process.argv);\n`);
+            fs.rmSync(twRecord, { force: true });
+            const tw230 = stream();
+            await global.__handler({ prompt: "explain the cart on 2.3.0 [[probe:text]]" }, { history: [] }, tw230.response, tw230.token);
+            const tw230Chat = plain(tw230.chatMarkdown.join(""));
+            // The line comes once per window and version, and the recording is 2.3.0's: every
+            // earlier TW turn ran as 2.3.0 too. So the whole run's log is read, not this chat.
+            const tw230Outside = logLines.filter((l) => /OpenCode 2\.3\.0 on \S+ is outside the tested/.test(l)).length;
+            add(`TW 2.3.0 runs inside the tested range: sent, and no turn of the run said it is outside${tw230Outside ? ` (${tw230Outside} said so)` : ""}${/Hello from the scripted model/.test(tw230Chat) ? "" : ` [chat: ${tw230Chat.slice(0, 200)}]`}`,
+                /Hello from the scripted model\./.test(tw230Chat) && !/Nothing was sent/.test(tw230Chat) && tw230Outside === 0);
             ext.deactivate();
             process.env.FAKE_OC2_VERSION = "3.0.0";
             settings.executable = writeFake("fake-tw3.js", [], `if (!process.argv.includes('--version') || true) require(${JSON.stringify(path.join(__dirname, "fixtures", "fake-opencode2.js"))})(process.argv);\n`);

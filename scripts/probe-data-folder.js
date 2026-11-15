@@ -39,6 +39,7 @@ Module._load = function (request, ...rest) {
 };
 const out = (name) => require(path.join(__dirname, "..", "out", name));
 const log = [];
+out("core.js").setHost({ settings: () => ({ get: (k, d) => (k in settings ? settings[k] : d) }), folder: () => undefined, trusted: () => true, state: () => undefined });
 out("core.js").setLogChannel({ appendLine: (l) => log.push(l), show() {}, dispose() {} });
 const { runOpenCode } = out("run-cli.js");
 const { ensureServer, stopServer, serverAuth, serverVersion } = out("net.js");

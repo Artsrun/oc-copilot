@@ -1,7 +1,7 @@
 // claim:enforced-read-only — spawned processes receive shell-free agent
 // permissions through OPENCODE_CONFIG_CONTENT. Inspection uses dedicated tools:
 // a Git inspection command executed a writing external helper (REFS). Leaf.
-import { config, extensionContext, logChannel, stamp } from "./core";
+import { config, hostState, logChannel, stamp } from "./core";
 import type { ReadOnlyEnforcement } from "./metrics";
 
 /** Discovery metadata, before the final catch-all deny that withholds bash. */
@@ -289,7 +289,7 @@ export function enforcedReadOnlyNotice(evidence: ReadOnlyEnforcement | undefined
             : `Read-only permissions could not be verified for \`${evidence.agent}\` in this process. Its own permissions apply; check \`OPENCODE_CONFIG_CONTENT\` and the agent configuration.`;
     }
     // A custom agent's own rules passed: the note below describes the bridge's overrides, not them.
-    const state = extensionContext?.globalState;
+    const state = hostState();
     if (evidence?.kind !== "enforced" || !builtin || (state ? Boolean(state.get(NOTED_KEY)) : notedWindow)) {
         return undefined;
     }

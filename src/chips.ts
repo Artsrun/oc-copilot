@@ -1,7 +1,8 @@
 // Follow-up chips: the answer-derived ones kept per turn, and the chips a
 // finished turn gets, a pure function of its metadata (./followups.json).
 import * as vscode from "vscode";
-import { config, extensionContext, logChannel, stamp } from "./core";
+import { config, logChannel, stamp } from "./core";
+import { extensionContext } from "./host";
 import { StepRecord } from "./metrics";
 import { CASES, ChipKey, Outcome, chipLabel, chipOf, fillPrompt } from "./followups";
 import { naturalFollowups } from "./natural";

@@ -42,6 +42,7 @@ exports.thoughtLine = thoughtLine;
 const vscode = __importStar(require("vscode"));
 const path = __importStar(require("node:path"));
 const core_1 = require("./core");
+const host_1 = require("./host");
 const followups_1 = require("./followups");
 exports.HEARTBEAT_MILESTONES_S = [3, 10, 30, 60, 120, 180, 300, 600];
 exports.REASONING_EVERY_MS = 5000;
@@ -113,7 +114,7 @@ function startHeartbeat(response, initial, timeoutMs, cwd, status) {
     let statusDueS = exports.HEARTBEAT_MILESTONES_S[0];
     const showStatus = () => {
         if (status && !stopped) {
-            (0, core_1.setStatus)(`$(sync~spin) OpenCode · ${status} · ${(0, exports.elapsedLabel)(Date.now() - started)}`, `Running the OpenCode ${status} agent`);
+            (0, host_1.setStatus)(`$(sync~spin) OpenCode · ${status} · ${(0, exports.elapsedLabel)(Date.now() - started)}`, `Running the OpenCode ${status} agent`);
         }
     };
     const label = () => {

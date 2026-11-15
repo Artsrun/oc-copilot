@@ -33,10 +33,13 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.sentencesOf = exports.plainText = exports.mdText = exports.extensionContext = exports.logChannel = void 0;
+exports.sentencesOf = exports.plainText = exports.mdText = exports.logChannel = void 0;
+exports.setHost = setHost;
 exports.setLogChannel = setLogChannel;
-exports.setExtensionContext = setExtensionContext;
 exports.config = config;
+exports.hostFolder = hostFolder;
+exports.hostTrusted = hostTrusted;
+exports.hostState = hostState;
 exports.stamp = stamp;
 exports.debugLine = debugLine;
 exports.truncate = truncate;
@@ -45,28 +48,37 @@ exports.secs = secs;
 exports.formatBytes = formatBytes;
 exports.normLine = normLine;
 exports.delay = delay;
-exports.ensureStatusItem = ensureStatusItem;
-exports.setStatus = setStatus;
-exports.refUri = refUri;
 exports.underRoot = underRoot;
-exports.relTo = relTo;
-exports.folderOf = folderOf;
-exports.resolveFolder = resolveFolder;
-exports.activeCwd = activeCwd;
-exports.rememberFolder = rememberFolder;
-exports.isMultiRoot = isMultiRoot;
 exports.untilStop = untilStop;
-const vscode = __importStar(require("vscode"));
 const fs = __importStar(require("node:fs"));
 const path = __importStar(require("node:path"));
+const NO_HOST = {
+    settings: () => ({ get: (_key, fallback) => fallback }),
+    folder: () => undefined,
+    trusted: () => false,
+    state: () => undefined
+};
+let host = NO_HOST;
+function setHost(next, replace = true) {
+    if (replace || host === NO_HOST) {
+        host = next;
+    }
+}
+exports.logChannel = { appendLine: () => undefined, show: () => undefined };
 function setLogChannel(channel) {
     exports.logChannel = channel;
 }
-function setExtensionContext(context) {
-    exports.extensionContext = context;
-}
 function config() {
-    return vscode.workspace.getConfiguration("opencodeCopilotBridge");
+    return host.settings();
+}
+function hostFolder() {
+    return host.folder();
+}
+function hostTrusted() {
+    return host.trusted();
+}
+function hostState() {
+    return host.state();
 }
 function stamp() {
     return new Date().toISOString().slice(11, 19);
@@ -101,58 +113,6 @@ function normLine(text) {
 function delay(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
-let statusItem;
-function ensureStatusItem() {
-    if (!config().get("statusBar", true)) {
-        statusItem?.hide();
-        return undefined;
-    }
-    if (!statusItem) {
-        const align = vscode.StatusBarAlignment?.Right ?? 2;
-        statusItem = vscode.window.createStatusBarItem?.(align, 40);
-        if (statusItem) {
-            statusItem.command = "opencodeCopilotBridge.quickActions";
-            statusItem.name = "OpenCode";
-            exports.extensionContext?.subscriptions.push(statusItem);
-        }
-    }
-    return statusItem;
-}
-function setStatus(text, tooltip, warn = false) {
-    const item = ensureStatusItem();
-    if (!item) {
-        return;
-    }
-    item.text = text;
-    try {
-        item.tooltip = tooltip && vscode.MarkdownString ? new vscode.MarkdownString(tooltip) : tooltip;
-    }
-    catch {
-        item.tooltip = tooltip;
-    }
-    try {
-        item.backgroundColor = warn
-            ? new vscode.ThemeColor("statusBarItem.warningBackground")
-            : undefined;
-    }
-    catch {
-    }
-    item.show();
-}
-const LAST_FOLDER_KEY = "opencode.lastFolder";
-function refUri(value) {
-    const candidate = value;
-    if (!candidate) {
-        return undefined;
-    }
-    if (typeof candidate.fsPath === "string" && candidate.scheme !== undefined) {
-        return candidate;
-    }
-    if (candidate.uri) {
-        return refUri(candidate.uri);
-    }
-    return undefined;
-}
 const realOr = (p) => {
     try {
         return fs.realpathSync.native(p);
@@ -168,60 +128,6 @@ function underRoot(root, file) {
         rel = path.relative(realOr(root), realOr(file));
     }
     return inside(rel) ? rel.split(path.sep).join("/") : "";
-}
-function relTo(cwd, uri) {
-    try {
-        return underRoot(cwd, uri.fsPath) || uri.fsPath;
-    }
-    catch {
-        return uri.fsPath;
-    }
-}
-function folderOf(uri) {
-    if (!uri) {
-        return undefined;
-    }
-    try {
-        return vscode.workspace.getWorkspaceFolder?.(uri) ?? undefined;
-    }
-    catch {
-        return undefined;
-    }
-}
-function resolveFolder(request) {
-    const roots = vscode.workspace.workspaceFolders ?? [];
-    if (roots.length === 0) {
-        return undefined;
-    }
-    if (roots.length === 1) {
-        return { folder: roots[0], reason: "only-root" };
-    }
-    for (const ref of request?.references ?? []) {
-        const uri = refUri(ref.value);
-        const match = folderOf(uri);
-        if (match) {
-            return { folder: match, reason: "attachment" };
-        }
-    }
-    const active = folderOf(vscode.window.activeTextEditor?.document.uri);
-    if (active) {
-        return { folder: active, reason: "active-editor" };
-    }
-    const remembered = exports.extensionContext?.workspaceState?.get(LAST_FOLDER_KEY);
-    const hit = remembered ? roots.find((r) => r.uri.fsPath === remembered) : undefined;
-    if (hit) {
-        return { folder: hit, reason: "remembered" };
-    }
-    return { folder: roots[0], reason: "first-root" };
-}
-function activeCwd() {
-    return resolveFolder()?.folder.uri.fsPath ?? process.cwd();
-}
-function rememberFolder(cwd) {
-    void exports.extensionContext?.workspaceState?.update(LAST_FOLDER_KEY, cwd);
-}
-function isMultiRoot() {
-    return (vscode.workspace.workspaceFolders?.length ?? 0) > 1;
 }
 function untilStop(work, token) {
     if (token.isCancellationRequested) {

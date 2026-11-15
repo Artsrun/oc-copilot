@@ -18,7 +18,7 @@ import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { config, logChannel, resolveFolder, stamp } from "./core";
+import { config, hostFolder, logChannel, stamp } from "./core";
 import { enforcedConfigContent } from "./enforce";
 import { currentServerGeneration, plainError, prewarmServer } from "./net";
 import { api } from "./oc-api";
@@ -220,7 +220,7 @@ export function configStamp(cwd: string): string {
  * later: here they are off the turn path, and the turn reads the cached list
  * (REFS 0.0.234, 0.0.239). */
 export function prewarmFolder(): Promise<string | undefined> | undefined {
-    const cwd = resolveFolder()?.folder.uri.fsPath;
+    const cwd = hostFolder();
     return prewarmServer()?.then(async (base) => {
         if (base && cwd) {
             await listAgents(cwd, base, "plan");

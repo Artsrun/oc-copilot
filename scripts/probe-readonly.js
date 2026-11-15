@@ -19,31 +19,16 @@
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const Module = require("node:module");
 const { execFileSync } = require("node:child_process");
 const { startScriptedModel, projectConfig } = require("./probe-model");
 const { acpClient, initialize, acpTurn } = require("./probe-acp");
 
 const exe = process.argv[2] || "opencode";
 const settings = { executable: exe, enforceReadOnly: true, readOnlySubagents: ["explore"], serverPort: 0, serverHostname: "127.0.0.1", transport: "server" };
-const realLoad = Module._load;
-Module._load = function (request, ...rest) {
-    if (request === "vscode") {
-        return {
-            workspace: { getConfiguration: () => ({ get: (k, d) => (k in settings ? settings[k] : d) }), workspaceFolders: undefined, isTrusted: true },
-            window: {},
-            Uri: { file: (p) => ({ fsPath: p }) },
-            EventEmitter: class {
-                event = () => ({ dispose() {} });
-                fire() {}
-                dispose() {}
-            }
-        };
-    }
-    return realLoad.call(this, request, ...rest);
-};
+// Engine modules only, and no `vscode` stub: a run here is the engine outside VS Code (EN).
 const out = (name) => require(path.join(__dirname, "..", "out", name));
 const log = [];
+out("core.js").setHost({ settings: () => ({ get: (k, d) => (k in settings ? settings[k] : d) }), folder: () => undefined, trusted: () => true, state: () => undefined });
 out("core.js").setLogChannel({ appendLine: (l) => log.push(l), show() {}, dispose() {} });
 const { spawnOpenCode, killTree } = out("proc.js");
 const { runOpenCode } = out("run-cli.js");

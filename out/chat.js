@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.handleChat = handleChat;
 const core_1 = require("./core");
+const host_1 = require("./host");
 const followups_1 = require("./followups");
 const prompt_1 = require("./prompt");
 const context_1 = require("./context");
@@ -17,14 +18,14 @@ const chat_turn_1 = require("./chat-turn");
 const newChatNoted = new Set();
 async function handleChat(request, context, rawResponse, token, turn = {}) {
     const response = (0, chat_boot_1.chatStream)(rawResponse, token);
-    const choice = (0, core_1.resolveFolder)(request);
+    const choice = (0, host_1.resolveFolder)(request);
     if (!choice) {
         response.markdown("Open a workspace before delegating a task to OpenCode.");
         return { metadata: { kind: "error" } };
     }
     const folder = choice.folder;
     const cwd = folder.uri.fsPath;
-    (0, core_1.rememberFolder)(cwd);
+    (0, host_1.rememberFolder)(cwd);
     const aliased = (0, chat_boot_1.resolveAlias)(request.prompt.trim());
     if (aliased.problem) {
         response.markdown(aliased.problem);
@@ -166,7 +167,7 @@ async function handleChat(request, context, rawResponse, token, turn = {}) {
     const taskForModel = `${task}${mergeLanes ? (0, chat_boot_1.laneMergeContext)(mergeLanes) : ""}${ctx.preamble}`;
     (0, context_1.emitReferences)(response, ctx.uris);
     if (ctx.uris.length) {
-        core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] context: ${ctx.uris.map((u) => (0, core_1.relTo)(cwd, u)).join(", ")}`);
+        core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] context: ${ctx.uris.map((u) => (0, host_1.relTo)(cwd, u)).join(", ")}`);
     }
     const referenceLine = (0, context_1.referenceLogLine)(ctx.notes);
     if (referenceLine) {
@@ -176,7 +177,7 @@ async function handleChat(request, context, rawResponse, token, turn = {}) {
     if (contextNote) {
         response.markdown(`> ${(0, followups_1.mark)("warn")} ${contextNote}\n\n`);
     }
-    if ((0, core_1.isMultiRoot)()) {
+    if ((0, host_1.isMultiRoot)()) {
         const why = {
             attachment: "from the file you attached",
             "active-editor": "from the active editor",
@@ -193,7 +194,7 @@ async function handleChat(request, context, rawResponse, token, turn = {}) {
             core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] new chat: a fresh OpenCode session; ${folderSession} is untouched in its own chat`);
         }
     }
-    (0, core_1.setStatus)(`$(sync~spin) OpenCode · ${agentLabel}`, `Running the OpenCode ${agentLabel} agent${model ? ` (${model})` : ""}`);
+    (0, host_1.setStatus)(`$(sync~spin) OpenCode · ${agentLabel}`, `Running the OpenCode ${agentLabel} agent${model ? ` (${model})` : ""}`);
     return (0, chat_turn_1.runTurn)({
         response, token, settings, state, cwd, kind, agentLabel, isBuild, devAgent, task, taskForModel, replay,
         executable, pure, useServer, attachDev, timeoutMs, idleTimeoutMs, model, settingPin, agentKey, chain, variantFor, continuing

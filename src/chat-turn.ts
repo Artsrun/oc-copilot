@@ -3,7 +3,8 @@
 // model stall), then the answer, the session's books, autocompact and the
 // chips. The router decides what to run and hands it over as a Turn.
 import * as vscode from "vscode";
-import { logChannel, own, secs, setStatus, stamp, truncate, untilStop } from "./core";
+import { logChannel, own, secs, Settings, stamp, truncate, untilStop } from "./core";
+import { setStatus } from "./host";
 import { mark, prompt as promptText } from "./followups";
 import { ChatKind, RunMetrics, RunOptions, StepRecord, finalizeStepStatuses, toolOutputBytes } from "./metrics";
 import { composeVisibleAnswer, createEchoGate, createLeakGate, isPromptEcho, metricsLogLine, scrubLeakedContext } from "./format";
@@ -38,7 +39,7 @@ export interface Turn {
     response: vscode.ChatResponseStream;
     token: vscode.CancellationToken;
     /** The settings as the turn began. */
-    settings: vscode.WorkspaceConfiguration;
+    settings: Settings;
     state: SessionState;
     cwd: string;
     kind: ChatKind;

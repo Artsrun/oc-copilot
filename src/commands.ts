@@ -1,7 +1,8 @@
 import * as vscode from "vscode";
 import * as path from "node:path";
 import { platform } from "node:process";
-import { activeCwd, config, resolveFolder, truncate } from "./core";
+import { config, truncate } from "./core";
+import { activeCwd, resolveFolder } from "./host";
 import { mark } from "./followups";
 import { resolveExecutable, runCapture } from "./proc";
 import { dataFolderRefusal, knownServerBase, lastServeFailure, majorVersionNote } from "./net";

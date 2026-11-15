@@ -51,6 +51,7 @@ const vscode = __importStar(require("vscode"));
 const fs = __importStar(require("node:fs"));
 const path = __importStar(require("node:path"));
 const core_1 = require("./core");
+const host_1 = require("./host");
 const context_markers_1 = require("./context-markers");
 const MIN_EXCERPT_BYTES = 32;
 const readDeniedOnReadOnly = (fsPath) => {
@@ -173,10 +174,10 @@ function buildChatContext(request, cwd, origin = {}) {
     for (const ref of request.references ?? []) {
         const value = ref.value;
         const id = String(ref.id ?? "");
-        const uri = typeof value === "string" ? undefined : (0, core_1.refUri)(value);
+        const uri = typeof value === "string" ? undefined : (0, host_1.refUri)(value);
         const kind = uri ? (value.range ? "range" : "file") : droppedKind(value);
         const label = uri
-            ? (0, core_1.relTo)(cwd, uri)
+            ? (0, host_1.relTo)(cwd, uri)
             : kind === "image" || kind === "binary"
                 ? String(value.mimeType)
                 : kind === "diagnostics"
@@ -201,9 +202,9 @@ function buildChatContext(request, cwd, origin = {}) {
                 if (!Array.isArray(entry) || entry.length < 2) {
                     continue;
                 }
-                const dUri = (0, core_1.refUri)(entry[0]);
+                const dUri = (0, host_1.refUri)(entry[0]);
                 const dList = Array.isArray(entry[1]) ? entry[1] : [];
-                const fileLabel = dUri ? (String(dUri.scheme ?? "file") === "file" ? (0, core_1.relTo)(cwd, dUri) : `${String(dUri.scheme)}:${dUri.fsPath}`) : "workspace";
+                const fileLabel = dUri ? (String(dUri.scheme ?? "file") === "file" ? (0, host_1.relTo)(cwd, dUri) : `${String(dUri.scheme)}:${dUri.fsPath}`) : "workspace";
                 if (dUri && String(dUri.scheme ?? "file") === "file") {
                     uris.push(dUri);
                 }
@@ -304,7 +305,7 @@ function buildChatContext(request, cwd, origin = {}) {
         const editor = vscode.window.activeTextEditor;
         const sel = editor?.selection;
         if (origin.inline && editor && sel && (sel.isEmpty || !editor.document.getText(sel).trim())) {
-            const name = (0, core_1.relTo)(cwd, editor.document.uri);
+            const name = (0, host_1.relTo)(cwd, editor.document.uri);
             selectionBlock = `\n${context_markers_1.CONTEXT_INLINE}${name}:${sel.active.line + 1} (cursor, nothing selected)\n`;
             if (!seen.has(editor.document.uri.fsPath)) {
                 uris.push(editor.document.uri);
@@ -313,7 +314,7 @@ function buildChatContext(request, cwd, origin = {}) {
         else if (editor && sel && !sel.isEmpty) {
             const text = editor.document.getText(sel);
             if (text.trim()) {
-                const name = (0, core_1.relTo)(cwd, editor.document.uri);
+                const name = (0, host_1.relTo)(cwd, editor.document.uri);
                 const span = `:${sel.start.line + 1}-${sel.end.line + 1}`;
                 if (Boolean(origin.readOnly) && settings.get("enforceReadOnly", true) && (0, exports.readDeniedOnReadOnly)(editor.document.uri.fsPath)) {
                     notes.push({ id: "vscode.selection", kind: "range", label: `${name}${span}`, kept: true, withheld: true });

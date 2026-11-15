@@ -53,7 +53,6 @@ exports.prewarmServer = prewarmServer;
 exports.lastServeLine = lastServeLine;
 exports.sessionIdFromEvent = sessionIdFromEvent;
 exports.connectSse = connectSse;
-const vscode = __importStar(require("vscode"));
 const http = __importStar(require("node:http"));
 const net = __importStar(require("node:net"));
 const core_1 = require("./core");
@@ -196,7 +195,7 @@ function setStartupDeadline(ms) {
 }
 const SLOW_START_MS = 1500;
 exports.TESTED_OPENCODE = { min: "1.18.27", max: "1.19.5" };
-exports.TESTED_OPENCODE2 = { min: "2.0.18", max: "2.2.7" };
+exports.TESTED_OPENCODE2 = { min: "2.0.18", max: "2.3.0" };
 const serverVersions = new Map();
 const serverVersion = (base) => serverVersions.get(base);
 exports.serverVersion = serverVersion;
@@ -503,7 +502,7 @@ async function ensureServerOnce(cwd, onSlowStart) {
     }
     if (!serveAlive()) {
         if ((0, exports.openCode2Allowed)()) {
-            await ensureCliIdentity(executable, cwd ?? (0, core_1.resolveFolder)()?.folder.uri.fsPath ?? process.cwd());
+            await ensureCliIdentity(executable, cwd ?? (0, core_1.hostFolder)() ?? process.cwd());
         }
         const refused = (0, exports.openCode1Refusal)(executable) ?? dataFolderRefusal(executable);
         if (refused) {
@@ -513,7 +512,7 @@ async function ensureServerOnce(cwd, onSlowStart) {
             await serveGone;
             serveGone = undefined;
         }
-        const serveCwd = cwd ?? (0, core_1.resolveFolder)()?.folder.uri.fsPath;
+        const serveCwd = cwd ?? (0, core_1.hostFolder)();
         serveSpawnError = undefined;
         serveTail = "";
         servePassword = undefined;
@@ -634,11 +633,11 @@ async function warmServer(cwd, onSlowStart) {
 exports.PREWARM_DELAY_MS = 3000;
 function prewarmServer() {
     const settings = (0, core_1.config)();
-    const trusted = vscode.workspace.isTrusted === true;
+    const trusted = (0, core_1.hostTrusted)();
     if (!settings.get("prewarmServer", true) || !trusted) {
         return undefined;
     }
-    const cwd = (0, core_1.resolveFolder)()?.folder.uri.fsPath;
+    const cwd = (0, core_1.hostFolder)();
     if (!cwd) {
         return undefined;
     }

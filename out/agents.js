@@ -190,7 +190,7 @@ function configStamp(cwd) {
     return digest(parts.join("\n"));
 }
 function prewarmFolder() {
-    const cwd = (0, core_1.resolveFolder)()?.folder.uri.fsPath;
+    const cwd = (0, core_1.hostFolder)();
     return (0, net_1.prewarmServer)()?.then(async (base) => {
         if (base && cwd) {
             await listAgents(cwd, base, "plan");

@@ -1,11 +1,10 @@
 // HTTP, SSE, and the managed `opencode serve` lifecycle. Every helper here is
 // bounded: a port that accepts and never answers must fail, not hang.
-import * as vscode from "vscode";
 import { ChildProcess } from "node:child_process";
 import * as http from "node:http";
 import * as net from "node:net";
 
-import { config, delay, logChannel, resolveFolder, stamp, truncate } from "./core";
+import { Cancel, config, delay, hostFolder, hostTrusted, logChannel, stamp, truncate } from "./core";
 import { executableMajor, noteExecutableMajor } from "./enforce";
 import { executableStamp, killTree, runCapture, spawnOpenCode } from "./proc";
 import { v2Translator } from "./v2-events";
@@ -33,7 +32,7 @@ export function httpRequestJson<T>(
     url: string,
     body?: unknown,
     timeoutMs?: number,
-    token?: vscode.CancellationToken,
+    token?: Cancel,
     auth?: Record<string, string>
 ): Promise<T> {
     return new Promise((resolve, reject) => {
@@ -239,10 +238,10 @@ const SLOW_START_MS = 1500;
 // them it still runs, and says so once per window and version.
 // 1.19.5: probe-readonly.js's 48 rows, wire frames as 1.19.0's (REFS 0.0.232).
 export const TESTED_OPENCODE = { min: "1.18.27", max: "1.19.5" } as const;
-// 2.0.29 and 2.0.32 through every manual check; 2.0.18, 2.1.4, 2.2.0, 2.2.5, 2.2.6
-// and 2.2.7 through the probe's rows (scripts/probe-opencode2.js, REFS 0.0.227,
-// 0.0.232, 0.0.239).
-export const TESTED_OPENCODE2 = { min: "2.0.18", max: "2.2.7" } as const;
+// 2.0.29 and 2.0.32 through every manual check; 2.0.18, 2.1.4, 2.2.0, 2.2.5, 2.2.6,
+// 2.2.7 and 2.3.0 through the probe's rows (scripts/probe-opencode2.js, REFS 0.0.227,
+// 0.0.232, 0.0.239, 0.0.240).
+export const TESTED_OPENCODE2 = { min: "2.0.18", max: "2.3.0" } as const;
 const serverVersions = new Map<string, string>();
 /** The version `base` named at `/global/health`, if it named one. */
 export const serverVersion = (base: string): string | undefined => serverVersions.get(base);
@@ -648,7 +647,7 @@ async function ensureServerOnce(cwd?: string, onSlowStart?: (text: string) => vo
         // (OPENCODE_CONFIG_CONTENT differs; 1.x rejects 2.x's, measured), so it
         // is known before the spawn. One `--version`, cached per file.
         if (openCode2Allowed()) {
-            await ensureCliIdentity(executable, cwd ?? resolveFolder()?.folder.uri.fsPath ?? process.cwd());
+            await ensureCliIdentity(executable, cwd ?? hostFolder() ?? process.cwd());
         }
         // A healthy OpenCode 1 server is still adopted above; this one is never started.
         const refused = openCode1Refusal(executable) ?? dataFolderRefusal(executable);
@@ -659,7 +658,7 @@ async function ensureServerOnce(cwd?: string, onSlowStart?: (text: string) => vo
             await serveGone;
             serveGone = undefined;
         }
-        const serveCwd = cwd ?? resolveFolder()?.folder.uri.fsPath;
+        const serveCwd = cwd ?? hostFolder();
         serveSpawnError = undefined;
         serveTail = "";
         servePassword = undefined;
@@ -811,11 +810,11 @@ export const PREWARM_DELAY_MS = 3000;
 
 export function prewarmServer(): Promise<string | undefined> | undefined {
     const settings = config();
-    const trusted = (vscode.workspace as { isTrusted?: boolean }).isTrusted === true;
+    const trusted = hostTrusted();
     if (!settings.get<boolean>("prewarmServer", true) || !trusted) {
         return undefined;
     }
-    const cwd = resolveFolder()?.folder.uri.fsPath;
+    const cwd = hostFolder();
     if (!cwd) {
         return undefined;
     }

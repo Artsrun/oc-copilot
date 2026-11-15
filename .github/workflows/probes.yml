@@ -36,8 +36,13 @@ jobs:
             package: "@opencode/cli@2.2.7"
             probe: scripts/probe-opencode2.js
             optional: false
-          - cell: opencode 2.2.7 (pinned) · read-only over ACP
-            package: "@opencode/cli@2.2.7"
+          # 2.3.0 stages it too, with a longer stock stage (613-751 ms; REFS 0.0.240).
+          - cell: opencode 2.3.0 (pinned)
+            package: "@opencode/cli@2.3.0"
+            probe: scripts/probe-opencode2.js
+            optional: false
+          - cell: opencode 2.3.0 (pinned) · read-only over ACP
+            package: "@opencode/cli@2.3.0"
             probe: scripts/probe-readonly.js
             optional: false
           - cell: opencode 2 latest
@@ -66,7 +71,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        two: ["2.0.29", "2.2.5"]
+        two: ["2.0.29", "2.2.5", "2.3.0"]
     name: data folder · 1.19.5 then ${{ matrix.two }}
     runs-on: ubuntu-latest
     timeout-minutes: 15

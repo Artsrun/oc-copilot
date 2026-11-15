@@ -5,6 +5,55 @@ actually measured, so nobody re-derives it.
 
 ---
 
+## 0.0.240: OpenCode 2.3.0, and the engine outside VS Code (2026-11-16)
+
+**Dated 2026-11-16.** Linux, Node 22.23.4, the scripted model, real binaries in scratch
+prefixes: `@opencode/cli` 2.3.0 (`latest`, published 2026-11-13; npm `time`) and
+`opencode-ai` 1.19.5 (still the latest 1.x). The nightly `opencode 2 latest` cell (2.3.0)
+was green on 0.0.239 on 2026-11-14 and 2026-11-15.
+
+**2.3.0 through the probes, before and after the split.** Every row is the same after
+timings and ids are normalised (`diff` empty):
+
+| Probe | 0.0.239 code | 0.0.240 code |
+| --- | --- | --- |
+| `probe-opencode2.js`, 2.3.0 | `ALL 26 ROWS AS EXPECTED` | `ALL 26 ROWS AS EXPECTED` |
+| `probe-readonly.js`, 2.3.0 over ACP | `ALL 9 ROWS AS EXPECTED` | `ALL 9 ROWS AS EXPECTED`, no `vscode` stub |
+| `probe-readonly.js`, 1.19.5 | — | `ALL 48 ROWS AS EXPECTED`, no `vscode` stub |
+| `probe-data-folder.js`, 1.19.5 then 2.3.0 | — | `ALL 11 ROWS AS EXPECTED` |
+
+**Wire frames, 2.3.0 against 2.2.7's fixture** (`record-wire-fixtures.js --v2`, every key
+path and value type per event type): 27 event types, frames per turn text 15 → 16,
+permission 27 → 29, subagent 37 → 50, retry 17 → 18, interrupt 14 → 15. Three additive
+differences, nothing removed or renamed:
+
+- a new event `session.step.first-token` (`sessionID`, `assistantMessageID`, `durable`);
+- `session.inbox.enqueued` gains `item.payload.description` and `metadata.source`,
+  `childID`, `agent`, `state`;
+- `shell.created` gains `info.pid`.
+
+`v2Translator` reads none of them, and the suite replays the new recording (`TW`). A first
+token's time is there for a later per-request log.
+
+**2.3.0 stages a folder's agent list** (a fresh server, one new folder, `GET /api/agent`
+every 25 ms with a plan override in `OPENCODE_CONFIG_CONTENT`; 3 runs): plan's stock 7
+rules from 106–126 ms, the overrides in (10 rules) at 613, 705 and 751 ms. No `[]` stage
+was seen; it would end before the first poll. The stock stage is longer than the
+200–430 ms measured on 2.0.29, 2.1.4 and 2.2.7, and `AGENTS_SETTLE_MS` (1000) is above it
+by ~250 ms at the slowest. Not changed; watch it on the next minor.
+
+**The engine without `vscode`.** Loading the 15 engine modules from `out/` in a Node
+process where `vscode` does not resolve: on 0.0.239, 4 loaded and 11 failed (`core`
+imports `vscode` for `config()` and the log channel's type; `net` reads
+`workspace.isTrusted`; the rest import them); on 0.0.240, 15 of 15, `vscode` asked for 0
+times (`EN`). What stays VS Code's moved to `host.ts`, which installs itself with
+`setHost` when it loads. `metrics` keeps no local import: `LY` names it a leaf.
+
+**Not measured:** Windows and macOS on 2.3.0; a real model; the route measurements
+(`docs/local-agent.md` task 2) are still not run.
+
+---
+
 ## 0.0.239: 2.2.7 stages the agent list again; two servers on one folder; Local's end date (2026-11-12)
 
 **Dated 2026-11-12. Fixed in 0.0.239.** Linux, Node 22.22.0, the scripted model, real

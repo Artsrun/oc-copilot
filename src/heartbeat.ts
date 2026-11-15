@@ -3,7 +3,8 @@
 // never throws, one pill badger per turn) and the live thought line.
 import * as vscode from "vscode";
 import * as path from "node:path";
-import { config, logChannel, secs, setStatus, stamp, truncate } from "./core";
+import { config, logChannel, secs, stamp, truncate } from "./core";
+import { setStatus } from "./host";
 import { StepRecord, SubagentStep } from "./metrics";
 import { createBadger, mark } from "./followups";
 

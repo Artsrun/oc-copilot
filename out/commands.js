@@ -40,6 +40,7 @@ const vscode = __importStar(require("vscode"));
 const path = __importStar(require("node:path"));
 const node_process_1 = require("node:process");
 const core_1 = require("./core");
+const host_1 = require("./host");
 const followups_1 = require("./followups");
 const proc_1 = require("./proc");
 const net_1 = require("./net");
@@ -51,7 +52,7 @@ const worktree_1 = require("./worktree");
 async function diagnose() {
     const settings = (0, core_1.config)();
     const executable = settings.get("executable", "opencode");
-    const folder = (0, core_1.resolveFolder)()?.folder;
+    const folder = (0, host_1.resolveFolder)()?.folder;
     const cwd = folder?.uri.fsPath ?? process.cwd();
     const lines = ["# OpenCode bridge diagnostics", "", `_${new Date().toISOString()}_`, ""];
     const row = (k, v) => `| ${k} | ${v} |`;
@@ -132,7 +133,7 @@ async function diagnose() {
     await vscode.window.showTextDocument(doc, { preview: false });
 }
 async function quickActions() {
-    const cwd = (0, core_1.resolveFolder)()?.folder.uri.fsPath;
+    const cwd = (0, host_1.resolveFolder)()?.folder.uri.fsPath;
     const state = cwd ? (0, session_1.getActiveSession)(cwd) : { turns: 0, id: undefined };
     const items = [
         {
@@ -180,7 +181,7 @@ async function quickActions() {
     await choice?.run();
 }
 async function pickWorktree() {
-    const listed = await (0, worktree_1.listWorktrees)((0, core_1.activeCwd)());
+    const listed = await (0, worktree_1.listWorktrees)((0, host_1.activeCwd)());
     if (!listed) {
         void vscode.window.showInformationMessage("OpenCode: this folder is not in a git repository.");
         return;

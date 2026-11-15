@@ -38,6 +38,7 @@ exports.activate = activate;
 exports.deactivate = deactivate;
 const vscode = __importStar(require("vscode"));
 const core_1 = require("./core");
+const host_1 = require("./host");
 const proc_1 = require("./proc");
 const net_1 = require("./net");
 const oc_api_1 = require("./oc-api");
@@ -62,9 +63,10 @@ const worktree_1 = require("./worktree");
 const git_scan_mcp_1 = require("./git-scan-mcp");
 const LOCAL_NOTICE_KEY = "opencode.localSessionNotice";
 function activate(context) {
-    (0, core_1.setExtensionContext)(context);
-    (0, core_1.setLogChannel)(vscode.window.createOutputChannel("OpenCode"));
-    context.subscriptions.push(core_1.logChannel);
+    (0, host_1.setExtensionContext)(context);
+    const channel = vscode.window.createOutputChannel("OpenCode");
+    (0, core_1.setLogChannel)(channel);
+    context.subscriptions.push(channel);
     for (const problem of (0, followups_1.followupsProblems)()) {
         core_1.logChannel.appendLine(`followups.json: ${problem}`);
     }
@@ -122,7 +124,7 @@ exports.__test = {
     splitLanes: chat_boot_1.splitLanes,
     parseModelList: models_1.parseModelList,
     getModelCatalog: models_1.getModelCatalog,
-    resolveFolder: core_1.resolveFolder,
+    resolveFolder: host_1.resolveFolder,
     notifyIfSlow: session_1.notifyIfSlow,
     safeSessionId: runs_1.safeSessionId,
     api: oc_api_1.api,

@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.runTurn = runTurn;
 const core_1 = require("./core");
+const host_1 = require("./host");
 const followups_1 = require("./followups");
 const metrics_1 = require("./metrics");
 const format_1 = require("./format");
@@ -474,7 +475,7 @@ async function failTurn(t, live, error) {
         (0, session_1.refreshStatus)(cwd);
         return { metadata: { kind, agent: agentLabel, sessionId: state.id, cwd, turns: state.turns, cancelled: true } };
     }
-    (0, core_1.setStatus)("$(warning) OpenCode", "The last OpenCode run failed", true);
+    (0, host_1.setStatus)("$(warning) OpenCode", "The last OpenCode run failed", true);
     const err = error;
     if (err.code === "ENOENT") {
         response.markdown(`\n\nCouldn't launch OpenCode (\`${executable}\`). Install the OpenCode CLI, ` +

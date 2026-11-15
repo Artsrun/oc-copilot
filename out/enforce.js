@@ -205,7 +205,7 @@ function enforcedReadOnlyNotice(evidence) {
             ? `The OpenCode server at ${evidence.base} has no verified shell-free read-only rules for \`${evidence.agent}\`. Its agents keep their own permissions; only verified subagents are available. Use \`serverPort: 0\` to start a server with the current rules.`
             : `Read-only permissions could not be verified for \`${evidence.agent}\` in this process. Its own permissions apply; check \`OPENCODE_CONFIG_CONTENT\` and the agent configuration.`;
     }
-    const state = core_1.extensionContext?.globalState;
+    const state = (0, core_1.hostState)();
     if (evidence?.kind !== "enforced" || !builtin || (state ? Boolean(state.get(NOTED_KEY)) : notedWindow)) {
         return undefined;
     }

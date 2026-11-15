@@ -1,7 +1,8 @@
 import * as vscode from "vscode";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { config, refUri, relTo } from "./core";
+import { config } from "./core";
+import { refUri, relTo } from "./host";
 import { ChatKind, StepRecord } from "./metrics";
 import { CONTEXT_EXCERPTS, CONTEXT_FILES, CONTEXT_INLINE, CONTEXT_NOTE, CONTEXT_PROBLEMS, CONTEXT_RULE, CONTEXT_SELECTION, EXCERPT_BYTES_CAP, PROBLEMS_MAX_ITEMS, PROBLEM_BYTES_CAP, TOTAL_EXCERPT_BYTES_CAP } from "./context-markers";
 
