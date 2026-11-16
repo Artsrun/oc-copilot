@@ -10,6 +10,7 @@ exports.resetChipBackoff = resetChipBackoff;
 exports.outcomeOf = outcomeOf;
 exports.followupsFor = followupsFor;
 const core_1 = require("./core");
+const host_1 = require("./host");
 const followups_1 = require("./followups");
 const natural_1 = require("./natural");
 const lanes_1 = require("./lanes");
@@ -42,7 +43,7 @@ const BACKOFF_AFTER = 3;
 const BACKOFF_MAX_HOLD = 32;
 const NEVER_HELD = new Set(["offer", "choice", "RESUME_TASK", "RERUN_TASK", "CUT_OFF"]);
 const readBackoff = () => {
-    const stored = core_1.extensionContext?.globalState?.get(BACKOFF_KEY);
+    const stored = host_1.extensionContext?.globalState?.get(BACKOFF_KEY);
     const message = typeof stored?.message === "number" && Number.isFinite(stored.message) ? stored.message : 0;
     const kinds = {};
     for (const [kind, k] of Object.entries(stored?.kinds ?? {})) {
@@ -86,11 +87,11 @@ function noteNextMessage(sessionId, turns, command, prompt, control) {
             b.kinds[kind] = k;
         }
     }
-    void core_1.extensionContext?.globalState?.update(BACKOFF_KEY, b);
+    void host_1.extensionContext?.globalState?.update(BACKOFF_KEY, b);
 }
 function resetChipBackoff() {
     offeredStore.clear();
-    void core_1.extensionContext?.globalState?.update(BACKOFF_KEY, undefined);
+    void host_1.extensionContext?.globalState?.update(BACKOFF_KEY, undefined);
 }
 const stripKind = (text) => text.replace(/^\/(?:dev|plan)\b\s*/i, "");
 const UNREACHABLE = /ENOENT|ECONNREFUSED|ECONNRESET|EAI_AGAIN|ETIMEDOUT|not found on PATH|could not be started|unreachable|socket hang up|fetch failed|not OpenCode 1|not confirmed as OpenCode 1/i;

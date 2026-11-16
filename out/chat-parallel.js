@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.runParallelTurn = runParallelTurn;
 const core_1 = require("./core");
+const host_1 = require("./host");
 const followups_1 = require("./followups");
 const context_1 = require("./context");
 const net_1 = require("./net");
@@ -128,7 +129,7 @@ async function runParallelTurn(p) {
     const laneCtx = (0, context_1.buildChatContext)(request, cwd, { inline: p.inline, readOnly: !write });
     (0, context_1.emitReferences)(response, laneCtx.uris);
     if (laneCtx.uris.length) {
-        core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] context for ${lanes.length} lanes: ${laneCtx.uris.map((u) => (0, core_1.relTo)(cwd, u)).join(", ")}`);
+        core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] context for ${lanes.length} lanes: ${laneCtx.uris.map((u) => (0, host_1.relTo)(cwd, u)).join(", ")}`);
     }
     const laneReferences = (0, context_1.referenceLogLine)(laneCtx.notes);
     if (laneReferences) {

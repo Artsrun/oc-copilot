@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import * as path from "node:path";
-import { config, extensionContext, isMultiRoot, resolveFolder, secs, setStatus, truncate } from "./core";
+import { config, secs, truncate } from "./core";
+import { extensionContext, isMultiRoot, resolveFolder, setStatus } from "./host";
 import { RunMetrics } from "./metrics";
 
 export interface SessionState {

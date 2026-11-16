@@ -3,7 +3,8 @@
 // input, not sent. A chat participant cannot draw a form inside the chat on
 // stable VS Code; quick picks and input boxes are the native step UI.
 import * as vscode from "vscode";
-import { config, resolveFolder, untilStop } from "./core";
+import { config, untilStop } from "./core";
+import { resolveFolder } from "./host";
 import { getModelCatalog, modelLabel } from "./models";
 import { splitLanes } from "./chat-boot";
 

@@ -2,8 +2,6 @@
 // bottom of the dependency graph (above only `core`) so the chat runner, the
 // format layer and the reporting surfaces can each depend on it independently.
 
-import * as vscode from "vscode";
-
 export interface TokenUsage {
     total: number;
     input: number;
@@ -133,7 +131,8 @@ export interface RunOptions {
     onRetry?: (retry: ProviderRetry) => void;
     /** A subagent's tool call, running or done. */
     onSubagent?: (sub: SubagentStep) => void;
-    token?: vscode.CancellationToken;
+    // core's `Cancel`, spelled out: metrics stays a leaf (LY).
+    token?: { readonly isCancellationRequested: boolean; onCancellationRequested(listener: () => unknown): { dispose(): unknown } };
 }
 
 export type ChatKind = "plan" | "dev" | "parallel";

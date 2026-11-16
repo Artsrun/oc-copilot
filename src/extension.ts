@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 
-import { logChannel, resolveFolder, setExtensionContext, setLogChannel, stamp } from "./core";
+import { logChannel, setLogChannel, stamp } from "./core";
+import { resolveFolder, setExtensionContext } from "./host";
 import { expandShimVar, readShimTarget, resolveExecutable, tokenizeCmdLine } from "./proc";
 import { PREWARM_DELAY_MS, httpGetJson, httpPostJson, knownServerBase, lastServeLine, setStartupDeadline, stopServer, withDirectory } from "./net";
 import { api, serverMajor } from "./oc-api";
@@ -44,8 +45,9 @@ const LOCAL_NOTICE_KEY = "opencode.localSessionNotice";
 
 export function activate(context: vscode.ExtensionContext): void {
     setExtensionContext(context);
-    setLogChannel(vscode.window.createOutputChannel("OpenCode"));
-    context.subscriptions.push(logChannel);
+    const channel = vscode.window.createOutputChannel("OpenCode");
+    setLogChannel(channel);
+    context.subscriptions.push(channel);
     // A broken followups.json is logged, never thrown: @opencode must still activate.
     for (const problem of followupsProblems()) {
         logChannel.appendLine(`followups.json: ${problem}`);

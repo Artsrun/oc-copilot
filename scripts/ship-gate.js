@@ -29,6 +29,7 @@ const ALLOWED = [
     // here consciously rather than shipping because it landed in out/.
     "extension/out/extension.js",
     "extension/out/core.js",
+    "extension/out/host.js",
     "extension/out/env.js",
     "extension/out/format.js",
     "extension/out/context-markers.js",

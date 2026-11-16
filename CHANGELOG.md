@@ -3,6 +3,44 @@
 Full release history, newest first; releases before the last one are condensed
 to their summary and headlines. The README ships the last five.
 
+### 0.0.240
+
+The engine runs without VS Code, and OpenCode 2.3.0 is in the tested range. No
+behaviour change in chat. Both routes that could replace `@opencode` after Local
+goes (an MCP server Copilot's agent calls, an Agent Host) run outside the extension
+host, so the split comes first whichever one M4's measurements pick.
+
+- **The engine: the running layer and everything it imports** (`run-cli`,
+  `run-server`, `server-session`, `asks`, `agents`, `worktree`, and through them
+  `net`, `oc-api`, `v2-events`, `enforce`, `proc`, `run-steps`, `metrics`,
+  `followups`, `core`: 15 modules) imports no `vscode`, not even a type. Before,
+  11 of the 15 failed to load without it (`core`'s `config()`, `net`'s trust read,
+  and what imported them).
+- **`core.ts` is the seam:** `setHost` hands in the settings, the folder a run
+  uses when none is named, workspace trust and `globalState`; `Cancel` is Stop as
+  the engine reads it, and `vscode.CancellationToken` fits it. **`host.ts`** is
+  VS Code's side: it installs itself when it loads, before any engine module, and
+  keeps what only a window has (status bar, folder choice, `vsConfig` for
+  `inspect` and `update`). `metrics.ts` spells `Cancel` out to stay a leaf (`LY`).
+- **`probe-readonly.js` runs with no `vscode` stub**: the real-binary proof that
+  the engine works as a plain Node process. `probe-opencode2.js` and
+  `probe-data-folder.js` set their settings through `setHost` too.
+- **Checks `EN`** (red first: the 15-module load failed 11): no engine module
+  imports `vscode`, the closure read from the source, so a new import pulls its
+  target in; every module loads where `vscode` does not resolve; with no host,
+  defaults and no prewarm; a host's settings, folder and log reach the engine;
+  inside VS Code the host is installed before any engine module loads.
+- **Tested range 2.0.18–2.3.0** (2.3.0 published 2026-11-13, the latest today).
+  `probe-opencode2.js` 26 of 26 and `probe-readonly.js` over ACP 9 of 9 on a real
+  2.3.0, before and after the split, rows identical. Wire frames recorded on 2.3.0
+  against 2.2.7's: 27 event types, three additive differences (a new
+  `session.step.first-token`, `session.inbox.enqueued` payload metadata,
+  `shell.created` `pid`), none read by the bridge; `wire-v2.json` is now 2.3.0's.
+  2.3.0 stages the agent list as 2.2.7 does, with a longer stock stage (until
+  613–751 ms, 3 runs), under the 1000 ms settle. The nightly pins 2.3.0, and its
+  ACP cell moves there. Checks `TW` (red first: 1, read from the run's log: the
+  notice comes once per version, and the recording made every earlier TW turn 2.3.0).
+
 ### 0.0.239
 
 OpenCode 2.2.7, the latest on 2026-11-12, sends its first plan turn again, and the tested

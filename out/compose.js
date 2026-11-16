@@ -37,6 +37,7 @@ exports.insertIntoChat = exports.chatQuery = exports.composeLanes = exports.lane
 exports.composeParallel = composeParallel;
 const vscode = __importStar(require("vscode"));
 const core_1 = require("./core");
+const host_1 = require("./host");
 const models_1 = require("./models");
 const chat_boot_1 = require("./chat-boot");
 const laneProblem = (task) => {
@@ -67,7 +68,7 @@ const insertIntoChat = async (query) => {
 exports.insertIntoChat = insertIntoChat;
 const plainLabel = (id, info) => (0, models_1.modelLabel)(id, info).replace(/`/g, "");
 async function composeParallel(token, folder) {
-    const cwd = folder ?? (0, core_1.resolveFolder)()?.folder.uri.fsPath;
+    const cwd = folder ?? (0, host_1.resolveFolder)()?.folder.uri.fsPath;
     const settings = (0, core_1.config)();
     const empty = { models: [], info: {} };
     const fetching = cwd ? (0, models_1.getModelCatalog)(settings.get("executable", "opencode"), cwd) : Promise.resolve(empty);

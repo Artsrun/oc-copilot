@@ -50,6 +50,7 @@ exports.modelResolver = modelResolver;
 exports.writeModelPin = writeModelPin;
 const vscode = __importStar(require("vscode"));
 const core_1 = require("./core");
+const host_1 = require("./host");
 const followups_1 = require("./followups");
 const proc_1 = require("./proc");
 const context_1 = require("./context");
@@ -58,8 +59,8 @@ const oc_api_1 = require("./oc-api");
 const env_1 = require("./env");
 const MODEL_CACHE_KEY = "opencode.models.v2";
 const MODEL_CACHE_KEY_V1 = "opencode.models.v1";
-const readCache = () => core_1.extensionContext?.globalState?.get(MODEL_CACHE_KEY) ??
-    core_1.extensionContext?.globalState?.get(MODEL_CACHE_KEY_V1);
+const readCache = () => host_1.extensionContext?.globalState?.get(MODEL_CACHE_KEY) ??
+    host_1.extensionContext?.globalState?.get(MODEL_CACHE_KEY_V1);
 const cachedModelInfo = () => readCache()?.info ?? {};
 exports.cachedModelInfo = cachedModelInfo;
 const modelLabel = (id, info = (0, exports.cachedModelInfo)()) => {
@@ -240,7 +241,7 @@ async function getModelCatalog(executable, cwd, opts = {}) {
         }
         if (models.length) {
             const snapshot = { models, info: info ?? {}, fetchedAt: Date.now() };
-            await core_1.extensionContext?.globalState?.update(MODEL_CACHE_KEY, snapshot);
+            await host_1.extensionContext?.globalState?.update(MODEL_CACHE_KEY, snapshot);
             core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] model catalog refreshed: ${models.length} models`);
             return { models, info: snapshot.info ?? {}, source: "live", fetchedAt: snapshot.fetchedAt };
         }
@@ -307,8 +308,8 @@ function listModels(executable, cwd, verbose) {
     });
 }
 async function setDefaultModel() {
-    const folder = (0, core_1.resolveFolder)()?.folder;
-    const settings = (0, core_1.config)();
+    const folder = (0, host_1.resolveFolder)()?.folder;
+    const settings = (0, host_1.vsConfig)();
     const executable = settings.get("executable", "opencode");
     const catalog = folder
         ? await getModelCatalog(executable, folder.uri.fsPath)

@@ -43,7 +43,8 @@ no bundler, no test runner: plain TypeScript → `out/`, plain Node for the suit
 | `src/env.ts` | What OpenCode loaded: config, plugins, MCP, commands, skills, agents, instruction files. |
 | `src/followups.ts` + `.json` | **Every word a chip or handoff sends**, the marks, pills (`createBadger`), `followupsProblems`. Leaf: imports only its JSON. |
 | `src/natural.ts` | Answer-derived chips: the agent's own offer or either/or, a named step 1, a review's findings by severity (`findingsOf`: headings, item tags, a Severity column, `<li>`), the file it edited, failing tests, Dig deeper — or nothing. `laneItems` is the lanes rule for the chip and for `autoParallel: auto`. |
-| `src/core.ts` | **The foundation**: imports nothing local. `config()`, `logChannel`, text helpers, status bar, folder resolution, `underRoot` (a file's path under a root, links resolved). |
+| `src/core.ts` | **The foundation, and the engine's one seam to its host**: imports nothing local and no `vscode`. `setHost` (a host's `Settings`, folder, trust and state), `config()`, `hostFolder`, `hostTrusted`, `hostState`, `logChannel`, `Cancel` (Stop as the engine reads it), text helpers, `untilStop`, `underRoot` (a file's path under a root, links resolved). |
+| `src/host.ts` | **VS Code as the engine's host**: installs itself with `setHost` when it loads (workspace configuration, the chosen folder, workspace trust, `globalState`); `extensionContext`, `vsConfig` (the whole configuration: `inspect`, `update`), the status bar (`setStatus`), folder resolution (`resolveFolder`, `relTo`, `rememberFolder`). |
 | `src/extension.ts` | `activate()` (panel and inline participant, each guarded; commands and gitScan register regardless; the one warning when `@opencode` cannot run or Local is hidden), the `__test` handle, `deactivate()`. |
 | `src/commands.ts`, `commands-registry.ts` | Palette commands, worktree buttons, config listener. |
 | `src/worktree.ts`, `chat-worktree.ts` | `/worktree`: git via `execFile`, an isolated dev run from HEAD (the uncommitted count is said); a follow-up in the same chat continues its worktree and session (`reopenWorktree` checks what the metadata names); its turns read `model:`, `effort:`, attachments and the vague-prompt gate as a chat turn does, and `/session` and `/compact` reach its session (`threadWorktree`). OpenCode: Worktrees lists them (`listWorktrees`, `pickWorktree` in `commands.ts`); Show full diff is `vscode.changes` with the base side from a read-only `ocb-base:` provider (`changedFiles`, `baseText`). |
@@ -72,8 +73,18 @@ chat-parallel →  agents · chat-boot · compose · context · models · net ·
      agents   →  enforce · oc-api · net · proc      net → enforce · proc · v2-events      proc → enforce · core      enforce → core
     models    →  context · env · net · oc-api · proc      commands → env · models · net · oc-api · proc · session · worktree
 commands-registry → commands · compose · models · net · session · worktree
+     host     →  core   (every module that needs the window: status bar, folder choice, `vsConfig`)
      all      →  core.ts · followups.ts (JSON only) · natural.ts (→ followups)
 ```
+
+**The engine** is the running layer and everything it imports: `run-cli`,
+`run-server`, `server-session`, `asks`, `agents`, `worktree` and, through them,
+`net`, `oc-api`, `v2-events`, `enforce`, `proc`, `run-steps`, `metrics`,
+`followups`, `core`. It imports no `vscode`, not even a type, and loads in a
+plain Node process (`EN`): the next front ends (an MCP server, an Agent Host) run
+there. What it needs from a window comes through `setHost`; a probe or a
+standalone server installs its own. A new import from an engine module pulls its
+target into the engine, and `EN` reads that from the source.
 
 **One action, one channel.** A chip owns the next *message* (Retry, Run it, the
 answer's own offers); a `response.button` owns an *artifact* (debug log,
@@ -147,7 +158,7 @@ does not run the suite.
 
 CI runs the same gate (`.github/workflows/ship.yml`: Linux, Windows, macOS, every
 push and pull request) and, nightly, the real-binary probes, one job per
-OpenCode version (`probes.yml`: 1.19.0, 1.19.5, 2.0.29, 2.2.5 and 2.2.7 must pass, the latest 2.x may fail;
+OpenCode version (`probes.yml`: 1.19.0, 1.19.5, 2.0.29, 2.2.5, 2.2.7 and 2.3.0 must pass, the latest 2.x may fail;
 one job per 2.x for `probe-data-folder.js`),
 and the chat participant API (`api-watch.yml`: `scripts/check-vscode-api.js` on
 `vscode.d.ts`'s main branch, and a typecheck against the newest `@types/vscode`).
@@ -183,7 +194,7 @@ A probe measures one thing on this machine and prints it. Paste its output.
 | `scripts/probe-server-adoption.js` | What a listener that only answers `{"healthy":true}` (no `version`) on the server port receives from the bridge: the health probe alone. |
 | `scripts/probe-plan-subagents.js` | Against a real server and model: whether a plan turn can edit through `general`, with and without the read-only `task` rules, and whether `/session/:id/children` lists the child. |
 | `scripts/probe-subtask-lanes.js` | Against a real server: whether a `subtask` part runs a project-local subagent (#21659), before lanes move to server-side delegation. |
-| `scripts/probe-readonly.js` | Against a real binary, through `out/` (`runOpenCode`, `ensureServer`, `createServerSession`): can a read-only turn write — cold run, managed serve, an adopted one, another window's; 2.x over ACP. One line per row; control rows must be `CREATED`. `npm run compile` first. |
+| `scripts/probe-readonly.js` | Against a real binary, through `out/` (`runOpenCode`, `ensureServer`, `createServerSession`): can a read-only turn write — cold run, managed serve, an adopted one, another window's; 2.x over ACP. One line per row; control rows must be `CREATED`. `npm run compile` first. No `vscode` stub: the engine runs as a plain Node process would (`EN`). |
 | `scripts/probe-acp.js` | `opencode acp` over JSON-RPC: handshake, prompt, cancel, load; the transcript as JSONL. Also the ACP client `probe-readonly.js` uses. |
 | `scripts/probe-opencode2.js` | With `opencode2`, against a real 2.x through `out/`: text turn, plan writes (absent ×3), `/dev` and enforcement-off controls (`CREATED`), a subagent, Stop, `/sessions`; reads outside the folder and `.env` (refused), `/dev` outside (known), MCP only via `readOnlyTools`, plan first on a fresh server, effort with no model named. Expectations that differ by version name the version measured. |
 | `scripts/probe-data-folder.js` | Two real binaries, one data folder, through `out/`: does 2.x import a 1.x folder, does a chat bound to a 1.x session go on, does 1.x still open it, and what each sees afterwards. Row counts from a copy of the database. |
@@ -338,11 +349,12 @@ history belongs in `CHANGELOG.md`, not in the source.
 - **A folder's agent list can load in stages**, started by its first
   `GET /agent`: `[]`, then the stock rules alone for ~200–430 ms, then with the
   injected overrides (2.0.29: plan 7 → 39 rules). Which versions stage is not
-  stable: 2.0.29 and 2.1.4 did, 2.2.0–2.2.6 answered loaded, 2.2.7 stages again.
+  stable: 2.0.29 and 2.1.4 did, 2.2.0–2.2.6 answered loaded, 2.2.7 and 2.3.0 stage
+  again (2.3.0's stock stage lasts until 613–751 ms, under the 1000 ms settle).
   Taking the first non-empty list judged plan `unverified` and refused the
   default first turn — never the unsafe way. So no version is trusted to answer
   loaded: every 2.x list is read until it holds for `AGENTS_SETTLE_MS`, once per
-  server start and folder (`TW`, REFS 0.0.233, 0.0.239). Never key this on a
+  server start and folder (`TW`, REFS 0.0.233, 0.0.239, 0.0.240). Never key this on a
   version again: 0.0.233 read 2.2.0+ once, and 2.2.7 broke it within two weeks.
 - **Nobody can answer OpenCode's prompts from a chat turn**: sessions the bridge
   creates deny question/plan_enter/plan_exit, and every ask of the session and its

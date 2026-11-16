@@ -37,6 +37,7 @@ exports.registerCommands = registerCommands;
 const path = __importStar(require("node:path"));
 const vscode = __importStar(require("vscode"));
 const core_1 = require("./core");
+const host_1 = require("./host");
 const models_1 = require("./models");
 const commands_1 = require("./commands");
 const compose_1 = require("./compose");
@@ -47,7 +48,7 @@ const BASE_SCHEME = "ocb-base";
 function registerCommands(context) {
     context.subscriptions.push(vscode.commands.registerCommand("opencodeCopilotBridge.setModel", () => (0, models_1.setDefaultModel)()), vscode.commands.registerCommand("opencodeCopilotBridge.showLog", () => core_1.logChannel.show()), vscode.commands.registerCommand("opencodeCopilotBridge.diagnose", () => (0, commands_1.diagnose)()), vscode.commands.registerCommand("opencodeCopilotBridge.refreshModels", async () => {
         const settings = (0, core_1.config)();
-        const cwd = (0, core_1.activeCwd)();
+        const cwd = (0, host_1.activeCwd)();
         const catalog = await vscode.window.withProgress({
             location: vscode.ProgressLocation.Notification,
             title: "Refreshing the OpenCode model catalog",
@@ -125,7 +126,7 @@ function registerCommands(context) {
         }
         void vscode.window.showInformationMessage("OpenCode: this VS Code build has no \"new chat\" command — use the + button in the Chat view.");
     }), vscode.commands.registerCommand("opencodeCopilotBridge.newSession", async () => {
-        const cwd = (0, core_1.resolveFolder)()?.folder.uri.fsPath;
+        const cwd = (0, host_1.resolveFolder)()?.folder.uri.fsPath;
         if (cwd && (0, core_1.config)().get("sessionScope", "thread") === "workspace") {
             await (0, session_1.setActiveSession)(cwd, { turns: 0 });
             (0, session_1.refreshStatus)(cwd);

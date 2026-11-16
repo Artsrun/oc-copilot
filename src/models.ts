@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
-import { config, extensionContext, logChannel, own, resolveFolder, stamp } from "./core";
+import { config, logChannel, own, Settings, stamp } from "./core";
+import { extensionContext, resolveFolder, vsConfig } from "./host";
 import { mark } from "./followups";
 import { killTree, spawnOpenCode } from "./proc";
 import { uniqueModels } from "./context";
@@ -370,7 +371,7 @@ function listModels(executable: string, cwd: string, verbose: boolean): Promise<
 
 export async function setDefaultModel(): Promise<void> {
     const folder = resolveFolder()?.folder;
-    const settings = config();
+    const settings = vsConfig();
     const executable = settings.get<string>("executable", "opencode");
 
     const catalog: ResolvedCatalog = folder
@@ -437,8 +438,8 @@ export async function setDefaultModel(): Promise<void> {
 }
 
 /** Where the pin lives: "Workspace folder", "Workspace", "User", or undefined. */
-export function pinLevel(settings: vscode.WorkspaceConfiguration = config()): string | undefined {
-    const where = settings.inspect?.<string>("model");
+export function pinLevel(settings: Settings = config()): string | undefined {
+    const where = (settings as Partial<vscode.WorkspaceConfiguration>).inspect?.<string>("model");
     return where?.workspaceFolderValue
         ? "Workspace folder"
         : where?.workspaceValue

@@ -5,9 +5,7 @@
 // another API under `/api` (Basic auth, `location`, `{action, resource,
 // effect}` rules; measured on 2.0.29 and 2.0.32, REFS), driven only when
 // `opencode2` is on (the default) and only on the server this window started (net.ts).
-import type * as vscode from "vscode";
-
-import { delay, logChannel, stamp } from "./core";
+import { Cancel, delay, logChannel, stamp } from "./core";
 import { toV1Rules, toV2Rules } from "./enforce";
 import { connectSse, currentServerGeneration, httpGetJson, httpPostJson, httpRequestJson, serverAuth, serverVersion, withDirectory } from "./net";
 
@@ -55,7 +53,7 @@ export interface ServerApi {
     sessionChildren(cwd: string, id: string, timeoutMs: number): Promise<unknown>;
     sessionMessages(cwd: string, id: string, limit: number, timeoutMs: number): Promise<unknown>;
     sessionAbort(cwd: string, id: string, timeoutMs: number): Promise<unknown>;
-    sessionPrompt<T>(cwd: string, id: string, body: unknown, timeoutMs: number | undefined, token?: vscode.CancellationToken): Promise<T>;
+    sessionPrompt<T>(cwd: string, id: string, body: unknown, timeoutMs: number | undefined, token?: Cancel): Promise<T>;
     /** The HTTP status: a summary's reply body is not read. */
     sessionSummarize(cwd: string, id: string, body: Record<string, unknown>, timeoutMs: number): Promise<number>;
     /** `legacy`: pre-1.1's `permission.updated`, answered at the session's own route. */
@@ -98,7 +96,7 @@ const propsOf = (ev: Ev): Record<string, unknown> => (ev.properties as Record<st
 
 // This session's events (1.x-shaped, ./v2-events) until `step` returns a value;
 // bounded by `timeoutMs` and Stop, which reject as the 1.x request would.
-function watch<T>(base: string, sessionId: string, timeoutMs: number | undefined, token: vscode.CancellationToken | undefined, step: (ev: Ev) => T | undefined) {
+function watch<T>(base: string, sessionId: string, timeoutMs: number | undefined, token: Cancel | undefined, step: (ev: Ev) => T | undefined) {
     let connected: () => void = () => undefined;
     const ready = new Promise<void>((r) => (connected = r));
     let sub: { close: () => void } | undefined;
@@ -312,7 +310,7 @@ const v2 = (base: string): ServerApi => {
         // which is what the runner awaits. So: agent and model first (2.x's
         // prompt takes neither), then the prompt, then this session's events
         // until its run ends — the reply built from what they said.
-        sessionPrompt: async <T>(cwd: string, id: string, body: unknown, timeoutMs: number | undefined, token?: vscode.CancellationToken): Promise<T> => {
+        sessionPrompt: async <T>(cwd: string, id: string, body: unknown, timeoutMs: number | undefined, token?: Cancel): Promise<T> => {
             const b = (body ?? {}) as { parts?: Array<{ text?: unknown }>; agent?: unknown; model?: { providerID?: unknown; modelID?: unknown }; variant?: unknown };
             if (typeof b.agent === "string") {
                 await send("POST", url(`/session/${safeSessionId(id)}/agent`), { agent: b.agent }, 5000);

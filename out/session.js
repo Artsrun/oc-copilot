@@ -52,6 +52,7 @@ exports.notifyIfSlow = notifyIfSlow;
 const vscode = __importStar(require("vscode"));
 const path = __importStar(require("node:path"));
 const core_1 = require("./core");
+const host_1 = require("./host");
 exports.PARTICIPANT_ID = "opencodeCopilotBridge.chat";
 exports.INLINE_PARTICIPANT_ID = "opencodeCopilotBridge.inline";
 exports.OWN_PARTICIPANTS = new Set([exports.PARTICIPANT_ID, exports.INLINE_PARTICIPANT_ID]);
@@ -78,10 +79,10 @@ function sessionStateKey(cwd) {
     return `opencode.session:${cwd}`;
 }
 function getActiveSession(cwd) {
-    return core_1.extensionContext.workspaceState.get(sessionStateKey(cwd)) ?? { turns: 0 };
+    return host_1.extensionContext.workspaceState.get(sessionStateKey(cwd)) ?? { turns: 0 };
 }
 function setActiveSession(cwd, value) {
-    return core_1.extensionContext.workspaceState.update(sessionStateKey(cwd), value);
+    return host_1.extensionContext.workspaceState.update(sessionStateKey(cwd), value);
 }
 function threadSession(history, cwd) {
     for (let i = history.length - 1; i >= 0; i--) {
@@ -149,13 +150,13 @@ function threadScopeActive(context) {
     return (0, core_1.config)().get("sessionScope", "thread") !== "workspace" && Array.isArray(history);
 }
 function refreshStatus(cwd, context) {
-    const folder = cwd ?? (0, core_1.resolveFolder)()?.folder.uri.fsPath;
+    const folder = cwd ?? (0, host_1.resolveFolder)()?.folder.uri.fsPath;
     if (!folder) {
         return;
     }
     const state = getActiveSession(folder);
     const parts = ["$(code) OpenCode"];
-    if ((0, core_1.isMultiRoot)()) {
+    if ((0, host_1.isMultiRoot)()) {
         parts.push(path.basename(folder));
     }
     if (state.id) {
@@ -167,7 +168,7 @@ function refreshStatus(cwd, context) {
     const head = state.id
         ? `Session \`${state.id}\` · ${state.turns} turn(s)`
         : "No active OpenCode session yet";
-    (0, core_1.setStatus)(parts.join(" · "), `${head}\nClick for OpenCode actions`, false);
+    (0, host_1.setStatus)(parts.join(" · "), `${head}\nClick for OpenCode actions`, false);
 }
 function handoffChain(model, fallbacks) {
     const max = Math.max(1, (0, core_1.config)().get("maxHandoffAttempts", 3));
@@ -222,7 +223,7 @@ function notifyIfSlow(metrics, agentLabel, cwd) {
     if (metrics.cancelled) {
         return;
     }
-    const where = (0, core_1.isMultiRoot)() ? ` in ${path.basename(cwd)}` : "";
+    const where = (0, host_1.isMultiRoot)() ? ` in ${path.basename(cwd)}` : "";
     if (metrics.timedOut || metrics.error) {
         const text = metrics.timedOut
             ? `OpenCode ${agentLabel}${where} timed out after ${(0, core_1.secs)(metrics.totalMs)} — output may be partial.`

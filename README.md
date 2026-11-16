@@ -545,7 +545,7 @@ All under `opencodeCopilotBridge.`.
 | `devAgent` | `build` | Agent `/dev` runs, always passed as `--agent`. |
 | `planAgent` | `plan` | Agent for read-only turns and `/parallel` lanes, used once OpenCode lists it (see *Read-only turns*). |
 | `readOnlySubagents` | `["explore"]` | Literal subagent names a read-only turn may start via `task`; trimmed and deduplicated, `*` and `?` rejected. With `enforceReadOnly` only agents with verified shell-free permissions are available. |
-| `opencode2` | `true` | Drive OpenCode 2 through its HTTP API (tested on 2.0.18–2.2.7): every turn through this window's own server, read-only turns only when it lists the bridge's rules (see *OpenCode 2*). A 1.x runs the same either way. Off: an OpenCode 2 is refused. |
+| `opencode2` | `true` | Drive OpenCode 2 through its HTTP API (tested on 2.0.18–2.3.0): every turn through this window's own server, read-only turns only when it lists the bridge's rules (see *OpenCode 2*). A 1.x runs the same either way. Off: an OpenCode 2 is refused. |
 | `enforceReadOnly` | `true` | Read-only turns read-only by permission in every OpenCode process the bridge starts: no edits or shell, `readOnlyTools`, read-only subagents (see *Read-only turns*). `/dev` is unchanged. Off: 0.0.214, read-only by instruction. |
 | `readOnlyTools` | `["git-scan_gitScan"]` | With `enforceReadOnly`, the MCP tools a read-only turn may use, by OpenCode permission name (`<server>_<tool>`, wildcards allowed). A name that would allow a tool that writes, runs commands or starts subagents is left out. On OpenCode 2 from 2.2.0; 2.0 and 2.1 offer none. |
 | `attachDevToServer` | `true` | With transport `auto`, `/dev` attaches to the warm server instead of booting OpenCode per turn. |
@@ -588,6 +588,15 @@ All under `opencodeCopilotBridge.`.
 
 The last five releases; the full history is `CHANGELOG.md` in the repository.
 
+### 0.0.240
+
+- **OpenCode 2.3.0 is tested.** The newest release (2026-11-13) passes every
+  probe row, so it no longer says it is outside the tested versions. Tested
+  range: 2.0.18–2.3.0. Checks `TW`.
+- **The part that runs OpenCode no longer needs VS Code.** Nothing changes in
+  chat. It is the groundwork for reaching OpenCode from Copilot's own agent once
+  the Local harness is gone. Checks `EN`.
+
 ### 0.0.239
 
 - **OpenCode 2.2.7: the first message after the server starts is sent again.**
@@ -618,11 +627,3 @@ The last five releases; the full history is `CHANGELOG.md` in the repository.
 - **`/worktree` reads a file attached through a symlinked path.** A checkout
   reached through a link (on macOS, `/var` is one) made an attached file look
   outside the repo, so the run never got it. Checks `WT11`, `WT18`.
-
-### 0.0.235
-
-- **Told when VS Code hides the Local chat session.** `@opencode` answers only
-  in Local sessions; with `chat.editor.localAgent.enabled` off there are none,
-  and nothing in chat can say so. One warning outside chat now does, with a
-  button to the setting, and Diagnose shows it. Checks `HR`.
-

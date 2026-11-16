@@ -2,7 +2,8 @@
 // model and agent, then run them at once (./lanes). ./chat hands the turn over
 // once it knows it is one.
 import * as vscode from "vscode";
-import { logChannel, relTo, stamp, untilStop } from "./core";
+import { logChannel, Settings, stamp, untilStop } from "./core";
+import { relTo } from "./host";
 import { mark } from "./followups";
 import { buildChatContext, contextNotice, emitReferences, parseChatPrompt, referenceLogLine, splitLanePrefixes, splitModelsFanout } from "./context";
 import { ensureCliIdentity, openCode1Refusal, warmServer } from "./net";
@@ -17,7 +18,7 @@ export interface ParallelTurn {
     request: vscode.ChatRequest;
     response: vscode.ChatResponseStream;
     token: vscode.CancellationToken;
-    settings: vscode.WorkspaceConfiguration;
+    settings: Settings;
     cwd: string;
     inline: boolean | undefined;
     /** The listed steps of an `autoParallel: auto` message. */

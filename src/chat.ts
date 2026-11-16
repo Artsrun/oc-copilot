@@ -1,16 +1,6 @@
 import * as vscode from "vscode";
-import {
-    config,
-    isMultiRoot,
-    logChannel,
-    relTo,
-    rememberFolder,
-    resolveFolder,
-    setStatus,
-    stamp,
-    truncate,
-    untilStop
-} from "./core";
+import { config, logChannel, stamp, truncate, untilStop } from "./core";
+import { isMultiRoot, relTo, rememberFolder, resolveFolder, setStatus } from "./host";
 import { mark, mergeRunId, prompt as promptText } from "./followups";
 import { insistedOn, isVaguePrompt, markClarifiedPrompt, planTimeout } from "./prompt";
 import { buildChatContext, contextNotice, emitReferences, parseChatPrompt, referenceLogLine } from "./context";
