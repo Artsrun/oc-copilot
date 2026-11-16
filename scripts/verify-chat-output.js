@@ -9537,7 +9537,9 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         const mpVersion = JSON.parse(fs.readFileSync(path.join(repoDir, "package.json"), "utf8")).version;
         const mpServer = path.join(repoDir, "out", "oc-mcp-server.js");
         const mpFake = writeFake("fake-mp2.js", [], `if (!process.argv.includes('--version') || true) require(${JSON.stringify(path.join(__dirname, "fixtures", "fake-opencode2.js"))})(process.argv);\n`);
-        const mpProject = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ocb-mp-")));
+        // A folder with a space in its name, by the path the server will name: `.native`
+        // expands Windows' short names (RUNNER~1), which the plain call leaves.
+        const mpProject = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "ocb-mp project-")));
         const mpSettings = path.join(work, "mp-settings.json");
         // A fixed port is another process's server: this one must start its own.
         fs.writeFileSync(mpSettings, JSON.stringify({ settings: { executable: mpFake, opencode2: true, serverStartupPollMs: 50, serverPort: 4999 } }));

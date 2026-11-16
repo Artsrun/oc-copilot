@@ -104,7 +104,7 @@ const server = path.join(__dirname, "..", "out", "oc-mcp-server.js");
     });
     await row("ask · the folder defaults to where the server was started", "answered", async () => {
         const r = await a.call("opencode_ask", { prompt: "[[probe:text]] hi" });
-        return [/Hello from the scripted model/.test(r.text) && r.facts.folder === fs.realpathSync(project) ? "answered" : "wrong", `folder=${r.facts.folder}`];
+        return [/Hello from the scripted model/.test(r.text) && r.facts.folder === fs.realpathSync.native(project) ? "answered" : "wrong", `folder=${r.facts.folder}`];
     });
     await row("ask · shell echo > file", "absent", async () => {
         const f = target(1);

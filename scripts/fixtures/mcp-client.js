@@ -63,7 +63,10 @@ function startMcp(script, args = [], { env = process.env, cwd = process.cwd(), m
             return Object.assign(sent.then((reply) => {
                 const text = (reply.result?.content ?? []).map((c) => c.text ?? "").join("");
                 const line = text.split("\n").reverse().find((l) => l.startsWith("[opencode] ")) ?? "";
-                const facts = Object.fromEntries(line.slice(11).split(" ").filter((p) => p.includes("=")).map((p) => [p.slice(0, p.indexOf("=")), p.slice(p.indexOf("=") + 1)]));
+                // `folder` is last and runs to the end of the line: a path may hold spaces.
+                const at = line.indexOf(" folder=");
+                const facts = Object.fromEntries(line.slice(11, at < 0 ? undefined : at).split(" ").filter((p) => p.includes("=")).map((p) => [p.slice(0, p.indexOf("=")), p.slice(p.indexOf("=") + 1)]));
+                if (at >= 0) facts.folder = line.slice(at + 8);
                 return { reply, text, facts, isError: reply.result?.isError === true, error: reply.error, timedOut: reply.timedOut === true };
             }), { id: sent.id });
         },

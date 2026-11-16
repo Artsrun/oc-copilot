@@ -358,13 +358,13 @@ function jobResult(job) {
         `status=${status}`,
         ...(m?.sessionId ? [`sessionId=${m.sessionId}`] : []),
         `jobId=${job.id}`,
-        `folder=${job.folder}`,
         `agent=${job.agent}`,
         ...(m?.model ? [`model=${m.model}`] : []),
         ...(job.kind === "ask" && m?.readOnlyEnforcement ? [`readOnly=${m.readOnlyEnforcement.kind}`] : []),
         `steps=${job.steps.filter((s) => s.status !== "running").length}`,
         `seconds=${(((job.finishedAt ?? Date.now()) - job.startedAt) / 1000).toFixed(1)}`,
-        ...(m && m.cost > 0 ? [`cost=${m.cost.toFixed(4)}`] : [])
+        ...(m && m.cost > 0 ? [`cost=${m.cost.toFixed(4)}`] : []),
+        `folder=${job.folder}`
     ];
     const line = `[opencode] ${facts.join(" ")}`;
     const answer = job.text.join("").trim();
