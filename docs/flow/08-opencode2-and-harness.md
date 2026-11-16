@@ -131,6 +131,52 @@ flowchart TD
   when `vscode.d.ts` on main drops or marks `@deprecated` any of what the extension
   implements, then typechecks against the newest `@types/vscode`.
 
+## (・o・) The way in without a participant: MCP tools (alpha)
+
+The Copilot harness calls MCP tools, and reads the user's own `mcp-config.json` for
+them. `oc-mcp-server.ts` is the engine as a stdio server in a process of its own:
+no `vscode`, its settings from a file, its own `opencode serve`.
+
+```mermaid
+flowchart TD
+  classDef host fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
+  classDef bridge fill:#ffedd5,stroke:#ea580c,color:#7c2d12
+  classDef oc fill:#dcfce7,stroke:#16a34a,color:#14532d
+  classDef stop fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
+
+  X(["extension: installMcpServer copies out/*.js to global storage, userSettings to engine-settings.json"]):::bridge
+  U(["the user merges mcpEntry into ~/.copilot/mcp-config.json"]):::host
+  C(["(・o・) Copilot's agent: tools/call opencode_ask"]):::host
+  F{{"(・ω・)? callFolder: absolute, there, not home or a root, inside --folder"}}:::bridge
+  NO["(×﹏×) an error result: nothing runs"]:::stop
+  J["startJob: ensureServer, plan agent, runOpenCodeServer with readOnly"]:::bridge
+  RO{{"(・ω・)? assertReadOnly: rules read back"}}:::bridge
+  NS["(×﹏×) Nothing was sent"]:::stop
+  OC["OpenCode runs the turn on this process's own server"]:::oc
+  W{{"(・ω・)? done within the wait?"}}:::bridge
+  A["the answer, sessionId, and one line of facts"]:::bridge
+  R["status=running and a jobId: opencode_wait, opencode_cancel"]:::bridge
+
+  X --> U --> C --> F
+  F -->|no| NO
+  F -->|yes| J --> RO
+  RO -->|unverified| NS
+  RO -->|enforced| OC --> W
+  W -->|yes| A
+  W -->|no| R --> A
+```
+
+- **Handles, not connections:** `folder`, `sessionId` and `jobId` are tool arguments.
+  MCP 2026-07-28 is stateless and deprecates roots; the server answers that revision
+  and 2025-11-25's `initialize`.
+- **`opencode_dev` is opt-in:** listed only when the entry's `args` has `--dev`.
+- **Stop:** `notifications/cancelled` or `opencode_cancel` aborts the run in
+  OpenCode; the job ends only once the session is idle and quiet, so the next
+  prompt does not read the stopped run's end.
+- **Closing:** stdin closed stops the runs and the server it started.
+- **Not measured:** the Copilot harness itself. `docs/local-agent.md` task 2 runs it.
+
 Suite groups: `TW` the 2.x path, `RX` `RE` read-only, `SE` the data folder, `OC`
-identity, `PV` prewarm, `HR` the harness. Probes: `scripts/probe-opencode2.js`,
-`scripts/probe-readonly.js`, both in `probes.yml`.
+identity, `PV` prewarm, `HR` the harness, `EN` the engine without VS Code, `MP` the
+MCP server. Probes: `scripts/probe-opencode2.js`, `scripts/probe-readonly.js`,
+`scripts/probe-mcp.js`, all in `probes.yml`.

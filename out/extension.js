@@ -61,6 +61,7 @@ const natural_1 = require("./natural");
 const commands_registry_1 = require("./commands-registry");
 const worktree_1 = require("./worktree");
 const git_scan_mcp_1 = require("./git-scan-mcp");
+const oc_mcp_1 = require("./oc-mcp");
 const LOCAL_NOTICE_KEY = "opencode.localSessionNotice";
 function activate(context) {
     (0, host_1.setExtensionContext)(context);
@@ -100,6 +101,12 @@ function activate(context) {
     }
     (0, commands_registry_1.registerCommands)(context);
     (0, git_scan_mcp_1.registerGitScan)(context);
+    try {
+        (0, oc_mcp_1.registerOcMcp)(context);
+    }
+    catch (err) {
+        core_1.logChannel.appendLine(`MCP server unavailable: ${err instanceof Error ? err.message : String(err)}`);
+    }
     const prewarm = setTimeout(() => void (0, agents_1.prewarmFolder)(), net_1.PREWARM_DELAY_MS);
     prewarm.unref?.();
     context.subscriptions.push({ dispose: () => clearTimeout(prewarm) });
@@ -117,6 +124,7 @@ const participant = (context, id, handler) => {
     return chat;
 };
 exports.__test = {
+    copilotConfigNote: oc_mcp_1.copilotConfigNote,
     resolveExecutable: proc_1.resolveExecutable,
     emitKeyedDelta: runs_1.emitKeyedDelta,
     toolFilePath: metrics_1.toolFilePath,

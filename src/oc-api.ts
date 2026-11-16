@@ -369,7 +369,15 @@ const v2 = (base: string): ServerApi => {
                 }
                 return undefined;
             });
+            // Stop before the post: the watch has rejected already, with nobody awaiting it
+            // yet (an unhandled rejection ends a plain Node process), and the prompt must
+            // not go out after it.
+            w.result.catch(() => undefined);
             await w.ready;
+            if (token?.isCancellationRequested) {
+                w.abandon();
+                throw Object.assign(new Error("cancelled"), { code: "ECANCELLED_BRIDGE" });
+            }
             try {
                 const parts = Array.isArray(b.parts) ? b.parts : [];
                 const queued = data<{ id?: unknown }>(await send("POST", url(`/session/${safeSessionId(id)}/prompt`), { text: parts.map((x) => String(x?.text ?? "")).join("\n") }, 15000));

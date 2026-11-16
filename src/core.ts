@@ -17,7 +17,9 @@ export interface Log {
     show(preserveFocus?: boolean): void;
 }
 
-/** Stop, as the engine reads it: vscode.CancellationToken fits it. */
+/** Stop, as the engine reads it: vscode.CancellationToken fits it. A listener added
+ * after Stop is still called (VS Code calls it on the next tick), and the engine's
+ * waits rely on that: another host's token must do the same. */
 export interface Cancel {
     readonly isCancellationRequested: boolean;
     onCancellationRequested(listener: () => unknown): { dispose(): unknown };

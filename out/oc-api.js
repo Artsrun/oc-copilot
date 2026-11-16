@@ -288,7 +288,12 @@ const v2 = (base) => {
                 }
                 return undefined;
             });
+            w.result.catch(() => undefined);
             await w.ready;
+            if (token?.isCancellationRequested) {
+                w.abandon();
+                throw Object.assign(new Error("cancelled"), { code: "ECANCELLED_BRIDGE" });
+            }
             try {
                 const parts = Array.isArray(b.parts) ? b.parts : [];
                 const queued = data(await send("POST", url(`/session/${safeSessionId(id)}/prompt`), { text: parts.map((x) => String(x?.text ?? "")).join("\n") }, 15000));

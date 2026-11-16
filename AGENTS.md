@@ -9,8 +9,10 @@ shipped a defect. The source cites sections by number (`src/proc.ts` → §2 rul
 ## §1 · What this is, and the map
 
 A VS Code extension: the `@opencode` chat participant, running a local OpenCode
-agent behind it — one OpenCode session per Copilot chat thread. No framework,
-no bundler, no test runner: plain TypeScript → `out/`, plain Node for the suite.
+agent behind it — one OpenCode session per Copilot chat thread — and the same
+engine as MCP tools for a client with no chat participants (the Copilot
+harness). No framework, no bundler, no test runner: plain TypeScript → `out/`,
+plain Node for the suite.
 
 | Path | What lives there |
 | --- | --- |
@@ -52,11 +54,13 @@ no bundler, no test runner: plain TypeScript → `out/`, plain Node for the suit
 | `src/context-markers.ts` | Host-free context vocabulary shared by the producer and leak gate. |
 | `src/git-scan-server.ts` | Standalone newline-delimited JSON-RPC MCP server; one bounded, shell-free Git status call. |
 | `src/git-scan-mcp.ts` | Trusted local first-folder MCP provider, stable global-storage server copy, config clipboard command. |
+| `src/oc-mcp-server.ts` | **OpenCode as MCP tools: the engine's front end outside VS Code.** A standalone stdio server (newline-delimited JSON-RPC; 2025-11-25's `initialize` and 2026-07-28's per-request version): `opencode_ask` (read-only, `runOpenCodeServer` with `readOnly`), `opencode_dev` (only with `--dev`), `opencode_wait`, `opencode_cancel`. Jobs (`startJob`, `waitFor`: a call returns within `DEFAULT_WAIT_MS` or hands back a `jobId`), `callFolder` (the folder a call may name), its own host (`fileSettings`: the settings file, `serverPort` forced to 0), a stopped session settled before its job ends (`QUIET_MS`). |
+| `src/oc-mcp.ts` | VS Code's side of it: `installMcpServer` (every `out/*.js` copied to global storage, marker last), `userSettings` (user-scope values only, written to `engine-settings.json`), `mcpEntry` and the **Copy MCP Config for Copilot** command, `copilotConfigNote` (Diagnose's row; the user's config is read, never written). |
 
 Layering has no cycles:
 
 ```
-extension.ts  →  chat · chat-boot · commands-registry · git-scan-mcp · session · worktree · leaf modules (for __test)
+extension.ts  →  chat · chat-boot · commands-registry · git-scan-mcp · oc-mcp · session · worktree · leaf modules (for __test)
      chat     →  agents · chat-boot · chat-commands · chat-parallel · chat-turn · chat-worktree · context · models · natural · prompt · session · core
 chat-parallel →  agents · chat-boot · compose · context · models · net · runs · core
   chat-turn   →  agents · chat-boot · context · enforce · env · format · metrics · models · net · oc-api · runs · server-session · session · core
@@ -73,18 +77,22 @@ chat-parallel →  agents · chat-boot · compose · context · models · net ·
      agents   →  enforce · oc-api · net · proc      net → enforce · proc · v2-events      proc → enforce · core      enforce → core
     models    →  context · env · net · oc-api · proc      commands → env · models · net · oc-api · proc · session · worktree
 commands-registry → commands · compose · models · net · session · worktree
+oc-mcp-server →  agents · format · net · prompt · proc · run-server · server-session · core   (imported by nothing: its own process)
+    oc-mcp    →  host · core   (used by extension and commands)
      host     →  core   (every module that needs the window: status bar, folder choice, `vsConfig`)
      all      →  core.ts · followups.ts (JSON only) · natural.ts (→ followups)
 ```
 
 **The engine** is the running layer and everything it imports: `run-cli`,
-`run-server`, `server-session`, `asks`, `agents`, `worktree` and, through them,
-`net`, `oc-api`, `v2-events`, `enforce`, `proc`, `run-steps`, `metrics`,
-`followups`, `core`. It imports no `vscode`, not even a type, and loads in a
-plain Node process (`EN`): the next front ends (an MCP server, an Agent Host) run
-there. What it needs from a window comes through `setHost`; a probe or a
-standalone server installs its own. A new import from an engine module pulls its
-target into the engine, and `EN` reads that from the source.
+`run-server`, `server-session`, `asks`, `agents`, `worktree`, `oc-mcp-server`
+and, through them, `net`, `oc-api`, `v2-events`, `enforce`, `proc`, `run-steps`,
+`metrics`, `format`, `context-markers`, `prompt`, `followups`, `core`. It imports
+no `vscode`, not even a type, and loads in a plain Node process (`EN`): the MCP
+server runs there, and an Agent Host would. What it needs from a window comes
+through `setHost`; a probe or a standalone server installs its own. A new import
+from an engine module pulls its target into the engine, and `EN` reads that from
+the source. `oc-mcp.ts` copies every `out/*.js`, so nothing lists the engine's
+files by hand.
 
 **One action, one channel.** A chip owns the next *message* (Retry, Run it, the
 answer's own offers); a `response.button` owns an *artifact* (debug log,
@@ -132,8 +140,8 @@ script is named in `.vscodeignore`, and every new `out/*.js` in `ALLOWED`.
 **Rule 8 — `noUnusedLocals` is on.** An unused local is a red typecheck.
 
 **Rule 9 — One version, one build.** Change code → bump the version: in
-`package.json`, both `package-lock.json` fields, and `serverInfo.version` in
-`src/git-scan-server.ts` (`GS`). The gate compares a `dist/` VSIX of this
+`package.json`, both `package-lock.json` fields, `serverInfo.version` in
+`src/git-scan-server.ts` (`GS`) and `VERSION` in `src/oc-mcp-server.ts` (`MP`). The gate compares a `dist/` VSIX of this
 version with `out/` (a local 0.0.187 rebuild differed in four modules under the
 same number).
 
@@ -159,7 +167,7 @@ does not run the suite.
 CI runs the same gate (`.github/workflows/ship.yml`: Linux, Windows, macOS, every
 push and pull request) and, nightly, the real-binary probes, one job per
 OpenCode version (`probes.yml`: 1.19.0, 1.19.5, 2.0.29, 2.2.5, 2.2.7 and 2.3.0 must pass, the latest 2.x may fail;
-one job per 2.x for `probe-data-folder.js`),
+one job per 2.x for `probe-data-folder.js`; `probe-mcp.js` on 1.19.5 and 2.3.0),
 and the chat participant API (`api-watch.yml`: `scripts/check-vscode-api.js` on
 `vscode.d.ts`'s main branch, and a typecheck against the newest `@types/vscode`).
 
@@ -198,6 +206,7 @@ A probe measures one thing on this machine and prints it. Paste its output.
 | `scripts/probe-acp.js` | `opencode acp` over JSON-RPC: handshake, prompt, cancel, load; the transcript as JSONL. Also the ACP client `probe-readonly.js` uses. |
 | `scripts/probe-opencode2.js` | With `opencode2`, against a real 2.x through `out/`: text turn, plan writes (absent ×3), `/dev` and enforcement-off controls (`CREATED`), a subagent, Stop, `/sessions`; reads outside the folder and `.env` (refused), `/dev` outside (known), MCP only via `readOnlyTools`, plan first on a fresh server, effort with no model named. Expectations that differ by version name the version measured. |
 | `scripts/probe-data-folder.js` | Two real binaries, one data folder, through `out/`: does 2.x import a 1.x folder, does a chat bound to a 1.x session go on, does 1.x still open it, and what each sees afterwards. Row counts from a copy of the database. |
+| `scripts/probe-mcp.js` | Against a real binary, `out/oc-mcp-server.js` driven over stdio as an MCP client drives it (`scripts/fixtures/mcp-client.js`): `opencode_ask` writes (absent ×3), reads outside the folder and `.env` (refused), a session continued by `sessionId`, a job handed back and collected, `opencode_cancel` and the client's own cancel, the same session answering at once after a stop, `--dev` and its control (`CREATED`), stdin closed (the server and its OpenCode gone). |
 | `scripts/record-wire-fixtures.js` | Records a real 1.x and 2.x server's frames per scripted turn into `scripts/fixtures/wire-v*.json`, the `TW` fakes' input. |
 | `scripts/probe-model.js` | The scripted OpenAI-compatible model both use (`[[probe:<action>]]`): every tool attempt certain, no provider, no cost. |
 
@@ -491,6 +500,34 @@ history belongs in `CHANGELOG.md`, not in the source.
   when `createChatParticipant` gains `@deprecated` or this code stops typechecking.
 - **A quick pick filters its list by what is typed** — the composer's model
   items are `alwaysShow`, or typing a task would hide every model.
+- **The engine's `Cancel` is VS Code's token, late listeners included**: a
+  listener added after Stop is still called on the next tick, and the engine's
+  waits are written against that (`httpRequestJson`, `watch`). A host's own token
+  that drops late listeners runs the whole turn after Stop (`cancelSource`, `MP`).
+- **An unhandled rejection ends a plain Node process**; the extension host only
+  logs it. OpenCode 2's prompt wait rejected before anyone awaited it when Stop
+  came first, and the prompt went out after it: `sessionPrompt` handles the
+  rejection and sends nothing after Stop, and `oc-mcp-server` logs both kinds and
+  keeps serving (`MP`).
+- **A stopped session is not ready when its abort returns.** The engine does not
+  await a Stop's abort (a chat has one second); a prompt sent to that session
+  within ~100 ms read the stopped run's last events as its own: "Step
+  interrupted" on 2.3.0, the old run's text on 1.19.5, 6 of 8 times with idle
+  alone awaited. A person cannot type that fast and a model can: the MCP server
+  ends a stopped job only after the abort, idle, and `QUIET_MS` without an event
+  (`probe-mcp.js`, `MP`).
+- **OpenCode 1 sends the prompt back as a text part of its own** on the server
+  path. Chat drops it with `createEchoGate`; any other reader of `onText` must
+  too (`probe-mcp.js`).
+- **MCP 2026-07-28 is stateless and deprecates roots**: no `initialize`, the
+  version in each request's `_meta`, `server/discover`, `resultType` on results;
+  folders go in tool arguments or server configuration. So the MCP server takes
+  `folder`, `sessionId` and `jobId` as arguments and keeps nothing by connection
+  (REFS 0.0.241). Which revision Copilot's harness speaks is not measured.
+- **The Copilot harness does not get an extension's MCP servers** (vscode#343729):
+  it reads the user's `mcp-config.json`. The bridge copies the entry for the user
+  and never writes that file; the server it names lives in global storage, since
+  the extension's own folder is named by its version.
 
 ### Claims
 
@@ -500,4 +537,4 @@ Current: `worktrees`, `worktree-command`, `inline-participant`, `model-names`,
 `parallel-models`, `command-aliases`, `sessions`, `parallel-composer`,
 `file-links`, `effort`, `auto-parallel`, `lane-agents`, `read-only-subagents`,
 `prewarm-server`, `git-scan`, `chip-backoff`, `opencode-1-only`,
-`enforced-read-only`, `opencode-2-api`.
+`enforced-read-only`, `opencode-2-api`, `mcp-tools`.

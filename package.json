@@ -2,7 +2,7 @@
   "name": "opencode-copilot-bridge",
   "displayName": "OpenCode Copilot Bridge",
   "description": "Delegate research, planning, and development to OpenCode from GitHub Copilot Chat.",
-  "version": "0.0.240",
+  "version": "0.0.241",
   "publisher": "local",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -152,6 +152,10 @@
       {
         "command": "opencodeCopilotBridge.gitScanConfig",
         "title": "OpenCode: gitScan config for opencode.json"
+      },
+      {
+        "command": "opencodeCopilotBridge.copilotMcpConfig",
+        "title": "OpenCode: Copy MCP Config for Copilot"
       },
       {
         "command": "opencodeCopilotBridge.setModel",

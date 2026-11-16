@@ -35,6 +35,7 @@ import { laneItems, naturalFollowups } from "./natural";
 import { registerCommands } from "./commands-registry";
 import { slugify } from "./worktree";
 import { registerGitScan } from "./git-scan-mcp";
+import { copilotConfigNote, registerOcMcp } from "./oc-mcp";
 
 // Activation is kept deliberately thin. This file owns the participant
 // registration (including the follow-up chips keyed on the turn's metadata), the
@@ -92,6 +93,12 @@ export function activate(context: vscode.ExtensionContext): void {
     }
     registerCommands(context);
     registerGitScan(context);
+    // The route with no chat participant (the Copilot harness): never in activation's way.
+    try {
+        registerOcMcp(context);
+    } catch (err) {
+        logChannel.appendLine(`MCP server unavailable: ${err instanceof Error ? err.message : String(err)}`);
+    }
     // claim:prewarm-server — off the activation path, cancelled on deactivate.
     const prewarm = setTimeout(() => void prewarmFolder(), PREWARM_DELAY_MS);
     prewarm.unref?.();
@@ -125,6 +132,7 @@ const participant = (
 };
 
 export const __test = {
+    copilotConfigNote,
     resolveExecutable,
     emitKeyedDelta,
     toolFilePath,

@@ -45,6 +45,7 @@ const followups_1 = require("./followups");
 const proc_1 = require("./proc");
 const net_1 = require("./net");
 const oc_api_1 = require("./oc-api");
+const oc_mcp_1 = require("./oc-mcp");
 const session_1 = require("./session");
 const models_1 = require("./models");
 const env_1 = require("./env");
@@ -119,6 +120,7 @@ async function diagnose() {
             ? `${(0, followups_1.mark)("fail")} @opencode is registered, but ${local}: turn the setting on (README, *Copilot harness*)`
             : "@opencode answers in a **Local** session only: the Copilot harness has no chat participants, and VS Code's docs say Local is removed in February 2027 (README, *Copilot harness*)"));
     lines.push(row("harness settings", (0, session_1.harnessNote)()));
+    lines.push(row("copilot harness tools", (0, oc_mcp_1.copilotConfigNote)().replace(/\|/g, "\\|")));
     lines.push(row("extension host", vscode.env?.remoteName ?? "local"));
     lines.push(row("ui kind", String(vscode.env?.uiKind ?? "?")));
     lines.push(row("workspace trust", vscode.workspace.isTrusted === false ? (0, followups_1.mark)("fail") + " untrusted — spawning is restricted" : (0, followups_1.mark)("ok") + " trusted"));
