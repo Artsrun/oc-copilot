@@ -5,6 +5,76 @@ actually measured, so nobody re-derives it.
 
 ---
 
+## 0.0.241: OpenCode as MCP tools, alpha (2026-11-16)
+
+**Dated 2026-11-16.** Linux, Node 22.23.4 (and 24.22.1 where named), the scripted model,
+real binaries in scratch prefixes: `@opencode/cli` 2.3.0 and `opencode-ai` 1.19.5.
+
+**Not measured, and it decides the route:** the Copilot harness. Whether it offers these
+tools from `~/.copilot/mcp-config.json`, asks before a tool marked destructive, which
+folder it starts a server in, which MCP revision it speaks, how long it lets one call
+run, and whether its Stop arrives as `notifications/cancelled`. `docs/local-agent.md`
+task 2, part A measures each from the server's own log.
+
+**`scripts/probe-mcp.js`**, `out/oc-mcp-server.js` over stdio: `ALL 19 ROWS AS EXPECTED`
+on 1.19.5 and on 2.3.0, and on 2.3.0 with the server under Node 24.22.1. Read-only rows
+(`opencode_ask`: shell, explore subagent, general subagent: absent; a file outside the
+folder and `.env`: refused; `readOnly=enforced` named by the result), control
+`opencode_dev` with `--dev`: `CREATED`.
+
+**What the probe found, before it was green:**
+
+| Finding | Where | Fix |
+| --- | --- | --- |
+| The answer began with the prompt: OpenCode 1 sends it back as a text part on the server path | 1.19.5 | `createEchoGate`, as chat uses |
+| After `opencode_cancel`, the next prompt to the same session came back `failed`, "Step interrupted", with the new answer after it | 2.3.0 | settle, below |
+| The same, as `done` with the stopped run's text ("slow slow …") and sometimes no new answer | 1.19.5 | settle, below |
+| A Stop during the first run's first second: the prompt was posted after it, and the process ended on an unhandled rejection | 2.3.0 | `sessionPrompt` (engine), and the server logs such errors and keeps serving |
+| A cancel source of the server's own never called a listener added after Stop, so the turn ran to its end | both | VS Code's rule kept: called on the next tick |
+
+**The settle, measured.** Cancel a streaming run, send `[[probe:text]]` to the same
+session at once, 8 times, one server (an ad hoc loop, not in the repo):
+
+| A stopped job ends after | 1.19.5 | 2.3.0 |
+| --- | --- | --- |
+| the run returned (the engine's Stop: abort not awaited) | wrong text | "Step interrupted" |
+| the abort answered and the session idle | 2 of 8 right | not run |
+| that, and 400 ms without an event of the session | 8 of 8 | 8 of 8 |
+
+A cancel takes ~470 ms with it. The chat participant has the same race and no fix: a
+person does not send within 100 ms of Stop.
+
+**MCP 2026-07-28, read from the spec's pages today** (changelog, base protocol,
+`server/discover`): no `initialize`; each request names
+`io.modelcontextprotocol/protocolVersion` and `clientCapabilities` in `_meta`; servers
+MUST implement `server/discover` (`supportedVersions`, `capabilities`, `instructions`,
+`ttlMs`, `cacheScope`, `serverInfo` in `_meta`); every result carries `resultType`;
+`tools/list` results carry `ttlMs` and `cacheScope`; `UnsupportedProtocolVersion` is
+`-32022`; `ping` is removed; Roots, Sampling and Logging are deprecated ("pass
+directories or files via tool parameters, resource URIs, or server configuration instead
+of Roots"); state across requests "MUST be referenced by an explicit identifier the
+client passes on each request"; tasks moved to an extension (`tasks/get` polling). Not
+read: the schema page, so the `data` of `-32022` here (`supported`, `requested`) is
+2025-11-25's shape, not checked against 2026-07-28's. The tasks extension would replace
+`opencode_wait` for a client that speaks it; which clients do is not known.
+
+**Mutants** (each in a copy of the tree with its own temp folder, the suite run on it;
+every one red, by `MP` alone):
+
+| Mutant | Red checks |
+| --- | --- |
+| `opencode_ask` runs with `readOnly` false | 4: no `readOnly=enforced`; the unverified turn answered instead of "Nothing was sent" |
+| the server's cancel source drops a listener added after Stop | 1: the listener check |
+| `sessionPrompt` posts after Stop again | 1: "a Stop before the prompt was sent sends none" (1 prompt) |
+| a stopped job ends when the run returns | 2: the next prompt came back "Step interrupted", on the fake too |
+| `userSettings` reads the effective value | 1: a workspace's `executable`, `devAgent` and `enforceReadOnly` in the file |
+| `callFolder` accepts the home folder | 1: the home folder ran |
+
+The suite's temp sweep (`ocb-*` at startup) deletes another running suite's fakes: mutant
+runs side by side need a `TMPDIR` each (0.0.240's first mutant run died of that).
+
+---
+
 ## 0.0.240: OpenCode 2.3.0, and the engine outside VS Code (2026-11-16)
 
 **Dated 2026-11-16.** Linux, Node 22.23.4, the scripted model, real binaries in scratch

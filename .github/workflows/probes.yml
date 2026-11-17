@@ -45,6 +45,15 @@ jobs:
             package: "@opencode/cli@2.3.0"
             probe: scripts/probe-readonly.js
             optional: false
+          # The MCP server (out/oc-mcp-server.js) driven over stdio, on each major.
+          - cell: opencode 1.19.5 (pinned) · MCP tools
+            package: opencode-ai@1.19.5
+            probe: scripts/probe-mcp.js
+            optional: false
+          - cell: opencode 2.3.0 (pinned) · MCP tools
+            package: "@opencode/cli@2.3.0"
+            probe: scripts/probe-mcp.js
+            optional: false
           - cell: opencode 2 latest
             package: "@opencode/cli@latest"
             probe: scripts/probe-opencode2.js

@@ -35,6 +35,8 @@ const ALLOWED = [
     "extension/out/context-markers.js",
     "extension/out/git-scan-server.js",
     "extension/out/git-scan-mcp.js",
+    "extension/out/oc-mcp.js",
+    "extension/out/oc-mcp-server.js",
     "extension/out/metrics.js",
     "extension/out/proc.js",
     "extension/out/prompt.js",

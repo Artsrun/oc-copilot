@@ -140,39 +140,64 @@ Finish with a short table: step, result, anything the owner has to decide.
 
 Why: `@opencode` answers in a Local chat session only, and VS Code's docs say
 Local "will be removed in February 2027". Two routes could replace it, and
-neither has been run in a real VS Code (REFS 0.0.239). These measurements
-decide between them. Do task 1 first, so the installed extension is current.
+neither has been run in a real VS Code (REFS 0.0.239, 0.0.241). Route T is
+built as an alpha; these measurements say whether it works where it has to,
+and whether Route H is worth building. Do task 1 first, so the installed
+extension is current.
 
 Everything you create goes in a temp folder outside the repo. The only change
 to the repo is one dated entry in `REFS.md` at the end.
 
-### Part A. Route T: an MCP server that Copilot's own agent calls (about 20 minutes)
+### Part A. Route T: OpenCode as MCP tools that Copilot's own agent calls (about 25 minutes)
 
-Questions: does a natively configured MCP server reach a Copilot-harness chat,
-how long may one tool call run, and which protocol does the client speak?
+From 0.0.241 the bridge ships this route as an alpha (README, *OpenCode in the
+Copilot harness*; REFS 0.0.241): measured on real OpenCode binaries with an MCP
+client of the bridge's own, never inside a Copilot-harness chat. Questions: does
+the harness offer the tools, does it ask before `opencode_dev`, which folder and
+protocol does it give the server, how long may one call run, does Stop arrive.
 
-- **A1.** In the temp folder write a stdio MCP server in plain Node
-  (newline-delimited JSON-RPC, no dependencies) with two tools: `sleep`
-  (argument `seconds`; waits, then returns "slept N") and `echo`. It answers
-  `initialize`, `tools/list`, `tools/call` and `server/discover`, and appends
-  every line it receives, with a timestamp, to a log file.
-- **A2.** Add it to the user's `.copilot/mcp-config.json` (in the home folder)
-  under `mcpServers` as
-  `"probe": {"type":"stdio","command":"node","args":["<path>"],"timeout":600000}`.
-- **A3.** The owner opens a new chat on the Copilot harness (not Local) and
-  asks "call the sleep tool with 30", then "call the sleep tool with 240".
-  Record for each: was the tool offered, did it return, after how many seconds,
-  any error text (look for `-32001`).
-- **A4.** Remove `timeout` from the config, restart VS Code, repeat the 240 s
-  call. Record when and how it fails. `timeout` is not documented; one public
-  report says it lifts a limit of about 180 s.
+The server's log answers most of them: `oc-mcp.log`, beside the server in the
+extension's global storage (the copied entry names the path).
+
+- **A1.** Back up `.copilot/mcp-config.json` in the home folder if it exists. The
+  owner runs **OpenCode: Copy MCP Config for Copilot**; merge the copied
+  `mcpServers.opencode` entry into that file. Then run the entry's server with
+  `--selftest` added (`node <args...> --selftest`) and paste what it prints.
+  **OpenCode: Diagnose**: report the row `copilot harness tools`.
+- **A2.** The owner opens a new chat on the Copilot harness (not Local) and asks
+  "Use opencode_ask to explain what src/core.ts does." Record: was the tool
+  offered, was a confirmation shown, did an answer come back, after how many
+  seconds, and the `[opencode]` line of the result.
+- **A3.** In the same chat: "Ask OpenCode a follow-up: which files import it?"
+  From the log: did the call carry the earlier `sessionId` (`session=ses_…`, not
+  `session=new`)?
+- **A4.** A long run: "Use opencode_ask to review every file under src/ for
+  unhandled promise rejections." Record: did the first call return
+  `status=running`, did the model call `opencode_wait` by itself, how many times,
+  and did the answer arrive.
 - **A5.** The owner presses Stop in the middle of a call. From the log: did
-  `notifications/cancelled` arrive?
-- **A6.** From the log: the first method the client sent (`initialize` or
-  `server/discover`) and the protocol version it named.
-- **A7.** gitScan, this extension's own MCP server: in a fresh window, is
+  `← notifications/cancelled` arrive, and a `job … stopped` line after it?
+- **A6.** From the log's first lines: the `cwd=` the harness started the server
+  in, the first method it sent (`initialize` or `server/discover`), the protocol
+  version, the client's name and its capabilities. From the `job` lines: did the
+  calls carry a `folder`, and which?
+- **A7.** `opencode_dev`: add `"--dev"` to the entry's `args`, start a new chat,
+  and in a scratch folder or branch ask "Use opencode_dev to add a comment line
+  to notes.txt." Record: was a confirmation shown before it ran, and what it
+  said.
+- **A8.** The ceiling of one call: add `"--wait-ms", "240000"` to `args`, start a
+  new chat, repeat A4. Record when and how the call ends (look for `-32001`).
+  One public report puts a limit near 180 s, lifted by an undocumented
+  `"timeout"` field on the entry; try with and without `"timeout": 600000`.
+  Remove `--wait-ms` afterwards.
+- **A9.** gitScan, this extension's other MCP server: in a fresh window, is
   `gitScan` in the Copilot chat's tool list? The owner runs **MCP: List
   Servers** once; is it there now?
+- **A10.** Optional, if the Copilot CLI is installed: does it list the same four
+  tools from the same file?
+
+Leave the entry in place if the owner wants to keep using it; otherwise restore
+the backup.
 
 ### Part B. Route H: a separate Agent Host that the Agents window connects to (about 15 minutes)
 

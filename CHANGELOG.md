@@ -3,6 +3,50 @@
 Full release history, newest first; releases before the last one are condensed
 to their summary and headlines. The README ships the last five.
 
+### 0.0.241
+
+Route T, alpha: OpenCode as MCP tools for a client with no chat participants (the
+Copilot harness), on the engine 0.0.240 took out of VS Code. Measured on real
+OpenCode binaries with an MCP client of the bridge's own; **not yet run inside a
+Copilot-harness chat** (`docs/local-agent.md` task 2, part A).
+
+- **New: `src/oc-mcp-server.ts`, a standalone MCP stdio server.** `opencode_ask`
+  (read-only: `planAgent`, the same enforced rules, an unverified turn not sent),
+  `opencode_dev` (`devAgent`; listed only with `--dev` in the entry's `args`, marked
+  destructive), `opencode_wait`, `opencode_cancel`. It starts an OpenCode server of
+  its own (`serverPort` forced to 0) on the first call and stops it when stdin
+  closes.
+- **Handles are arguments, not the connection** (`folder`, `sessionId`, `jobId`):
+  MCP 2026-07-28 is stateless and deprecates roots. The server answers that
+  revision (`server/discover`, the version in each request's `_meta`, `resultType`,
+  `-32022` for a version it does not speak) and 2025-11-25's `initialize`.
+- **A call returns within 100 s** (`--wait-ms`) or hands back `status=running` and a
+  `jobId`: a client's own ceiling for one call is not documented.
+- **Folders:** absolute, existing, not the home folder or a drive's root; `--folder`
+  pins the server to some. A call that cannot run says why as a tool result.
+- **New: `src/oc-mcp.ts` and OpenCode: Copy MCP Config for Copilot.** The engine is
+  copied to global storage (every `out/*.js`, marker last), the user-scope settings
+  written beside it (`engine-settings.json`; a workspace's values never), and the
+  `mcpServers.opencode` entry copied for `~/.copilot/mcp-config.json`. That file is
+  read for Diagnose's new row `copilot harness tools`, never written.
+- **Fixed, OpenCode 2: Stop before the prompt was posted sent it anyway** (server
+  boot, the agent list settling), then interrupted it; the wait's rejection had no
+  handler yet, which a plain Node process does not survive. `sessionPrompt` sends
+  nothing after Stop.
+- **Found by `probe-mcp.js`, fixed in the MCP server** (chat is not affected: a
+  person cannot send within 100 ms): a prompt sent to a session right after its
+  run was stopped read the stopped run's last events as its own ("Step
+  interrupted" on 2.3.0; the old run's text on 1.19.5, 6 of 8 with idle alone
+  awaited). A stopped job now ends after the abort, idle, and 400 ms without an
+  event: 8 of 8 on both. And OpenCode 1's echo of the prompt is dropped, as chat
+  drops it.
+- **Checks `MP`** (24, against the fake OpenCode 2, over stdio), `EN` (the closure
+  is 19 modules with the server). Mutants: see REFS 0.0.241.
+- **New probe `scripts/probe-mcp.js`**, 19 rows: `ALL 19 ROWS AS EXPECTED` on real
+  1.19.5 and 2.3.0 (Node 22), and on 2.3.0 under Node 24. Nightly on both majors.
+- Not in the alpha: `effort`, `/worktree`, `/parallel`, streaming into the chat,
+  writing the user's config for them, `server/discover` in gitScan.
+
 ### 0.0.240
 
 The engine runs without VS Code, and OpenCode 2.3.0 is in the tested range. No

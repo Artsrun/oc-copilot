@@ -7,6 +7,7 @@ import { mark } from "./followups";
 import { resolveExecutable, runCapture } from "./proc";
 import { dataFolderRefusal, knownServerBase, lastServeFailure, majorVersionNote } from "./net";
 import { api } from "./oc-api";
+import { copilotConfigNote } from "./oc-mcp";
 import { getActiveSession, getParticipantProblem, harnessNote, localSessionProblem } from "./session";
 import { catalogAge, getModelCatalog } from "./models";
 import { discoverOpenCodeEnv, summariseEnv } from "./env";
@@ -115,6 +116,7 @@ export async function diagnose(): Promise<void> {
         )
     );
     lines.push(row("harness settings", harnessNote()));
+    lines.push(row("copilot harness tools", copilotConfigNote().replace(/\|/g, "\\|")));
     lines.push(row("extension host", vscode.env?.remoteName ?? "local"));
     lines.push(row("ui kind", String(vscode.env?.uiKind ?? "?")));
     lines.push(

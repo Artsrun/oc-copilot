@@ -52,6 +52,7 @@ scripts/probe-acp.js
 scripts/probe-model.js
 scripts/probe-opencode2.js
 scripts/probe-data-folder.js
+scripts/probe-mcp.js
 scripts/record-wire-fixtures.js
 scripts/check-vscode-api.js
 scripts/fixtures/**

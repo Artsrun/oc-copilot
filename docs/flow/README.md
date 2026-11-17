@@ -1,12 +1,13 @@
 # (・∀・) Chat flow: from Copilot Chat to OpenCode and back
 
-As of 0.0.240 (tested OpenCode: 2.0.18–2.3.0, and 1.18.27–1.19.5).
+As of 0.0.241 (tested OpenCode: 2.0.18–2.3.0, and 1.18.27–1.19.5).
 
 > **One-line truth** (´-ω-)
 > Copilot only routes a prompt, attachments and turn history to the `@opencode`
 > participant, in a Local chat session. OpenCode then does **all** the work with
 > its **own** tools. No tool bridge in either direction. Copilot's model picker
-> is ignored.
+> is ignored. The other way in, for a harness with no participants: Copilot's own
+> agent calls OpenCode as an MCP tool (page 8, alpha).
 
 ## Pages
 
@@ -19,7 +20,7 @@ As of 0.0.240 (tested OpenCode: 2.0.18–2.3.0, and 1.18.27–1.19.5).
 | 5 | [APIs touched](05-apis.md) | VS Code APIs, OpenCode CLI/HTTP/SSE (both majors), git, env |
 | 6 | [Trust, pros and cons](06-trust-and-tradeoffs.md) | Risks, strengths, next steps |
 | 7 | [Lanes, chips, effort, context](07-lanes-chips-effort.md) | What the next turn costs: fan-out, chips, variants, compaction |
-| 8 | [OpenCode 2 and the Copilot harness](08-opencode2-and-harness.md) | Which major runs, what differs, where `@opencode` can answer |
+| 8 | [OpenCode 2 and the Copilot harness](08-opencode2-and-harness.md) | Which major runs, what differs, where `@opencode` can answer, OpenCode as MCP tools |
 
 Not a flow page: [../local-agent.md](../local-agent.md) holds the steps for a
 coding agent on the owner's machine (release, and the two route measurements

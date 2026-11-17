@@ -1785,7 +1785,7 @@ function collectConfigProperties(configuration) {
     // server, an Agent Host) live. The closure is read from the source, so a new
     // import pulls its module in. Red first: 11 of 15 modules failed to load.
     const enModules = new Set();
-    for (const queue = ["run-cli", "run-server", "server-session", "asks", "agents", "worktree"]; queue.length;) {
+    for (const queue = ["run-cli", "run-server", "server-session", "asks", "agents", "worktree", "oc-mcp-server"]; queue.length;) {
         const m = queue.pop();
         if (!enModules.has(m) && lyImports[m]) {
             enModules.add(m);
@@ -9525,6 +9525,214 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         vscodeStub.env.clipboard.writeText = oldClip210;
         Object.assign(vscodeStub.workspace, { isTrusted: saved210.trusted, workspaceFolders: saved210.folders });
         fs.rmSync(gsRoot, { recursive: true, force: true });
+    }
+
+    // MP (0.0.241): OpenCode as MCP tools for a client with no chat participants
+    // (the Copilot harness). The server is the engine in a process of its own, so
+    // every check drives it over stdio, as a client does, against the fake
+    // OpenCode 2; what it sent is read from the fake's record. The real-binary
+    // rows are scripts/probe-mcp.js.
+    {
+        const { startMcp } = require("./fixtures/mcp-client");
+        const mpVersion = JSON.parse(fs.readFileSync(path.join(repoDir, "package.json"), "utf8")).version;
+        const mpServer = path.join(repoDir, "out", "oc-mcp-server.js");
+        const mpFake = writeFake("fake-mp2.js", [], `if (!process.argv.includes('--version') || true) require(${JSON.stringify(path.join(__dirname, "fixtures", "fake-opencode2.js"))})(process.argv);\n`);
+        // A folder with a space in its name, by the path the server will name: `.native`
+        // expands Windows' short names (RUNNER~1), which the plain call leaves.
+        const mpProject = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "ocb-mp project-")));
+        const mpSettings = path.join(work, "mp-settings.json");
+        // A fixed port is another process's server: this one must start its own.
+        fs.writeFileSync(mpSettings, JSON.stringify({ settings: { executable: mpFake, opencode2: true, serverStartupPollMs: 50, serverPort: 4999 } }));
+        const mpStart = (name, extra, env = {}, mode = "legacy") => {
+            const record = path.join(work, `mp-${name}.jsonl`);
+            const log = path.join(work, `mp-${name}.log`);
+            fs.rmSync(record, { force: true });
+            fs.rmSync(log, { force: true });
+            const cleanEnv = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("FAKE_OC2_") && k !== "OPENCODE_CONFIG_CONTENT"));
+            const client = startMcp(mpServer, ["--settings", mpSettings, "--log", log, ...extra], { env: { ...cleanEnv, FAKE_OC2_RECORD: record, FAKE_OC2_VERSION: "2.3.0", ...env }, cwd: mpProject, mode });
+            return Object.assign(client, {
+                reqs: () => (fs.existsSync(record) ? fs.readFileSync(record, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)) : []),
+                log: () => (fs.existsSync(log) ? fs.readFileSync(log, "utf8") : ""),
+                posts: (tail) => client.reqs().filter((r) => r.method === "POST" && new RegExp(`^/api/session/[^/]+/${tail}$`).test(r.path ?? "")),
+                finished: async (r) => (r.facts.status === "running" ? client.call("opencode_wait", { jobId: r.facts.jobId, seconds: 30 }) : r)
+            });
+        };
+        const mpPause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+        const mpUntil = async (test, ms) => {
+            for (const end = Date.now() + ms; Date.now() < end;) {
+                if (await test()) return true;
+                await mpPause(50);
+            }
+            return false;
+        };
+        const mpHello = (r) => r.text.startsWith("Hello from the scripted model.") && r.facts.status === "done" && !r.isError;
+
+        // --- A: as the copied config starts it (read-only tools), a short wait ---
+        const mpA = mpStart("a", ["--wait-ms", "400"]);
+        const mpInit = await mpA.initialize();
+        add(`MP initialize answers the version asked and names this build (${mpInit.result?.serverInfo?.version} vs ${mpVersion})`,
+            mpInit.result?.protocolVersion === "2025-11-25" && mpInit.result?.serverInfo?.version === mpVersion && mpInit.result?.capabilities?.tools && !("resultType" in mpInit.result));
+        const mpTools = (await mpA.request("tools/list")).result?.tools ?? [];
+        add(`MP without --dev the tools are ask, wait and cancel (${mpTools.map((t) => t.name).join(", ")})`,
+            mpTools.map((t) => t.name).join(",") === "opencode_ask,opencode_wait,opencode_cancel" && mpTools[0].annotations.readOnlyHint === true && mpTools[0].inputSchema.required.join() === "prompt");
+        const mpFirst = await mpA.call("opencode_ask", { prompt: "explain the cart [[probe:text]]", folder: mpProject });
+        // The first run boots the server and waits for the agent list to settle: longer than 400 ms.
+        add(`MP a run longer than one call's wait hands back a job (${mpFirst.facts.status})`, mpFirst.facts.status === "running" && /^job_[0-9a-f]+$/.test(mpFirst.facts.jobId ?? "") && /opencode_wait/.test(mpFirst.text) && !mpFirst.isError);
+        const mpAnswer = await mpA.finished(mpFirst);
+        const mpSession = mpAnswer.facts.sessionId;
+        add(`MP opencode_wait returns the answer, the session and the verified read-only rules${mpHello(mpAnswer) ? "" : ` [${mpAnswer.text.slice(0, 200)}]`}`,
+            mpHello(mpAnswer) && Boolean(mpSession) && mpAnswer.facts.readOnly === "enforced" && mpAnswer.facts.folder === mpProject && mpAnswer.facts.jobId === mpFirst.facts.jobId);
+        const mpAgentPosts = mpA.posts("agent");
+        add("MP the ask reached OpenCode as the plan agent, on a server this process started itself",
+            mpAgentPosts.length === 1 && mpAgentPosts[0].body?.agent === "plan" && mpA.posts("prompt").length === 1 && /serve --port (?!4999)\d+/.test(mpA.log()) && mpA.reqs().some((r) => r.boot));
+        const mpNext = await mpA.finished(await mpA.call("opencode_ask", { prompt: "and the checkout [[probe:text]]", sessionId: mpSession }));
+        const mpPrompts = mpA.posts("prompt");
+        add("MP a sessionId continues that session; the folder defaults to where the server runs",
+            mpHello(mpNext) && mpNext.facts.sessionId === mpSession && mpPrompts.length === 2 && mpPrompts.every((r) => r.path.includes(mpSession)) && mpNext.facts.folder === mpProject);
+        // A run that streams until it is interrupted: the fake's `slow` turn.
+        const mpSlow = await mpA.call("opencode_ask", { prompt: "stream [[probe:slow]]", sessionId: mpSession });
+        const mpBusy = await mpA.call("opencode_ask", { prompt: "another [[probe:text]]", sessionId: mpSession });
+        add("MP a prompt to a session whose run is still going is refused, not queued", mpSlow.facts.status === "running" && mpBusy.isError && mpBusy.text.includes(mpSlow.facts.jobId) && mpA.posts("prompt").length === 3);
+        const mpStopped = await mpA.call("opencode_cancel", { jobId: mpSlow.facts.jobId });
+        add(`MP opencode_cancel stops the run in OpenCode (${mpStopped.facts.status}, ${mpA.posts("interrupt").length} interrupt)`, mpStopped.facts.status === "cancelled" && mpA.posts("interrupt").some((r) => r.path.includes(mpSession)));
+        const mpAfter = await mpA.finished(await mpA.call("opencode_ask", { prompt: "after the stop [[probe:text]]", sessionId: mpSession }));
+        add(`MP the next prompt to a stopped session gets its own answer, not the stopped run's end${mpHello(mpAfter) ? "" : ` [${mpAfter.facts.status}: ${mpAfter.text.slice(0, 120)}]`}`, mpHello(mpAfter));
+        const mpInterrupts = mpA.posts("interrupt").length;
+        const mpPending = mpA.call("opencode_ask", { prompt: "stream again [[probe:slow]]", sessionId: mpSession }, { timeoutMs: 1500 });
+        await mpPause(150);
+        mpA.notify("notifications/cancelled", { requestId: mpPending.id, reason: "check" });
+        const mpCancelled = await mpPending;
+        add("MP the client's own cancel stops the run, and the cancelled request gets no response",
+            mpCancelled.timedOut && mpA.posts("interrupt").length > mpInterrupts && /stopped: the client cancelled the call/.test(mpA.log()) && !mpA.frames.some((f) => f.id === mpPending.id));
+        const mpSent = mpA.posts("prompt").length;
+        const mpRefusals = [];
+        for (const [what, args] of [
+            ["a relative folder", { prompt: "x", folder: "src" }],
+            ["a folder that is not there", { prompt: "x", folder: path.join(mpProject, "nope") }],
+            ["the home folder", { prompt: "x", folder: os.homedir() }],
+            ["an argument it does not have", { prompt: "x", folder: mpProject, cwd: mpProject }],
+            ["a session id that is a path", { prompt: "x", folder: mpProject, sessionId: "../../global/health" }],
+            ["no prompt", { folder: mpProject }]
+        ]) {
+            const r = await mpA.call("opencode_ask", args);
+            if (!r.isError || r.error) mpRefusals.push(what);
+        }
+        add(`MP a call it cannot run says why as a tool result, and sends nothing${mpRefusals.length ? ` (ran: ${mpRefusals.join(", ")})` : ""}`, mpRefusals.length === 0 && mpA.posts("prompt").length === mpSent);
+        const mpNoDev = await mpA.call("opencode_dev", { prompt: "edit [[probe:text]]", folder: mpProject });
+        add("MP opencode_dev does not exist without --dev", mpNoDev.error?.code === -32602 && mpA.posts("prompt").length === mpSent);
+        const mpPort = Number((mpA.log().match(/serve --port (\d+)/) || [])[1]);
+        const mpAnswers = async () => {
+            try {
+                await fetch(`http://127.0.0.1:${mpPort}/`, { signal: AbortSignal.timeout(1000) });
+                return true;
+            } catch {
+                return false;
+            }
+        };
+        const mpUp = await mpAnswers();
+        const mpExit = await mpA.close();
+        const mpGone = await mpUntil(async () => !(await mpAnswers()), 8000);
+        add(`MP closing stdin ends the server and the OpenCode it started (exit ${JSON.stringify(mpExit)})`, mpUp && mpExit?.code === 0 && mpGone);
+
+        // --- B: --dev, 2026-07-28 framing ---
+        const mpB = mpStart("b", ["--dev", "--wait-ms", "5000"], {}, "modern");
+        const mpFound = await mpB.request("server/discover");
+        const mpList = await mpB.request("tools/list");
+        add("MP 2026-07-28: server/discover and results carry resultType, the versions and the server's name",
+            mpFound.result?.resultType === "complete" && mpFound.result?.supportedVersions?.[0] === "2026-07-28" && mpFound.result?._meta?.["io.modelcontextprotocol/serverInfo"]?.version === mpVersion &&
+            mpList.result?.resultType === "complete" && typeof mpList.result?.ttlMs === "number" && mpList.result?.cacheScope === "private");
+        const mpDevTool = (mpList.result?.tools ?? []).find((t) => t.name === "opencode_dev");
+        add("MP with --dev, opencode_dev is listed as destructive", mpList.result?.tools?.length === 4 && mpDevTool?.annotations?.destructiveHint === true && mpDevTool?.annotations?.readOnlyHint === false);
+        const mpWrong = await mpB.request("tools/list", undefined, { meta: { "io.modelcontextprotocol/protocolVersion": "2099-01-01" } });
+        add(`MP a version it does not speak is refused with the spec's code (${mpWrong.error?.code})`, mpWrong.error?.code === -32022 && mpWrong.error?.data?.supported?.includes("2026-07-28"));
+        // Stop while the first run is still before its prompt (server boot, the agent list
+        // settling): 0.0.240's engine posted the prompt after it, and the rejection nobody
+        // awaited ended this process.
+        const mpEarly = mpB.call("opencode_ask", { prompt: "stopped early [[probe:text]]", folder: mpProject }, { timeoutMs: 15000 });
+        // Once the server answers, the run reads the agent list until it holds (a second): Stop lands there.
+        const mpBooted = await mpUntil(() => /serve on \S+ answered/.test(mpB.log()), 12000);
+        await mpPause(200);
+        mpB.notify("notifications/cancelled", { requestId: mpEarly.id, reason: "check" });
+        await mpUntil(() => /job job_[0-9a-f]+ (cancelled|done|failed|not run)/.test(mpB.log()), 12000);
+        await mpPause(300);
+        const mpAlive = await mpB.request("tools/list", undefined, { timeoutMs: 3000 });
+        add(`MP a Stop before the prompt was sent sends none, and the server lives (${mpB.posts("prompt").length} prompt, booted: ${mpBooted})`,
+            mpBooted && /→ server \S+\/message/.test(mpB.log()) && mpB.posts("prompt").length === 0 && mpAlive.result?.tools?.length === 4 && !/unhandled rejection|uncaught exception/.test(mpB.log()));
+        const mpDev = await mpB.finished(await mpB.call("opencode_dev", { prompt: "change the cart [[probe:text]]", folder: mpProject }));
+        add(`MP opencode_dev runs the dev agent, without the read-only facts${mpHello(mpDev) ? "" : ` [${mpDev.text.slice(0, 160)}]`}`,
+            mpHello(mpDev) && mpDev.facts.agent === "build" && mpDev.facts.readOnly === undefined && mpB.posts("agent").some((r) => r.body?.agent === "build"));
+        await mpB.close();
+
+        // The engine's waits register their Stop listener when they start, which can be
+        // after Stop: VS Code's token still calls it, and so must this server's (OpenCode
+        // 1's prompt request is only ended that way). Loading the module starts nothing.
+        const mpSource = require(mpServer).cancelSource();
+        const mpHeard = [];
+        mpSource.token.onCancellationRequested(() => mpHeard.push("before"));
+        mpSource.cancel();
+        mpSource.cancel();
+        const mpLate = mpSource.token.onCancellationRequested(() => mpHeard.push("after"));
+        mpSource.token.onCancellationRequested(() => mpHeard.push("disposed")).dispose();
+        const mpAtOnce = mpHeard.join();
+        await mpPause(20);
+        mpLate.dispose();
+        add(`MP a Stop listener added after Stop is still called, on the next tick (${mpHeard.join()})`, mpSource.token.isCancellationRequested && mpAtOnce === "before" && mpHeard.join() === "before,after");
+
+        // --- C: an OpenCode 2 that does not apply the bridge's rules ---
+        const mpC = mpStart("c", ["--wait-ms", "8000"], { FAKE_OC2_DROP: "1" });
+        await mpC.initialize();
+        const mpUnverified = await mpC.finished(await mpC.call("opencode_ask", { prompt: "explain [[probe:text]]", folder: mpProject }));
+        add(`MP read-only that cannot be verified is not sent: an error result, no prompt${mpUnverified.isError ? "" : ` [${mpUnverified.text.slice(0, 160)}]`}`,
+            mpUnverified.isError && /Nothing was sent/.test(mpUnverified.text) && mpUnverified.facts.status === "refused" && mpC.reqs().some((r) => r.boot) && mpC.posts("prompt").length === 0);
+        await mpC.close();
+
+        // --- the extension's side: the copy, the settings, the entry ---
+        let mpSnippet;
+        const mpClip = vscodeStub.env.clipboard.writeText;
+        vscodeStub.env.clipboard.writeText = async (text) => void (mpSnippet = JSON.parse(text));
+        await registeredCommands.get("opencodeCopilotBridge.copilotMcpConfig")();
+        const mpEntry = mpSnippet?.mcpServers?.opencode ?? {};
+        const mpDir = path.join(work, "global-storage", "oc-mcp");
+        add("MP the copied entry starts the server from global storage, with its settings and log beside it",
+            mpEntry.type === "stdio" && (mpEntry.command === "node" || (mpEntry.command === process.execPath && mpEntry.env?.ELECTRON_RUN_AS_NODE === "1")) &&
+            mpEntry.args?.join("|") === [path.join(mpDir, "oc-mcp-server.js"), "--settings", path.join(mpDir, "engine-settings.json"), "--log", path.join(mpDir, "oc-mcp.log")].join("|") &&
+            !mpEntry.args.includes("--dev") && fs.readFileSync(path.join(mpDir, "version"), "utf8").startsWith(`${mpVersion} `));
+        const mpCopy = startMcp(mpEntry.args[0], mpEntry.args.slice(1), { cwd: mpProject });
+        const mpCopyInit = await mpCopy.initialize();
+        const mpCopyExit = await mpCopy.close();
+        add("MP the copy runs on its own: every module it needs was copied", mpCopyInit.result?.serverInfo?.version === mpVersion && mpCopyExit?.code === 0);
+        // The server is one per machine: what a workspace sets must not reach it.
+        const mpConfig = vscodeStub.workspace.getConfiguration;
+        const mpUser = { executable: "user-opencode", model: "probe/user" };
+        const mpWorkspace = { executable: "workspace-opencode", devAgent: "workspace-agent", enforceReadOnly: false };
+        vscodeStub.workspace.getConfiguration = () => ({
+            get: (key, def) => mpWorkspace[key] ?? mpUser[key] ?? def,
+            inspect: (key) => ({ key, globalValue: mpUser[key], workspaceValue: mpWorkspace[key] }),
+            update: async () => { }
+        });
+        await registeredCommands.get("opencodeCopilotBridge.copilotMcpConfig")();
+        const mpWritten = JSON.parse(fs.readFileSync(path.join(mpDir, "engine-settings.json"), "utf8"));
+        vscodeStub.workspace.getConfiguration = mpConfig;
+        vscodeStub.env.clipboard.writeText = mpClip;
+        add(`MP the settings file holds the user's own values, never a workspace's (${JSON.stringify(mpWritten.settings)})`,
+            mpWritten.version === mpVersion && JSON.stringify(mpWritten.settings) === JSON.stringify(mpUser));
+        const mpConfigFile = path.join(work, "mp-copilot-config.json");
+        const mpNone = ext.__test.copilotConfigNote(mpConfigFile);
+        fs.writeFileSync(mpConfigFile, JSON.stringify({ mcpServers: { other: { command: "node", args: ["x.js"] } } }));
+        const mpOther = ext.__test.copilotConfigNote(mpConfigFile);
+        fs.writeFileSync(mpConfigFile, JSON.stringify(mpSnippet, null, 4));
+        const mpNamed = ext.__test.copilotConfigNote(mpConfigFile);
+        let mpDoc = "";
+        const mpShow = vscodeStub.window.showTextDocument;
+        Object.assign(vscodeStub.workspace, { openTextDocument: async (o) => ((mpDoc = o.content), {}) });
+        vscodeStub.window.showTextDocument = async () => undefined;
+        await registeredCommands.get("opencodeCopilotBridge.diagnose")();
+        delete vscodeStub.workspace.openTextDocument;
+        vscodeStub.window.showTextDocument = mpShow;
+        add("MP Diagnose's row tells a config that names the server from one that does not, or is not there",
+            /no `.*mp-copilot-config\.json`/.test(mpNone) && /does not name it/.test(mpOther) && /names it$/.test(mpNamed) && mpNamed.includes(`server ${mpVersion} in`) &&
+            mpDoc.includes(`| copilot harness tools | server ${mpVersion} in`));
+        fs.rmSync(mpProject, { recursive: true, force: true });
     }
 
     // 0.0.231 HR: VS Code's Copilot harness has no chat participants (1.142+, the

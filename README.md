@@ -47,8 +47,8 @@ administrator can switch that off.
 
 **Local has an end date.** VS Code's documentation says the Local harness "will
 be removed in February 2027" (1.146 release notes, November 2026). `@opencode`
-is a chat participant, so after that it has nowhere to answer; what replaces it
-is not built yet.
+is a chat participant, so after that it has nowhere to answer. What replaces it
+is in alpha: OpenCode as MCP tools the Copilot harness calls (next section).
 
 **OpenCode: Diagnose** shows whether `@opencode` is registered and what those
 two settings are, and the OpenCode log names them at activation. A VS Code
@@ -57,6 +57,54 @@ one warning that `@opencode` cannot run. With `chat.editor.localAgent.enabled`
 off, VS Code offers no Local session: the extension says so once, outside chat
 (Send stays disabled for `@opencode`, so no reply of ours could), with a button
 to the setting.
+
+### OpenCode in the Copilot harness: MCP tools (alpha)  <!-- claim:mcp-tools -->
+
+The Copilot harness has no `@opencode`, but it calls MCP (Model Context Protocol)
+tools. From 0.0.241 the bridge ships OpenCode as an MCP server of its own: Copilot's
+agent hands a task to OpenCode and gets its answer back. It is the same engine
+that runs `@opencode`, in a process outside VS Code.
+
+**Status: alpha.** Measured against real OpenCode 1.19.5 and 2.3.0 with an MCP client
+of the bridge's own (`scripts/probe-mcp.js`, 19 rows each). **Not yet run inside a
+Copilot-harness chat**: whether the harness offers the tools, asks before running
+`opencode_dev`, and how long it lets one call run is still to be measured.
+
+**Set it up.** The harness does not get an extension's MCP servers; it reads your own
+`~/.copilot/mcp-config.json`. Run **OpenCode: Copy MCP Config for Copilot**, merge
+the `mcpServers.opencode` entry it copies into that file, and start a new chat. The
+entry starts a copy of the server kept in the extension's global storage, so an
+update does not move it. It runs as `node` from PATH (measured on Node 22 and 24); without one
+the entry uses VS Code's own runtime.
+
+| Tool | What it does |
+| --- | --- |
+| `opencode_ask` | Research, review or plan, read-only: the plan agent (or `planAgent`) under the same enforced rules as an `@opencode` turn. A turn whose rules cannot be verified is not sent. |
+| `opencode_dev` | Make a change with `devAgent`: edits files and runs commands. **Only with `"--dev"` added to the entry's `args`**; marked destructive, so a client can ask first. |
+| `opencode_wait` | The answer of a run that was still going when its call returned. |
+| `opencode_cancel` | Stop a run. |
+
+- **Arguments:** `prompt`; `folder` (absolute path; default: where the client started
+  the server); `sessionId` (from an earlier result, to continue that conversation);
+  `model` (`provider/model`).
+- **A long run does not hold the call.** After 100 s a call returns `status=running`
+  and a `jobId`, and `opencode_wait` collects the answer. `"--wait-ms", "<n>"` in
+  `args` changes that limit.
+- **Folders.** Any project folder a call names is accepted, except your home folder
+  and a drive's root. To limit the server to some folders, add
+  `"--folder", "<path>"` (repeatable) to `args`.
+- **Settings.** The server reads the bridge's settings as you set them in **User**
+  settings; a workspace's values never reach it. It always starts an OpenCode
+  server of its own, and stops it when the client closes it.
+- **Cost.** Copilot's model reads the prompt and the answer; OpenCode's model does
+  the work. Two models are paid for a delegated task.
+- **Not there yet:** `effort`, `/worktree`, `/parallel`, streaming into the chat.
+
+To check it: **OpenCode: Diagnose** has the row `copilot harness tools` (where the
+copy is, and whether your config names it); `node <path>/oc-mcp-server.js --settings
+<path>/engine-settings.json --selftest` prints what the server would run with,
+without sending a prompt; and `oc-mcp.log` beside it records every request the
+client sent, with the protocol version it named.
 
 ### Inline chat (Ctrl+I)  <!-- claim:inline-participant -->
 
@@ -524,6 +572,7 @@ still decide whether it may call the tool (the sample `look` agent denies MCP).
 | Ask in Chat (hidden from the palette since 0.0.190; kept for keybindings) | `retryLast` |
 | **OpenCode: Refresh Model Catalog** | `refreshModels` |
 | **OpenCode: gitScan config for opencode.json** | `gitScanConfig` |
+| **OpenCode: Copy MCP Config for Copilot** — the `mcpServers.opencode` entry for `~/.copilot/mcp-config.json` (see *OpenCode in the Copilot harness*) | `copilotMcpConfig` |
 | **OpenCode: Worktrees** — the worktrees `/worktree` made here: show changes, open, remove; **Remove all without changes** (also in Quick Actions) | `worktrees` |
 | **Show Worktree Diff** (button under a `/worktree` reply) — VS Code's multi-file diff against the worktree's base | `worktreeDiff` |
 | **Open Worktree in New Window** (button) | `worktreeOpen` |
@@ -588,6 +637,17 @@ All under `opencodeCopilotBridge.`.
 
 The last five releases; the full history is `CHANGELOG.md` in the repository.
 
+### 0.0.241
+
+- **New, alpha: OpenCode as MCP tools for the Copilot harness.** `opencode_ask`
+  (read-only, the same enforced rules), `opencode_dev` (opt-in), `opencode_wait`
+  and `opencode_cancel`, from a server that runs outside VS Code. **OpenCode: Copy
+  MCP Config for Copilot** gives the entry for `~/.copilot/mcp-config.json`.
+  Measured on real OpenCode 1.19.5 and 2.3.0; not yet in a Copilot-harness chat.
+  Checks `MP`.
+- **Fixed, OpenCode 2: Stop in a turn's first second sent the prompt anyway**, then
+  interrupted it. Nothing is sent now.
+
 ### 0.0.240
 
 - **OpenCode 2.3.0 is tested.** The newest release (2026-11-13) passes every
@@ -621,9 +681,3 @@ The last five releases; the full history is `CHANGELOG.md` in the repository.
 - **OpenCode 2: `effort:` works with no model pinned.** The level was dropped
   without a word, and the turn ran at the model's default. It now reaches the run
   and lasts that turn only. Checks `TW`.
-
-### 0.0.236
-
-- **`/worktree` reads a file attached through a symlinked path.** A checkout
-  reached through a link (on macOS, `/var` is one) made an attached file look
-  outside the repo, so the run never got it. Checks `WT11`, `WT18`.
