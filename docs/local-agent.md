@@ -117,7 +117,7 @@ OpenCode 1"; report that instead of changing it.
 3. Reload the window and at once send, in a Local chat,
    `@opencode explain what src/core.ts does`. It must answer, not say "Nothing
    was sent". This is the first-turn check: it only tests the fix on an
-   OpenCode that lists agents in stages (2.0, 2.1, 2.2.7, 2.3.0), so report
+   OpenCode that lists agents in stages (2.0, 2.1, 2.2.7, 2.3.x), so report
    the version with the result.
 4. The release's quick pass in `docs/manual-checks.md`, if the owner wants it.
 
@@ -130,8 +130,8 @@ node scripts/probe-readonly.js opencode
 ```
 
 Paste every `ok` and `FAIL` line and the `ROWS` summary. Change nothing if a
-row fails. For comparison, on Linux at 0.0.239 the first probe
-prints `ALL 26 ROWS AS EXPECTED` on 2.0.29, 2.2.5, 2.2.6, 2.2.7 and 2.3.0; the
+row fails. For comparison, on Linux at 0.0.242 the first probe
+prints `ALL 30 ROWS AS EXPECTED` on 2.2.7, 2.3.0 and 2.3.2 (26 rows on 2.0.29 to 2.2.6 at 0.0.239); the
 only earlier Windows run (0.0.236, 2.2.5) was 21 of 22 (REFS).
 
 Finish with a short table: step, result, anything the owner has to decide.

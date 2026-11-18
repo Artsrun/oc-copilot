@@ -6605,15 +6605,19 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         // 0.0.232: 1.19.5 measured (probe-readonly 48 rows, wire 0 differences from 1.19.0; REFS).
         v5.version = "1.19.5";
         const vn195 = await v5Turn("explain the cart for vn 1.19.5");
+        // 0.0.242: 1.19.6 measured (probe-readonly 48 rows, probe-mcp 19, wire shapes as 1.19.0's).
         v5.version = "1.19.6";
+        const vn196 = await v5Turn("explain the cart for vn 1.19.6");
+        v5.version = "1.19.7";
         const vn1 = await v5Turn("explain the cart for vn new");
         const vn2 = await v5Turn("explain the cart for vn again");
         v5.version = undefined;
         add("VN a version inside the tested range says nothing", !/outside the versions/.test(vn0.md));
         add("VN 1.18.35 says nothing", !/outside the versions/.test(vn35.md) && /answered by/.test(vn35.md));
         add("VN 1.19.0 says nothing", !/outside the versions/.test(vn190.md) && /answered by/.test(vn190.md));
-        add("VN 1.19.5, the newest measured, says nothing", !/outside the versions/.test(vn195.md) && /answered by/.test(vn195.md));
-        add("VN …one outside it says so once per window, and the turn runs", /OpenCode 1\.19\.6 is outside the versions this bridge was tested with \(1\.18\.27–1\.19\.5\)/.test(vn1.md) && /answered by/.test(vn1.md) && !/outside the versions/.test(vn2.md));
+        add("VN 1.19.5 says nothing", !/outside the versions/.test(vn195.md) && /answered by/.test(vn195.md));
+        add("VN 1.19.6, the newest measured, says nothing", !/outside the versions/.test(vn196.md) && /answered by/.test(vn196.md));
+        add("VN …one outside it says so once per window, and the turn runs", /OpenCode 1\.19\.7 is outside the versions this bridge was tested with \(1\.18\.27–1\.19\.6\)/.test(vn1.md) && /answered by/.test(vn1.md) && !/outside the versions/.test(vn2.md));
 
 
         // demux hands unattributed events to every subscriber, and v184 counted
@@ -8689,8 +8693,8 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
             const tw7 = stream();
             await global.__handler({ prompt: "explain the cart on three [[probe:text]]" }, { history: [] }, tw7.response, tw7.token);
             const tw7Chat = plain(tw7.chatMarkdown.join(""));
-            add(`TW a 3.x with opencode2 runs on the 2.x adapter and says it is outside the tested 2.0.18–2.3.0${/Hello from the scripted model/.test(tw7Chat) ? "" : ` [chat: ${tw7Chat.slice(0, 400)}]`}`,
-                /Hello from the scripted model\./.test(tw7Chat) && /3\.0\.0 is outside the versions this bridge was tested with \(2\.0\.18–2\.3\.0\)/.test(tw7Chat));
+            add(`TW a 3.x with opencode2 runs on the 2.x adapter and says it is outside the tested 2.0.18–2.3.2${/Hello from the scripted model/.test(tw7Chat) ? "" : ` [chat: ${tw7Chat.slice(0, 400)}]`}`,
+                /Hello from the scripted model\./.test(tw7Chat) && /3\.0\.0 is outside the versions this bridge was tested with \(2\.0\.18–2\.3\.2\)/.test(tw7Chat));
             add("TW …its own `--version` was read (3.0.0), not a cached 2.x identity",
                 logLines.slice(tw7Log).some((l) => /fake-tw3\.js --version/.test(l)) && logLines.slice(tw7Log).some((l) => /CLI identity verified/.test(l)));
             ext.deactivate();
@@ -8761,6 +8765,18 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
             add(`TW 2.3.0 runs inside the tested range: sent, and no turn of the run said it is outside${tw230Outside ? ` (${tw230Outside} said so)` : ""}${/Hello from the scripted model/.test(tw230Chat) ? "" : ` [chat: ${tw230Chat.slice(0, 200)}]`}`,
                 /Hello from the scripted model\./.test(tw230Chat) && !/Nothing was sent/.test(tw230Chat) && tw230Outside === 0);
             ext.deactivate();
+            // 0.0.242: 2.3.2 (the latest, 2026-11-18): probe-opencode2 30 of 30, ACP 9, MCP 19, data
+            // folder 11, wire shapes as 2.3.0's; stages as 2.3.0 does. Red first on 0.0.241's range.
+            process.env.FAKE_OC2_VERSION = "2.3.2";
+            settings.executable = writeFake("fake-tw232.js", [], `if (!process.argv.includes('--version') || true) require(${JSON.stringify(path.join(__dirname, "fixtures", "fake-opencode2.js"))})(process.argv);\n`);
+            fs.rmSync(twRecord, { force: true });
+            const tw232 = stream();
+            await global.__handler({ prompt: "explain the cart on 2.3.2 [[probe:text]]" }, { history: [] }, tw232.response, tw232.token);
+            const tw232Chat = plain(tw232.chatMarkdown.join(""));
+            const tw232Outside = logLines.filter((l) => /OpenCode 2\.3\.2 on \S+ is outside the tested/.test(l)).length;
+            add(`TW 2.3.2 runs inside the tested range: sent, and nothing said it is outside${tw232Outside ? ` (${tw232Outside} said so)` : ""}${/Hello from the scripted model/.test(tw232Chat) ? "" : ` [chat: ${tw232Chat.slice(0, 200)}]`}`,
+                /Hello from the scripted model\./.test(tw232Chat) && !/Nothing was sent/.test(tw232Chat) && !/outside the versions/.test(tw232Chat) && tw232Outside === 0);
+            ext.deactivate();
             process.env.FAKE_OC2_VERSION = "3.0.0";
             settings.executable = writeFake("fake-tw3.js", [], `if (!process.argv.includes('--version') || true) require(${JSON.stringify(path.join(__dirname, "fixtures", "fake-opencode2.js"))})(process.argv);\n`);
             settings.opencode2 = false;
@@ -8772,30 +8788,27 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
             settings.opencode2 = true;
             settings.executable = twFake;
 
-            // 0.0.223: OpenCode 2 ignores 1.x's agent.<n>.permission in opencode.json (2.0.29, measured): said once.
-            // 0.0.225: an empty global config dir — a developer's own global
-            // opencode.json with agent permissions was named first and broke the match.
+            // 0.0.242: OpenCode 2 APPLIES opencode.json's `permission` and `agent.<n>.permission`
+            // (2.0.29, 2.2.5, 2.2.7, 2.3.0, 2.3.2: settled `GET /api/agent`, and a subagent's shell
+            // deny held in a real turn). 0.0.223 read the agent list's stock stage and warned on
+            // every 2.x turn of such a folder. Red first: the old notice named both files below.
+            // An empty global config dir: a developer's own global opencode.json stays out of it.
             const twGlobal = fs.mkdtempSync(path.join(os.tmpdir(), "ocb-twglobal-"));
             const twGlobalSaved = process.env.OPENCODE_CONFIG_DIR;
             process.env.OPENCODE_CONFIG_DIR = twGlobal;
             const twCfg = path.join(work, "opencode.json");
             const twCfgHad = fs.existsSync(twCfg) ? fs.readFileSync(twCfg) : undefined;
             fs.writeFileSync(twCfg, JSON.stringify({ agent: { plan: { permission: { "*": "deny", read: "allow" } } } }));
-            const tw9 = stream();
-            await global.__handler({ prompt: "explain the cart with old rules [[probe:text]]" }, { history: [] }, tw9.response, tw9.token);
-            const tw10 = stream();
-            await global.__handler({ prompt: "and again with old rules [[probe:text]]" }, { history: [] }, tw10.response, tw10.token);
-            add("TW on OpenCode 2, 1.x agent permission rules in opencode.json are named once",
-                /ignores the 1\.x permission rules in .?opencode\.json \(plan\)/.test(plain(tw9.chatMarkdown.join(""))) && !/ignores the 1\.x permission rules/.test(plain(tw10.chatMarkdown.join(""))));
-            // 0.0.225: keyed by folder AND finding (CHANGELOG 0.0.223), so a file added later is named.
             const twDotDir = path.join(work, ".opencode");
             const twDotHad = fs.existsSync(twDotDir);
             fs.mkdirSync(twDotDir, { recursive: true });
             fs.writeFileSync(path.join(twDotDir, "opencode.json"), JSON.stringify({ agent: { build: { permission: { bash: "ask" } } } }));
-            const tw11 = stream();
-            await global.__handler({ prompt: "and with one more rules file [[probe:text]]" }, { history: [] }, tw11.response, tw11.token);
-            add("TW …and a rules file added later is named on the next turn",
-                /ignores the 1\.x permission rules in .*\.opencode\/opencode\.json \(build\)/.test(plain(tw11.chatMarkdown.join(""))));
+            const twLogFrom = logLines.length;
+            const tw9 = stream();
+            await global.__handler({ prompt: "explain the cart with agent rules [[probe:text]]" }, { history: [] }, tw9.response, tw9.token);
+            const tw9Chat = plain(tw9.chatMarkdown.join(""));
+            add(`TW on OpenCode 2, agent permission rules in opencode.json are not called ignored: the turn ran and nothing said so${/Hello from the scripted model/.test(tw9Chat) ? "" : ` [chat: ${tw9Chat.slice(0, 200)}]`}`,
+                /Hello from the scripted model\./.test(tw9Chat) && !/ignores/.test(tw9Chat) && !logLines.slice(twLogFrom).some((l) => /ignores 1\.x permission rules/.test(l)));
             if (twDotHad) fs.rmSync(path.join(twDotDir, "opencode.json"), { force: true }); else fs.rmSync(twDotDir, { recursive: true, force: true });
             if (twCfgHad === undefined) fs.rmSync(twCfg, { force: true }); else fs.writeFileSync(twCfg, twCfgHad);
             ext.deactivate();
@@ -9361,8 +9374,13 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         const gsRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ocb-gs-"));
         const gsRepo = path.join(gsRoot, "repo");
         fs.mkdirSync(gsRepo);
+        // 0.0.242: config from the environment (GIT_CONFIG_COUNT/KEY_n/VALUE_n, GIT_CONFIG_PARAMETERS)
+        // outranks the fixture repo's own: an inherited core.fsmonitor=false kept the fsmonitor
+        // control from running (red, reproduced). The fixture's git reads only the repo's config.
+        const gitEnv210 = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^GIT_CONFIG_(?:COUNT|PARAMETERS|KEY_\d+|VALUE_\d+)$/.test(key)));
+        Object.assign(gitEnv210, { GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: process.platform === "win32" ? "NUL" : "/dev/null" });
         const git210 = (cwd, ...args) => {
-            const r = cp210.spawnSync("git", args, { cwd, encoding: "utf8", env: { ...process.env, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: process.platform === "win32" ? "NUL" : "/dev/null" } });
+            const r = cp210.spawnSync("git", args, { cwd, encoding: "utf8", env: gitEnv210 });
             if (r.status !== 0) throw new Error(`GS git ${args.join(" ")}: ${r.stderr}`);
             return r.stdout;
         };

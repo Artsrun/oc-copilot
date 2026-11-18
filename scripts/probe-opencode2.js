@@ -77,8 +77,13 @@ const { runCapture } = out("proc.js");
     // A level the effort rows can ask for (0.0.237): the scripted model ignores what it means.
     const probeConfig = projectConfig(model.url);
     probeConfig.provider.probe.models.scripted.variants = { high: { reasoningEffort: "high" } };
+    // A project's own 1.x-shaped rules (0.0.242): 2.x applies them, which 0.0.223 read as ignored.
     fs.writeFileSync(path.join(project, "opencode.json"), JSON.stringify({
         ...probeConfig,
+        agent: {
+            build: { permission: { bash: { "*": "allow", "echo blocked*": "deny" } } },
+            "probe-sub": { description: "probe subagent, shell denied", mode: "subagent", prompt: "Probe.", permission: { bash: { "*": "deny" } } }
+        },
         mcp: {
             "git-scan": { type: "local", command: [process.execPath, path.join(__dirname, "..", "out", "git-scan-server.js"), project], enabled: true },
             w: { type: "local", command: [process.execPath, writerMcp, mcpTarget], enabled: true }
@@ -183,6 +188,34 @@ const { runCapture } = out("proc.js");
         const f = target(6);
         const r = await turn(`[[probe:write:${f}]] go`, { autoApprove: true });
         return [wrote(f), `steps=${r.steps.join(",") || "-"}`];
+    });
+    // 2.3.0+ runs a subagent in the background: its file can land after the turn (0.0.242).
+    const settled = async (file) => {
+        for (let i = 0; i < 40 && !fs.existsSync(file); i++) await new Promise((r) => setTimeout(r, 250));
+        return wrote(file);
+    };
+    await row("/dev · opencode.json's own rule (agent.build: echo blocked* deny)", "absent", async () => {
+        const f = target(11);
+        const r = await turn(`[[probe:bash:echo blocked > ${f.replace(/\\/g, "/")}]] go`, { autoApprove: true });
+        return [wrote(f), `steps=${r.steps.join(",") || "-"}`];
+    });
+    await row("/dev → probe-sub (opencode.json: bash * deny) · shell echo > file", "absent", async () => {
+        const f = target(12);
+        const r = await turn(`[[probe:task@probe-sub:bash:${echoTo(f)}]] go`, { autoApprove: true });
+        return [await settled(f), `subagents=${r.metrics.subagents?.count ?? 0}`];
+    });
+    await row("control: /dev → general · shell echo > file", "CREATED", async () => {
+        const f = target(13);
+        const r = await turn(`[[probe:task@general:bash:${echoTo(f)}]] go`, { autoApprove: true });
+        return [await settled(f), `subagents=${r.metrics.subagents?.count ?? 0}`];
+    });
+    // 2.2.7 offered `background` and waited by default; 2.3.0 and 2.3.2 return at once with
+    // "working in the background", 2.3.2 without the parameter. The turn ends first (0.0.242).
+    await row("/dev → general · a ~10 s subagent: does the turn wait for it", vMajor === 2 && vMinor < 3 ? "waits" : "returns first", async () => {
+        const t0 = Date.now();
+        const r = await turn("[[probe:task@general:slow]] go", { autoApprove: true });
+        const ms = Date.now() - t0;
+        return [ms < 5000 ? "returns first" : "waits", `${ms} ms · text=${JSON.stringify(r.text.slice(0, 90))}`];
     });
     // A subagent starts and its parent answers. Whether the child's `git status` ran is not
     // measured here: the scripted model says "Done." either way (0.0.232).

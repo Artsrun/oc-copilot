@@ -125,7 +125,7 @@ OS each line ran on.
 2. **Local hidden** (0.0.235): set `chat.editor.localAgent.enabled` to `false`,
    reload: one warning outside chat, with **Open Settings**; another reload does
    not repeat it; Diagnose names it. Set it back: reload, then off again warns again.
-3. **Tested tops** (0.0.232, 0.0.239): on 1.19.5 and on 2.2.7, a turn shows no
+3. **Tested tops** (0.0.232, 0.0.242): on 1.19.6 and on 2.3.2, a turn shows no
    "outside the versions" note.
 4. **First plan turn, 2.0, 2.1 or 2.2.7** (0.0.233, 0.0.239): reload, send a plan
    turn at once: it is sent, not refused as unverified.
@@ -165,11 +165,10 @@ A real VS Code and a real model. Needs a 1.x and a 2.x OpenCode side by side
 7. **2.x everywhere through the server**: `transport: "cli"` → a turn still
    answers, and the log has no `$ … opencode run`. `/sessions` lists this
    window's sessions; Continue binds one; Close hides it from the list.
-8. **Your old rules on 2.x** (0.0.223): with `opencode2` on, add
-   `"agent": { "build": { "permission": { "bash": "ask" } } }` to the repo's
-   `opencode.json` and reload: the first turn says OpenCode 2 ignores the 1.x
-   permission rules in `opencode.json (build)`; the next turn does not repeat it.
-   Remove the key after.
+8. **Your own rules on 2.x** (0.0.242): with `opencode2` on, add
+   `"agent": { "build": { "permission": { "bash": { "*": "allow", "echo blocked*": "deny" } } } }`
+   to the repo's `opencode.json` and reload. `/dev run: echo blocked > b.txt` → no
+   `b.txt`, and no chat line about ignored rules. Remove the key after.
 9. **Back off**: `opencode2` off, reload → item 3 again.
 
 ## 0.0.230 — quick pass (about 5 minutes)

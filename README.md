@@ -65,8 +65,8 @@ tools. From 0.0.241 the bridge ships OpenCode as an MCP server of its own: Copil
 agent hands a task to OpenCode and gets its answer back. It is the same engine
 that runs `@opencode`, in a process outside VS Code.
 
-**Status: alpha.** Measured against real OpenCode 1.19.5 and 2.3.0 with an MCP client
-of the bridge's own (`scripts/probe-mcp.js`, 19 rows each). **Not yet run inside a
+**Status: alpha.** Measured against real OpenCode 1.19.5, 1.19.6, 2.3.0 and 2.3.2 with an
+MCP client of the bridge's own (`scripts/probe-mcp.js`, 19 rows each). **Not yet run inside a
 Copilot-harness chat**: whether the harness offers the tools, asks before running
 `opencode_dev`, and how long it lets one call run is still to be measured.
 
@@ -286,8 +286,9 @@ the chat body.
 OpenCode 2 (`@opencode/cli`, installed as `opencode` too) is a different program,
 with a new server API, permission format and `run` flags. The bridge drives it
 through its HTTP API. An `opencode` that says 1.x runs as it always has. Tested on
-2.0.18 to 2.2.7: every manual check on 2.0.29 and 2.0.32, the probe's rows on 2.0.18,
-2.1.4, 2.2.0, 2.2.5, 2.2.6 and 2.2.7; nightly on 2.0.29, 2.2.5, 2.2.7 and the latest.
+2.0.18 to 2.3.2: every manual check on 2.0.29 and 2.0.32, the probe's rows on 2.0.18,
+2.1.4, 2.2.0, 2.2.5, 2.2.6, 2.2.7, 2.3.0 and 2.3.2; nightly on 2.0.29, 2.2.5, 2.2.7, 2.3.0,
+2.3.2 and the latest.
 
 - **One server, this window's own.** Every turn — plan, `/dev`, lanes,
   `/worktree`, `transport: cli` too — goes through the `opencode serve` the
@@ -309,11 +310,11 @@ through its HTTP API. An `opencode` that says 1.x runs as it always has. Tested 
 - **Not yet:** answering OpenCode's questions.
 - **Close** in `/sessions` archives the session in OpenCode itself from 2.1 on;
   2.0.x has no archive, so there the bridge hides it for itself.
-- **Your own permission rules.** OpenCode 2 reads `permission:` in
-  `.opencode/agents/<name>.md` frontmatter, but ignores 1.x's
-  `agent.<name>.permission` in `opencode.json` without a word (2.0.29,
-  measured): those agents run with OpenCode 2's own rules. The first turn on a
-  2.x server names any such file once.
+- **Your own permission rules.** OpenCode 2 applies `opencode.json`'s
+  `permission` and `agent.<name>.permission` as 1.x does (`bash` read as its
+  `shell`), and `.opencode/agents/<name>.md` frontmatter too (2.0.29 to 2.3.2,
+  measured). Earlier versions of the bridge said otherwise: that measurement
+  read a list OpenCode was still loading.
 - **A later major** (3.x) is tried the same way, with a note that it is outside
   the versions the bridge was tested with; read-only turns stay refused unless
   the server lists the bridge's rules.
@@ -324,7 +325,7 @@ bound to a 1.x session goes on in it, and `/sessions` lists it. 1.x still opens 
 folder and goes on in its own sessions, so going back works. From then on each sees
 only what it wrote: 1.x does not list a session 2.x made, and 2.x does not import
 one 1.x makes later. The import also clears the folder's `event` table; 1.x carried
-on without it. (`scripts/probe-data-folder.js`: 1.19.5 with 2.0.29 and with 2.2.5, a
+on without it. (`scripts/probe-data-folder.js`: 1.19.5 with 2.0.29, 2.2.5 and 2.3.2, a
 small folder; a large one's import time is not measured.)
 
 A folder that OpenCode 2 *created* is different: 1.x cannot open it at all (1.19.3:
@@ -594,7 +595,7 @@ All under `opencodeCopilotBridge.`.
 | `devAgent` | `build` | Agent `/dev` runs, always passed as `--agent`. |
 | `planAgent` | `plan` | Agent for read-only turns and `/parallel` lanes, used once OpenCode lists it (see *Read-only turns*). |
 | `readOnlySubagents` | `["explore"]` | Literal subagent names a read-only turn may start via `task`; trimmed and deduplicated, `*` and `?` rejected. With `enforceReadOnly` only agents with verified shell-free permissions are available. |
-| `opencode2` | `true` | Drive OpenCode 2 through its HTTP API (tested on 2.0.18–2.3.0): every turn through this window's own server, read-only turns only when it lists the bridge's rules (see *OpenCode 2*). A 1.x runs the same either way. Off: an OpenCode 2 is refused. |
+| `opencode2` | `true` | Drive OpenCode 2 through its HTTP API (tested on 2.0.18–2.3.2): every turn through this window's own server, read-only turns only when it lists the bridge's rules (see *OpenCode 2*). A 1.x runs the same either way. Off: an OpenCode 2 is refused. |
 | `enforceReadOnly` | `true` | Read-only turns read-only by permission in every OpenCode process the bridge starts: no edits or shell, `readOnlyTools`, read-only subagents (see *Read-only turns*). `/dev` is unchanged. Off: 0.0.214, read-only by instruction. |
 | `readOnlyTools` | `["git-scan_gitScan"]` | With `enforceReadOnly`, the MCP tools a read-only turn may use, by OpenCode permission name (`<server>_<tool>`, wildcards allowed). A name that would allow a tool that writes, runs commands or starts subagents is left out. On OpenCode 2 from 2.2.0; 2.0 and 2.1 offer none. |
 | `attachDevToServer` | `true` | With transport `auto`, `/dev` attaches to the warm server instead of booting OpenCode per turn. |
@@ -637,6 +638,19 @@ All under `opencodeCopilotBridge.`.
 
 The last five releases; the full history is `CHANGELOG.md` in the repository.
 
+### 0.0.242
+
+- **Fixed: a false warning about your permission rules on OpenCode 2.** "OpenCode 2
+  ignores the 1.x permission rules in opencode.json" was wrong: OpenCode 2 applies
+  them (2.0.29 to 2.3.2, measured in a real turn). It is gone. Checks `TW`.
+- **OpenCode 1.19.6 and 2.3.2 are tested**, and no longer say they are outside the
+  tested versions. Checks `VN`, `TW`.
+- **Known: on OpenCode 2.3 a subagent runs in the background**, so a turn can answer
+  before the subagent it started has finished. Nothing changed for it yet.
+- **Corrected:** OpenCode reads `AGENTS.md` and what `opencode.json` `instructions`
+  lists, not `.github/copilot-instructions.md` by itself. To use that file with
+  `@opencode`, list it in `instructions`.
+
 ### 0.0.241
 
 - **New, alpha: OpenCode as MCP tools for the Copilot harness.** `opencode_ask`
@@ -675,9 +689,3 @@ The last five releases; the full history is `CHANGELOG.md` in the repository.
   2.x is driven through its API instead of refused; `false` is the way out. OpenCode 1
   runs the same, with one `--version` check before its server starts. `/env` reads 2.x's
   `mcp.servers`. Checks `TW`, `OC`, `DA`.
-
-### 0.0.237
-
-- **OpenCode 2: `effort:` works with no model pinned.** The level was dropped
-  without a word, and the turn ran at the model's default. It now reaches the run
-  and lasts that turn only. Checks `TW`.

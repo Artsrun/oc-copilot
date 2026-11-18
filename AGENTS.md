@@ -63,7 +63,7 @@ Layering has no cycles:
 extension.ts  →  chat · chat-boot · commands-registry · git-scan-mcp · oc-mcp · session · worktree · leaf modules (for __test)
      chat     →  agents · chat-boot · chat-commands · chat-parallel · chat-turn · chat-worktree · context · models · natural · prompt · session · core
 chat-parallel →  agents · chat-boot · compose · context · models · net · runs · core
-  chat-turn   →  agents · chat-boot · context · enforce · env · format · metrics · models · net · oc-api · runs · server-session · session · core
+  chat-turn   →  agents · chat-boot · context · enforce · format · metrics · models · net · runs · server-session · session · core
  chat-commands →  chat-boot · chat-sessions · context · env · models · net · oc-api · prompt · proc · runs · session · worktree · core
  chat-sessions →  net · sessions (→ oc-api · runs) · session · core
  chat-worktree →  chat-boot · context · format · models · net · prompt · runs · session · worktree · core
@@ -166,8 +166,8 @@ does not run the suite.
 
 CI runs the same gate (`.github/workflows/ship.yml`: Linux, Windows, macOS, every
 push and pull request) and, nightly, the real-binary probes, one job per
-OpenCode version (`probes.yml`: 1.19.0, 1.19.5, 2.0.29, 2.2.5, 2.2.7 and 2.3.0 must pass, the latest 2.x may fail;
-one job per 2.x for `probe-data-folder.js`; `probe-mcp.js` on 1.19.5 and 2.3.0),
+OpenCode version (`probes.yml`: 1.19.0, 1.19.5, 1.19.6, 2.0.29, 2.2.5, 2.2.7, 2.3.0 and 2.3.2 must pass, the latest 2.x may fail;
+one job per 2.x for `probe-data-folder.js`; `probe-mcp.js` on 1.19.5, 1.19.6, 2.3.0 and 2.3.2),
 and the chat participant API (`api-watch.yml`: `scripts/check-vscode-api.js` on
 `vscode.d.ts`'s main branch, and a typecheck against the newest `@types/vscode`).
 
@@ -358,7 +358,7 @@ history belongs in `CHANGELOG.md`, not in the source.
 - **A folder's agent list can load in stages**, started by its first
   `GET /agent`: `[]`, then the stock rules alone for ~200–430 ms, then with the
   injected overrides (2.0.29: plan 7 → 39 rules). Which versions stage is not
-  stable: 2.0.29 and 2.1.4 did, 2.2.0–2.2.6 answered loaded, 2.2.7 and 2.3.0 stage
+  stable: 2.0.29 and 2.1.4 did, 2.2.0–2.2.6 answered loaded, 2.2.7, 2.3.0 and 2.3.2 stage
   again (2.3.0's stock stage lasts until 613–751 ms, under the 1000 ms settle).
   Taking the first non-empty list judged plan `unverified` and refused the
   default first turn — never the unsafe way. So no version is trusted to answer
@@ -440,9 +440,10 @@ history belongs in `CHANGELOG.md`, not in the source.
   refuse, redact — never fall back to a cold run (`OC`). On: this window's own server only (`/api/info`
   with the printed password), every turn through it, overrides in 2.x's shape
   (1.x rejects that key; given both, 2.x applied neither), an unverified plan
-  turn refused (`TW`). 2.x ignores 1.x's `agent.<n>.permission` in `opencode.json`
-  without a word but reads `.opencode/agents/*.md` frontmatter (2.0.29): named
-  once per folder (`v1PermissionRules`). A later major runs on the 2.x adapter
+  turn refused (`TW`). 2.x applies `opencode.json`'s `permission` and
+  `agent.<n>.permission` (`bash` → `shell`) and `.opencode/agents/*.md` frontmatter
+  (2.0.29–2.3.2, settled list and a real turn); 0.0.223 said "ignored" from a stock-stage
+  read and warned on every such folder until 0.0.242 (REFS). A later major runs on the 2.x adapter
   with the outside-the-tested-range notice. Both majors keep sessions in the
   same data folder. 2.x imports a 1.x folder once and 1.x still opens it afterwards,
   then each sees only what it wrote (`probe-data-folder.js`, REFS 0.0.238); but 1.19.3
@@ -486,6 +487,12 @@ history belongs in `CHANGELOG.md`, not in the source.
   The next start works; the bridge does nothing about it (REFS 0.0.239).
 - **A parent's `task` row runs as long as its subagent**: child events are the
   run's activity, or the idle cap stops a parent whose subagent works (`SU`).
+- **From 2.3.0 a subagent runs in the background.** The tool returns "working in the
+  background" at once (2.2.7 offered a `background` flag and waited by default; 2.3.2
+  has no flag), the parent answers, and the turn ends while the child works: 1.7 s for
+  a ~10 s child that 2.2.7 waited 10.6 s for (2.3.2, scripted model). No parent turn ran
+  in the 30 s after it went idle. What the child did is not in that turn's answer;
+  whether its spend and a Resume chip are is not measured (REFS 0.0.242, `probe-opencode2.js`).
 - **A task result carries no cost or tokens** (OpenCode #47822): a subagent's
   spend is read from its own session's `message.updated` (`SC`).
 - **The Copilot harness has no chat participants** (VS Code 1.142+; the API

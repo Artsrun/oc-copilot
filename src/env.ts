@@ -110,22 +110,6 @@ function listSkillDirs(dir: string): string[] {
     return listDirNames(dir).filter((name) => existsQuiet(path.join(dir, name, "SKILL.md")));
 }
 
-/**
- * The config files whose `agent.<name>.permission` is 1.x's rule format, with
- * the agents named. OpenCode 2 ignores those rules without a word (2.0.29: a
- * project `agent.plan.permission` left plan's stock rules), while it still reads
- * `.opencode/agents/*.md` frontmatter `permission:` (REFS).
- */
-export function v1PermissionRules(cwd: string): string[] {
-    return configFiles(cwd).flatMap(([file, from]) => {
-        const agents = file && existsQuiet(file) ? readJsonc<{ agent?: unknown }>(file)?.agent : undefined;
-        const named = agents && typeof agents === "object"
-            ? Object.entries(agents as Record<string, unknown>).filter(([, a]) => a && typeof a === "object" && "permission" in (a as object)).map(([n]) => n)
-            : [];
-        return named.length ? [`${from} (${named.join(", ")})`] : [];
-    });
-}
-
 const configFiles = (cwd: string): Array<[string, string]> => {
     const global = opencodeGlobalDir();
     return [

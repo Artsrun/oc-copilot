@@ -43,9 +43,10 @@ export const readDeniedOnReadOnly = (fsPath: string): boolean => {
     return !/\.env\.example$/.test(p) && (/\.env$/.test(p) || /\.env\./.test(p));
 };
 
-// OpenCode already loads AGENTS.md / CLAUDE.md / .github/copilot-instructions.md
-// itself. Re-sending them as "the user attached this" is pure token waste and
-// confuses the model into narrating the context block back at you.
+// Instruction files Copilot attaches by itself are not resent: as "the user attached
+// this" they made the model narrate the context block back. OpenCode reads AGENTS.md
+// (CLAUDE.md when there is none) and whatever opencode.json `instructions` lists; NOT
+// .github/copilot-instructions.md or *.instructions.md on its own (1.19.6, 2.3.2, REFS 0.0.242).
 const INSTRUCTION_FILES = /(^|[\\/])(AGENTS\.md|CLAUDE\.md|copilot-instructions\.md|.*\.instructions\.md|.*\.prompt\.md)$/i;
 
 export function isInstructionFile(uri: vscode.Uri): boolean {
@@ -217,7 +218,7 @@ export function buildChatContext(
             continue;
         }
         if (AUTOMATIC_ID.test(id) || (uri && isInstructionFile(uri))) {
-            notes.push({ id, kind, label, kept: false, automatic: true, why: uri ? "instruction file, OpenCode loads its own" : "added by the host" });
+            notes.push({ id, kind, label, kept: false, automatic: true, why: uri ? "instruction file; OpenCode reads AGENTS.md and opencode.json instructions" : "added by the host" });
             continue;
         }
         if (!uri && kind === "diagnostics") {
