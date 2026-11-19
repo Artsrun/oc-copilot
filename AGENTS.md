@@ -20,7 +20,7 @@ groups move from the 1.x CLI fakes (`transport: "cli"`, `writeFake`) to the 2.x 
 (`scripts/fixtures/fake-opencode2.js`) one green commit at a time, and only then do the
 CLI transport, 1.x routes and the `opencode2`/`transport` settings go. New code targets
 2.x; never delete a 1.x path while a check still drives it. Ported: `S`, `GA` (end to
-end), `JA`. A ported group asserts what crossed 2.x's boundary, and a mutant per group
+end), `JA`, `J`, `T`, `CA`, `CB`, `CC`. A ported group asserts what crossed 2.x's boundary, and a mutant per group
 turned it red before its green was trusted.
 
 | Path | What lives there |

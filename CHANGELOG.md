@@ -29,6 +29,11 @@ to their summary and headlines. The README ships the last five.
   (`oc2Use`; scripted turns, `[[script:…]]`). Each asserts what crossed 2.x's boundary (the
   posted prompt, the session it went to); `S` and `JA` gained a boundary check, and a mutant
   per group turned it red. No shipped code changed.
+- **Second port:** `J` (attachments, and `/parallel` lanes, each its own session), `T` (the
+  context block split across three streamed deltas, which the 1.x fake never sent),
+  `CA`/`CB`/`CC` (a run with no answer text, a failure with no output, a provider's error:
+  each asserts the words chat shows, where `CA` passed on any non-blank reply). Scripted
+  turns take text as an array of deltas and `fail: {type, message}`.
 
 ### 0.0.242
 

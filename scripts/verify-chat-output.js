@@ -820,40 +820,79 @@ function collectConfigProperties(configuration) {
     await global.__handler({ prompt: "/new" }, {}, i5.response, i5.token);
     add("I typed /new still works", i5.chatMarkdown.join("").includes("fresh OpenCode session"));
 
+    // OpenCode 2 as a group's OpenCode (0.0.243, AGENTS §1: the suite moves to the 2.x fake
+    // before 1.x code goes). `oc2Use` runs a block on the fake 2.x server — its own record
+    // of requests, its server stopped after — and puts the 1.x settings back. A prompt's
+    // `[[script:<name>]]` plays `oc2Script(name, spec)`'s events inside a recorded turn.
+    const oc2Record = path.join(work, "oc2-record.jsonl");
+    const oc2Scripts = path.join(work, "oc2-scripts");
+    fs.mkdirSync(oc2Scripts, { recursive: true });
+    process.env.FAKE_OC2_SCRIPT_DIR = oc2Scripts;
+    const oc2Fake = writeFake("fake-oc2-groups.js", [], `if (!process.argv.includes('--version') || true) require(${JSON.stringify(path.join(__dirname, "fixtures", "fake-opencode2.js"))})(process.argv);\n`);
+    const oc2Reqs = () => (fs.existsSync(oc2Record) ? fs.readFileSync(oc2Record, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)) : []);
+    // What reached OpenCode: each prompt's session and text, and the sessions created.
+    const oc2Prompts = () => oc2Reqs().filter((r) => r.method === "POST" && /^\/api\/session\/[^/]+\/prompt$/.test(r.path ?? "")).map((r) => ({ session: r.path.split("/")[3], text: String(r.body?.text ?? "") }));
+    const oc2Created = () => oc2Reqs().filter((r) => r.method === "POST" && r.path === "/api/session").length;
+    const oc2Script = (name, spec) => fs.writeFileSync(path.join(oc2Scripts, `${name}.json`), JSON.stringify(spec));
+    const oc2Use = async (block) => {
+        const saved = { executable: settings.executable, serverPort: settings.serverPort, transport: settings.transport, serverStartupPollMs: settings.serverStartupPollMs, opencode2: settings.opencode2 };
+        const savedRecord = process.env.FAKE_OC2_RECORD;
+        process.env.FAKE_OC2_RECORD = oc2Record;
+        fs.rmSync(oc2Record, { force: true });
+        Object.assign(settings, { executable: oc2Fake, serverPort: 0, transport: "server", serverStartupPollMs: 50, opencode2: true });
+        try {
+            return await block();
+        } finally {
+            ext.deactivate();
+            Object.assign(settings, saved);
+            if (savedRecord === undefined) delete process.env.FAKE_OC2_RECORD;
+            else process.env.FAKE_OC2_RECORD = savedRecord;
+        }
+    };
+
     // J: attached files become a context block AND clickable references.
     memento.clear();
     const attached = path.join(work, "src", "login.ts");
     fs.mkdirSync(path.dirname(attached), { recursive: true });
     fs.writeFileSync(attached, "export const login = () => {};\n");
+    // On OpenCode 2 (0.0.243): the posted prompt is what OpenCode got. The scripted turn
+    // reads src/session.ts, so the tool-path reference is told apart from the attachment
+    // (the 1.x fake read login.ts, the attached file itself).
+    oc2Script("j-read", { events: [{ tool: "read", input: { filePath: "src/session.ts" }, output: "export const s = 1;" }, { text: "It exports login." }] });
     const j = stream();
-    await global.__handler(
-        {
-            prompt: "explain this file",
-            references: [{ id: "vscode.file", value: { fsPath: attached, scheme: "file" } }]
-        },
-        {},
-        j.response,
-        j.token
-    );
-    const argvJ = lastArgv("fake-ok.js");
-    const sentJ = argvJ[argvJ.length - 1] || "";
-    add("J attachment reaches the prompt as context", /Files the user attached:/.test(sentJ) && sentJ.includes("src/login.ts"));
-    add("J the task leads, context trails", sentJ.trimStart().startsWith("explain this file") && /\(Context only\./.test(sentJ));
-    add("J attachment is emitted as a chat reference", j.refs.some((r) => r === attached));
-    add("J tool file paths are emitted as references", j.refs.some((r) => /login\.ts$/.test(r)));
-
-    // Opt-out must be honoured.
-    settings.includeChatReferences = false;
-    memento.clear();
     const j2 = stream();
-    await global.__handler(
-        { prompt: "explain this file", references: [{ id: "vscode.file", value: { fsPath: attached, scheme: "file" } }] },
-        {},
-        j2.response,
-        j2.token
-    );
-    const sentJ2 = (lastArgv("fake-ok.js").slice(-1)[0]) || "";
-    add("J includeChatReferences=false sends no context block", !/Files the user attached:/.test(sentJ2));
+    const jSent = await oc2Use(async () => {
+        await global.__handler(
+            { prompt: "explain this file [[script:j-read]]", references: [{ id: "vscode.file", value: { fsPath: attached, scheme: "file" } }] },
+            {},
+            j.response,
+            j.token
+        );
+        const first = oc2Prompts();
+        // Opt-out must be honoured.
+        settings.includeChatReferences = false;
+        try {
+            memento.clear();
+            await global.__handler(
+                { prompt: "explain this file [[script:j-read]]", references: [{ id: "vscode.file", value: { fsPath: attached, scheme: "file" } }] },
+                {},
+                j2.response,
+                j2.token
+            );
+        } finally {
+            settings.includeChatReferences = true;
+        }
+        return { first, all: oc2Prompts() };
+    });
+    const sentJ = jSent.first.at(-1)?.text ?? "";
+    add(`J the turn reached OpenCode 2 and answered (${jSent.first.length} prompt)`, jSent.first.length === 1 && /It exports login\./.test(j.chatMarkdown.join("")));
+    add("J attachment reaches the prompt as context", /Files the user attached:/.test(sentJ) && sentJ.includes("src/login.ts"));
+    // The file list itself after the task: the closing note alone is written with no files too.
+    add("J the task leads, context trails", sentJ.trimStart().startsWith("explain this file") && sentJ.indexOf("Files the user attached:") > sentJ.indexOf("explain this file") && sentJ.indexOf("(Context only.") > sentJ.indexOf("Files the user attached:"));
+    add("J attachment is emitted as a chat reference", j.refs.some((r) => r === attached));
+    add(`J tool file paths are emitted as references (${j.refs.map((r) => path.basename(r)).join(", ")})`, j.refs.some((r) => r === path.join(work, "src", "session.ts")));
+    const sentJ2 = jSent.all.at(-1)?.text ?? "";
+    add("J includeChatReferences=false sends no context block", jSent.all.length === 2 && sentJ2.includes("explain this file") && !/Files the user attached:/.test(sentJ2));
     add(
         "JN …and logs the attachment it left out, without a chat line",
         logLines.some((l) => /references \(1\): kept none; dropped vscode\.file src\/login\.ts \(file: includeChatReferences is off\)/.test(l)) && !/Not sent to OpenCode/.test(j2.chatMarkdown.join(""))
@@ -1238,41 +1277,37 @@ function collectConfigProperties(configuration) {
 
     // J: a /parallel turn hands the attachment to every lane. 0.0.195 built the
     // context after the parallel branch had returned, so `#file:` reached no lane.
+    // On OpenCode 2 (0.0.243): each lane is a session of its own; its posted prompt is read.
     {
-        const jpLog = path.join(work, "fake-jp.argvs");
-        const jpFake = writeFake(
-            "fake-jp.js",
-            [{ type: "text", sessionID: "ses_jp", part: { text: "lane ok" } }],
-            `fs.appendFileSync(${JSON.stringify(jpLog)}, JSON.stringify(process.argv) + "\\n");\n`
-        );
         const jpRun = async (prompt) => {
-            settings.executable = jpFake;
-            settings.transport = "cli";
-            fs.rmSync(jpLog, { force: true });
             memento.clear();
             const st = stream();
+            const before = oc2Prompts().length;
             await global.__handler(
                 { prompt, command: "parallel", references: [{ id: "vscode.file", value: { fsPath: attached, scheme: "file" } }] },
                 {},
                 st.response,
                 st.token
             );
-            const runs = fs.existsSync(jpLog) ? fs.readFileSync(jpLog, "utf8").trim().split("\n").map((l) => JSON.parse(l)) : [];
-            return { runs, st, text: st.chatMarkdown.join("") };
+            return { lanes: oc2Prompts().slice(before), st, text: st.chatMarkdown.join("") };
         };
-        const jp = await jpRun("review auth | list deps");
-        const jpTasks = jp.runs.map((a) => a[a.length - 1]);
+        const { jp, jpOff } = await oc2Use(async () => {
+            const on = await jpRun("review auth | list deps");
+            settings.includeChatReferences = false;
+            try {
+                return { jp: on, jpOff: await jpRun("review auth | list deps") };
+            } finally {
+                settings.includeChatReferences = true;
+            }
+        });
+        const jpTasks = jp.lanes.map((l) => l.text);
         add(
-            "J every /parallel lane gets the attachment, its own task leading",
+            `J every /parallel lane gets the attachment, its own task leading, in a session of its own (${jp.lanes.length} lanes)`,
             jpTasks.length === 2 && jpTasks.every((t) => /Files the user attached:/.test(t) && t.includes("src/login.ts")) &&
-                jpTasks.some((t) => t.startsWith("review auth")) && jpTasks.some((t) => t.startsWith("list deps"))
+                jpTasks.some((t) => t.startsWith("review auth")) && jpTasks.some((t) => t.startsWith("list deps")) && jp.lanes[0].session !== jp.lanes[1].session
         );
         add("J a /parallel attachment is a chat reference, and no lane title carries the context block", jp.st.refs.some((r) => r === attached) && !/### \d\. [^\n]*Files the user attached/.test(jp.text));
-        settings.includeChatReferences = false;
-        const jpOff = await jpRun("review auth | list deps");
-        add("J includeChatReferences=false keeps /parallel lanes bare", jpOff.runs.length === 2 && jpOff.runs.every((a) => !/Files the user attached:/.test(a[a.length - 1])));
-        settings.includeChatReferences = true;
-        settings.executable = happy;
+        add("J includeChatReferences=false keeps /parallel lanes bare", jpOff.lanes.length === 2 && jpOff.lanes.every((l) => !/Files the user attached:/.test(l.text)));
     }
 
     // K: heartbeat keeps the progress line alive with an elapsed readout.
@@ -1343,36 +1378,6 @@ function collectConfigProperties(configuration) {
 
     // ==================== v14 ====================
 
-    // OpenCode 2 as a group's OpenCode (0.0.243, AGENTS §1: the suite moves to the 2.x fake
-    // before 1.x code goes). `oc2Use` runs a block on the fake 2.x server — its own record
-    // of requests, its server stopped after — and puts the 1.x settings back. A prompt's
-    // `[[script:<name>]]` plays `oc2Script(name, spec)`'s events inside a recorded turn.
-    const oc2Record = path.join(work, "oc2-record.jsonl");
-    const oc2Scripts = path.join(work, "oc2-scripts");
-    fs.mkdirSync(oc2Scripts, { recursive: true });
-    process.env.FAKE_OC2_SCRIPT_DIR = oc2Scripts;
-    const oc2Fake = writeFake("fake-oc2-groups.js", [], `if (!process.argv.includes('--version') || true) require(${JSON.stringify(path.join(__dirname, "fixtures", "fake-opencode2.js"))})(process.argv);\n`);
-    const oc2Reqs = () => (fs.existsSync(oc2Record) ? fs.readFileSync(oc2Record, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)) : []);
-    // What reached OpenCode: each prompt's session and text, and the sessions created.
-    const oc2Prompts = () => oc2Reqs().filter((r) => r.method === "POST" && /^\/api\/session\/[^/]+\/prompt$/.test(r.path ?? "")).map((r) => ({ session: r.path.split("/")[3], text: String(r.body?.text ?? "") }));
-    const oc2Created = () => oc2Reqs().filter((r) => r.method === "POST" && r.path === "/api/session").length;
-    const oc2Script = (name, spec) => fs.writeFileSync(path.join(oc2Scripts, `${name}.json`), JSON.stringify(spec));
-    const oc2Use = async (block) => {
-        const saved = { executable: settings.executable, serverPort: settings.serverPort, transport: settings.transport, serverStartupPollMs: settings.serverStartupPollMs, opencode2: settings.opencode2 };
-        const savedRecord = process.env.FAKE_OC2_RECORD;
-        process.env.FAKE_OC2_RECORD = oc2Record;
-        fs.rmSync(oc2Record, { force: true });
-        Object.assign(settings, { executable: oc2Fake, serverPort: 0, transport: "server", serverStartupPollMs: 50, opencode2: true });
-        try {
-            return await block();
-        } finally {
-            ext.deactivate();
-            Object.assign(settings, saved);
-            if (savedRecord === undefined) delete process.env.FAKE_OC2_RECORD;
-            else process.env.FAKE_OC2_RECORD = savedRecord;
-        }
-    };
-
     // S: Copilot's own instruction-file references must never become context.
     // This is the bug that printed a raw <workspace-context> block into chat.
     settings.executable = happy;
@@ -1411,20 +1416,14 @@ function collectConfigProperties(configuration) {
 
 
     // T: a model that echoes the context block anyway must not leak it into chat.
-    const leak = writeFake("fake-leak.js", [
-        {
-            type: "text",
-            sessionID: "ses_leak",
-            part: { text: "<workspace-context>\nFiles the user attached:\n- a.ts\n</workspace-context>\n\nThe real answer is 42." }
-        },
-        { type: "step_finish", sessionID: "ses_leak", part: { reason: "stop", cost: 0, tokens: { input: 1, output: 1, reasoning: 0, total: 2, cache: { read: 0, write: 0 } } } }
-    ]);
-    settings.executable = leak;
+    // On OpenCode 2 (0.0.243): streamed as deltas, the block split across three of them,
+    // which the 1.x fake (one whole part at the end) never did.
+    oc2Script("t-leak", { events: [{ text: ["<workspace-", "context>\nFiles the user attached:\n- a.ts\n</workspace-con", "text>\n\nThe real answer is 42."] }] });
     memento.clear();
     const t1 = stream();
-    await global.__handler({ prompt: "leak test" }, {}, t1.response, t1.token);
+    await oc2Use(() => global.__handler({ prompt: "leak test [[script:t-leak]]" }, {}, t1.response, t1.token));
     const chatT = t1.chatMarkdown.join("");
-    add("T leaked context block is scrubbed from chat", !/workspace-context/.test(chatT));
+    add("T leaked context block is scrubbed from chat", !/workspace-context|workspace-|Files the user attached/.test(chatT));
     add("T the real answer survives scrubbing", chatT.includes("The real answer is 42"));
     settings.executable = happy;
 
@@ -1933,47 +1932,37 @@ function collectConfigProperties(configuration) {
 
     // ============ v148 (the "@oc ping returns nothing" report) ============
 
-    // CA: THE REPORTED BUG. A run that completes, prints non-JSON output, and
-    // reports no events used to render as a COMPLETELY EMPTY chat reply while the
-    // work had actually happened. Reproduce it: a fake that prints prose, not events.
-    // The raw-stdout salvage is gone, so an unparsed run now reports as empty —
-    // that is the accepted cost of dropping the safety net.
-    const proseFake = writeFake(
-        "fake-prose.js",
-        [],
-        "process.stdout.write('> plan \u00b7 Aspen\\n');\n" +
-        "process.stdout.write('App.js defines the root router and mounts four providers.\\n');\n" +
-        "process.stdout.write('It has 412 lines and imports 19 modules.\\n');\n"
-    );
-    settings.executable = proseFake;
-    settings.chatDensity = "full";
-    memento.clear();
-    const ca = stream();
-    await global.__handler({ prompt: "read App.js and Report" }, {}, ca.response, ca.token);
-    const chatCA = ca.chatMarkdown.join("");
-    add("CA an unparsed run is never a blank reply", chatCA.trim().length > 0);
-
-    // CB: a truly empty run explains itself instead of rendering nothing.
-    const silentFake = writeFake("fake-silent.js", [], "process.exit(3);\n");
-    settings.executable = silentFake;
-    memento.clear();
-    const cb = stream();
-    await global.__handler({ prompt: "this will produce nothing at all" }, {}, cb.response, cb.token);
-    const chatCB = cb.chatMarkdown.join("");
-    add("CB an empty run still says something", chatCB.trim().length > 0);
-    add("CB its exit code goes to the debug log", logLines.some((l) => / exit code 3\b/.test(l)));
-
-    // CC: a CLI error event must reach chat. Before v148 only the SSE path handled
+    // CA: THE REPORTED BUG. A run that completes with no answer used to render as a
+    // COMPLETELY EMPTY chat reply while the work had actually happened (v148: a 1.x CLI
+    // run that printed prose, not events). On OpenCode 2 (0.0.243) there is no stdout to
+    // parse; the promise is the same: a run that ends without answer text says so, in
+    // words, not a metrics line that merely makes the reply non-blank.
+    oc2Script("ca-empty", { events: [] });
+    // CB: a run that fails with no output and no message explains itself.
+    oc2Script("cb-fail", { events: [], fail: { type: "unknown" } });
+    // CC: a provider's error must reach chat. Before v148 only the SSE path handled
     // session.error; on the CLI path it fell into `default:` and was dropped.
-    const errFake = writeFake("fake-err.js", [
-        { type: "session.error", sessionID: "ses_e", part: { message: "provider returned 401 Unauthorized" } }
-    ]);
-    settings.executable = errFake;
-    memento.clear();
+    oc2Script("cc-error", { events: [], fail: { type: "provider", message: "provider returned 401 Unauthorized" } });
+    settings.chatDensity = "full";
+    const ca = stream();
+    const cb = stream();
     const cc = stream();
-    await global.__handler({ prompt: "trigger a provider error" }, {}, cc.response, cc.token);
+    const cbLog = logLines.length;
+    await oc2Use(async () => {
+        memento.clear();
+        await global.__handler({ prompt: "read App.js and Report [[script:ca-empty]]" }, {}, ca.response, ca.token);
+        memento.clear();
+        await global.__handler({ prompt: "this will produce nothing at all [[script:cb-fail]]" }, {}, cb.response, cb.token);
+        memento.clear();
+        await global.__handler({ prompt: "trigger a provider error [[script:cc-error]]" }, {}, cc.response, cc.token);
+    });
+    const chatCA = ca.chatMarkdown.join("");
+    add(`CA a run with no answer text is never a blank reply: it says so${/returned no output/.test(chatCA) ? "" : ` [${plain(chatCA).slice(0, 160)}]`}`, chatCA.trim().length > 0 && /OpenCode returned no output\./.test(chatCA));
+    const chatCB = cb.chatMarkdown.join("");
+    add(`CB a run that fails with no output says it failed${/reported an error/.test(chatCB) ? "" : ` [${plain(chatCB).slice(0, 160)}]`}`, /OpenCode reported an error/.test(chatCB));
+    add("CB its failure goes to the debug log", logLines.slice(cbLog).some((l) => /session\.error/.test(l)));
     const chatCC = cc.chatMarkdown.join("");
-    add("CC a CLI session.error reaches chat", /401 Unauthorized/.test(chatCC));
+    add("CC a provider's session error reaches chat, its own words", /401 Unauthorized/.test(chatCC));
 
     // CD: an aborted step reporting cost 0 and no tokens is a run with no output,
     // not one with known usage.
@@ -2002,6 +1991,8 @@ function collectConfigProperties(configuration) {
         `SE …offers the debug log, and chips that fit it (${seChips.map((c) => c.label).join(" | ")})`,
         se.buttons.some((b) => b.command === "opencodeCopilotBridge.showLog") && seR.metadata.error === "Error: Model not found: acme/ghost" && seChips.some((c) => /Pick model/.test(c.label))
     );
+    // A CLI that exits 3 and prints nothing (CB's fake before CB moved to OpenCode 2).
+    const silentFake = writeFake("fake-silent.js", [], "process.exit(3);\n");
     settings.executable = silentFake;
     memento.clear();
     const se0 = stream();

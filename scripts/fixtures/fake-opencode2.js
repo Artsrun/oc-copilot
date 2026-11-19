@@ -8,9 +8,10 @@
 //      FAKE_OC2_VERSION  the version it names (default: the recording's)
 //      a prompt's `[[say:<text>]]` makes the text turn answer <text>
 //      FAKE_OC2_SCRIPT_DIR  a prompt's `[[script:<name>]]` plays <dir>/<name>.json, read per
-//                        prompt: `{ paceMs, hold, events: [{reasoning}|{tool, input, output}|{text}] }`
-//                        inside the recorded text turn's envelope; `hold` goes silent until
-//                        the bridge interrupts (the recorded interrupt's end follows)
+//                        prompt: `{ paceMs, hold, fail, events: [{reasoning}|{tool, input, output}|{text}] }`
+//                        inside the recorded text turn's envelope; `text` may be an array of
+//                        deltas; `hold` goes silent until the bridge interrupts (the recorded
+//                        interrupt's end follows); `fail: {type, message}` ends the run failed
 //      FAKE_OC2_DROP=1   the server ignores the injected overrides (a 2.x that
 //                        does not apply them: the bridge must refuse plan turns)
 //      FAKE_OC2_AGENT_MODEL  `provider/id`: the plan agent's own model
@@ -131,9 +132,10 @@ module.exports = (argv) => {
             if (typeof e.reasoning === "string") {
                 if (open !== "reasoning") { close(); open = "reasoning"; body.push(frame("session.reasoning.started", { ordinal })); }
                 body.push(frame("session.reasoning.delta", { ordinal, delta: e.reasoning }));
-            } else if (typeof e.text === "string") {
+            } else if (typeof e.text === "string" || Array.isArray(e.text)) {
                 close();
-                body.push(frame("session.text.started", { ordinal }), frame("session.text.delta", { ordinal, delta: e.text }), frame("session.text.ended", { ordinal, text: e.text }));
+                const deltas = [].concat(e.text);
+                body.push(frame("session.text.started", { ordinal }), ...deltas.map((delta) => frame("session.text.delta", { ordinal, delta })), frame("session.text.ended", { ordinal, text: deltas.join("") }));
                 ordinal += 1;
             } else if (e.tool) {
                 close();
@@ -146,7 +148,9 @@ module.exports = (argv) => {
         const head = wire.turns.text.frames.slice(0, at("session.text.started"));
         const tail = spec.hold
             ? wire.turns.interrupt.frames.slice(wire.turns.interrupt.frames.findIndex((f) => f.includes('"type":"session.step.failed"')))
-            : wire.turns.text.frames.slice(at("session.text.ended") + 1);
+            : spec.fail
+                ? [frame("session.execution.failed", { error: spec.fail })]
+                : wire.turns.text.frames.slice(at("session.text.ended") + 1);
         return { frames: [...head, ...body, ...tail], pace: Number(spec.paceMs) || 0, hold: Boolean(spec.hold) };
     };
     const kindOf = (text) => (/probe:initfail/.test(text) ? "initfail" : /probe:ratelimit/.test(text) ? "retry" : /probe:slow/.test(text) ? "interrupt" : /probe:task@/.test(text) ? "subagent" : /probe:bash/.test(text) ? "permission" : "text");
