@@ -1373,6 +1373,7 @@ function collectConfigProperties(configuration) {
     add("S no context block when nothing real was attached", !/Files the user attached:/.test(sentS));
     add("S instruction files are not shown as chat references", !sInstr.refs.some((r) => /AGENTS\.md|copilot-instructions/.test(r)));
 
+
     // T: a model that echoes the context block anyway must not leak it into chat.
     const leak = writeFake("fake-leak.js", [
         {
@@ -1894,7 +1895,7 @@ function collectConfigProperties(configuration) {
     // 0.0.149's idle cap was computed and discarded; strict does not imply this.
     add("BG noUnusedLocals is on", /"noUnusedLocals"\s*:\s*true/.test(readRepo("tsconfig.json") || ""));
 
-    // ============ v148 (the "@opencode ping returns nothing" report) ============
+    // ============ v148 (the "@oc ping returns nothing" report) ============
 
     // CA: THE REPORTED BUG. A run that completes, prints non-JSON output, and
     // reports no events used to render as a COMPLETELY EMPTY chat reply while the
@@ -2731,6 +2732,17 @@ function collectConfigProperties(configuration) {
     // v212: the notice printed on the first turn of every new chat in the folder.
     add("GA …and a second new chat has none either", !/New chat|untouched/.test(ga3.chatMarkdown.join("")));
 
+    // OD (0.0.243): OpenCode 1 is deprecated. A window says so once, after a finished turn
+    // whose `--version` named a 1.x; the turn itself runs as before. Red first: never said.
+    ext.__test.resetOpenCode1Deprecation();
+    const od1 = stream();
+    await global.__handler({ prompt: "explain the redirect for od one" }, { history: [] }, od1.response, od1.token);
+    const od2 = stream();
+    await global.__handler({ prompt: "explain the redirect for od two" }, { history: [] }, od2.response, od2.token);
+    const odSaid = (s) => /OpenCode 1 is deprecated/.test(plain(s.chatMarkdown.join("")));
+    add(`OD a finished turn on OpenCode 1 says it is deprecated, once per window, and still answers${odSaid(od1) ? "" : ` [chat: ${plain(od1.chatMarkdown.join("")).slice(-240)}]`}`,
+        odSaid(od1) && !odSaid(od2) && /redirect/i.test(plain(od1.chatMarkdown.join(""))) && logLines.some((l) => /OpenCode 1 at \S+ is deprecated/.test(l)));
+
     // Tripwire: the handler must never go back to reading the folder pointer for
     // continuity, which is exactly how this bug was written in the first place.
     add(
@@ -2849,7 +2861,7 @@ function collectConfigProperties(configuration) {
     add("GD a turn writes no transcript at all", !fs.existsSync(path.join(work, "sessions", "ses_test.md")));
 
     // HA: the extension had no surface of its own. With no `icon` in the manifest
-    // the Extensions view AND the @opencode chat avatar both fell back to the
+    // the Extensions view AND the @oc chat avatar both fell back to the
     // default placeholder (the avatar derives from the extension icon; there is no
     // per-participant icon), and `contributes.menus` held only commandPalette so no
     // command reached a toolbar. v169 retires opencode-16.svg/opencode.svg; the
@@ -4629,6 +4641,14 @@ const lbProvider = (global.__participant || {}).followupProvider;
     add("NF an offer after a dash, in participle form, reads as an action", nfLabels(nfLane).join("|") === "Walk through the claim-anchor and documentation checks");
     const nfOr = nf("dev", "The fix is on a scratch branch. Should I merge it into main or open a PR?");
     add("NF 'X or Y' between two actions is two chips", nfLabels(nfOr).join("|") === "Merge it into main|Open a PR" && nfOr.every((c) => c.command === "dev"));
+    // 0.0.243: "use A or B" is one verb over two objects. It was ONE chip that repeated the
+    // question ("Use a cookie or a header for the token"); the verb now goes to each object.
+    const nfVerbOr = nf("plan", "Both approaches work. Should I use a cookie or a header for the token?");
+    add(`NF 'verb A or B' is a chip per object, the verb shared (${nfLabels(nfVerbOr).join(" | ")})`, nfLabels(nfVerbOr).join("|") === "Use a cookie|Use a header for the token");
+    const nfVerbAt = nf("plan", "Do you want me to look at the cache or the database layer?");
+    add(`NF …the verb keeps its particle (${nfLabels(nfVerbAt).join(" | ")})`, nfLabels(nfVerbAt).join("|") === "Look at the cache|Look at the database layer" && nfVerbAt.every((c) => c.command === "plan"));
+    const nfVerbOdd = nf("plan", "Want me to compare Postgres or MySQL performance?");
+    add(`NF …and an alternative that is no object of the verb gives no chip (${nfLabels(nfVerbOdd).join(" | ")})`, nfVerbOdd.length === 0);
     const nfWalk = nf("plan", "That's the flow. Would you like me to walk you through the SSE demultiplexer next?");
     add("NF the agent's 'you' becomes the user's 'me', and a trailing 'next' is dropped", nfLabels(nfWalk).join("|") === "Walk me through the SSE demultiplexer");
     const nfChoice = nf("plan", "Both work. Which do you prefer: integer cents or decimal.js?");
@@ -5238,22 +5258,22 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         await registeredCommands.get("opencodeCopilotBridge.quickActions")();
         const opened = executed.filter((c) => c[0] === "workbench.action.chat.open");
         // v190: Ask OpenCode merged into New session (both opened a chat with
-        // @opencode typed); New session does it in a NEW chat.
+        // @oc typed); New session does it in a NEW chat.
         add("QA Quick Actions leads with New session; Ask OpenCode is gone", !!picked && /New session/.test(picked[0].label) && !picked.some((i) => /Ask OpenCode/.test(i.label)));
         add("QA Quick Actions offers Worktrees… (0.0.229)", !!picked && picked.some((i) => /Worktrees…/.test(i.label)));
         add(
-            "QA New session opens a new chat, types @opencode and sends nothing",
-            executed.some((c) => c[0] === "workbench.action.chat.newChat") && opened.length === 1 && opened[0][1].query === "@opencode " && opened[0][1].isPartialQuery === true
+            "QA New session opens a new chat, types @oc and sends nothing",
+            executed.some((c) => c[0] === "workbench.action.chat.newChat") && opened.length === 1 && opened[0][1].query === "@oc " && opened[0][1].isPartialQuery === true
         );
         executed.length = 0;
         await registeredCommands.get("opencodeCopilotBridge.retryLast")();
         add(
             "QA 'OpenCode: Ask in Chat' from the palette does the same",
-            executed.length === 1 && executed[0][1].query === "@opencode " && executed[0][1].isPartialQuery === true
+            executed.length === 1 && executed[0][1].query === "@oc " && executed[0][1].isPartialQuery === true
         );
         executed.length = 0;
         await registeredCommands.get("opencodeCopilotBridge.retryLast")("fix the loop");
-        add("QA an explicit prompt is sent as given", executed.length === 1 && executed[0][1].query === "@opencode fix the loop" && !executed[0][1].isPartialQuery);
+        add("QA an explicit prompt is sent as given", executed.length === 1 && executed[0][1].query === "@oc fix the loop" && !executed[0][1].isPartialQuery);
         vscodeStub.commands.executeCommand = realExec;
         vscodeStub.window.showQuickPick = realPick;
     }
@@ -7225,7 +7245,7 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
     ext.deactivate();
     add("GC deactivate does not resurrect the usage store", globalMemento.get("opencode.usage.v1") === undefined);
 
-    // IL (v186): @opencode in inline chat (Ctrl+I). The manifest half guards the
+    // IL (v186): @oc in inline chat (Ctrl+I). The manifest half guards the
     // stable-host trap measured in chatParticipant.contribution.ts (main): a
     // participant declaring `locations` without the chatParticipantAdditions
     // proposal is SKIPPED — so the panel participant must never declare it.
@@ -7235,8 +7255,8 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
     const ilInline = ilParts.find((p) => p.id === "opencodeCopilotBridge.inline");
     add("IL the panel participant declares no locations (a stable host would skip it)", Boolean(ilMain) && ilMain.locations === undefined);
     add(
-        "IL the inline participant is @opencode in the editor only",
-        Boolean(ilInline) && ilInline.name === "opencode" && JSON.stringify(ilInline.locations) === JSON.stringify(["editor"])
+        "IL the inline participant is @oc in the editor only",
+        Boolean(ilInline) && ilInline.name === "oc" && JSON.stringify(ilInline.locations) === JSON.stringify(["editor"])
     );
     add("IL the only API proposal is chatParticipantAdditions", JSON.stringify(ilPkg.enabledApiProposals) === JSON.stringify(["chatParticipantAdditions"]));
     add("IL the inline participant has its activation event", ilPkg.activationEvents.includes("onChatParticipant:opencodeCopilotBridge.inline"));
@@ -7305,7 +7325,7 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
     // MB (v187): followups hardening. A chip with nothing to send is left out
     // (never thrown — provideFollowups would lose every chip), and the JSON's
     // cross-references are checked here, at build time, by the same function
-    // activation logs with. A broken JSON must not stop @opencode activating.
+    // activation logs with. A broken JSON must not stop @oc activating.
     {
         const mbNoText = (() => {
             try {
@@ -7789,7 +7809,7 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
 
     // ==================== v190 ====================
     // NS: "Ask OpenCode" and "New session" merged. New session = a new chat
-    // with @opencode typed (a new thread is a new session); nothing is sent.
+    // with @oc typed (a new thread is a new session); nothing is sent.
     {
         const executed = [];
         const realExec = vscodeStub.commands.executeCommand;
@@ -8003,16 +8023,16 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         add("PW pages count lanes (step 1, 2, 3)", pages.slice(0, 3).map((p) => p.step).join() === "1,2,3" && /lane 2/.test(pages[1].title));
         add("PW Submit appears from two lanes on, as a button and as the last item", pages[1].buttons === 0 && !pages[1].items.some((l) => /Submit/.test(l)) && pages[2].buttons === 1 && /Submit — insert 2 lanes/.test(pages[2].items[pages[2].items.length - 1]));
         add("PW Submit inserts the command into the chat input and sends nothing", q1.length === 1 && q1[0].isPartialQuery === true && !fs.existsSync(path.join(work, "fake-ok.js.argv")) && w1.r.metadata.kind === "composed");
-        const lanesBack = ext.__test.splitLanes(q1[0].query.replace(/^@opencode \/parallel /, "")).map((l) => ext.__test.splitModelPrefix(l));
-        add("PW the inserted command splits back into exactly those lanes and models", q1[0].query.startsWith("@opencode /parallel ") && lanesBack.length === 2 && lanesBack[0].model === "acme-gateway/Tundra" && lanesBack[0].task === "review auth" && !lanesBack[1].model && lanesBack[1].task === "list deps");
+        const lanesBack = ext.__test.splitLanes(q1[0].query.replace(/^@oc \/parallel /, "")).map((l) => ext.__test.splitModelPrefix(l));
+        add("PW the inserted command splits back into exactly those lanes and models", q1[0].query.startsWith("@oc /parallel ") && lanesBack.length === 2 && lanesBack[0].model === "acme-gateway/Tundra" && lanesBack[0].task === "review auth" && !lanesBack[1].model && lanesBack[1].task === "list deps");
         const chipsOf = (r) => global.__participant.followupProvider.provideFollowups(r, {}, stream().token);
         const w1Chips = chipsOf(w1.r);
-        add("PW the reply shows the command; its one chip runs those lanes, and there is no button", w1.text.includes(q1[0].query) && w1.buttons.length === 0 && w1Chips.length === 1 && w1Chips[0].command === "parallel" && w1Chips[0].prompt === q1[0].query.replace(/^@opencode \/parallel /, ""));
+        add("PW the reply shows the command; its one chip runs those lanes, and there is no button", w1.text.includes(q1[0].query) && w1.buttons.length === 0 && w1Chips.length === 1 && w1Chips[0].command === "parallel" && w1Chips[0].prompt === q1[0].query.replace(/^@oc \/parallel /, ""));
         add("PW the composed metadata carries its text as composedLanes, never lanes", typeof w1.r.metadata.composedLanes === "string" && w1.r.metadata.lanes === undefined);
         add("RV every composer label is an icon alone, so a typed task never matches or reorders it", pages.length >= 3 && pages.every((p) => p.iconOnly) && !pages.some((p) => p.items.some((l) => l.includes("`"))));
 
         const w2 = await pwTurn([{ type: "grep a | wc -l" }, { type: "grep `a | wc -l`" }, { type: "list deps" }, { type: "and a third", pick: "Submit" }]);
-        const lanes2 = ext.__test.splitLanes(insertedQuery()[0].query.replace(/^@opencode \/parallel /, ""));
+        const lanes2 = ext.__test.splitLanes(insertedQuery()[0].query.replace(/^@oc \/parallel /, ""));
         add("PW a task that would split is refused on its page, and the lane is not added", /would split this into 2 lanes/.test(pages[1].title) && pages[1].step === 1);
         add("PW backticks make it one lane; the Submit item also takes the lane typed on its page", lanes2.length === 3 && lanes2[0] === "grep `a | wc -l`" && lanes2[2] === "and a third" && w2.r.metadata.kind === "composed");
 
@@ -8022,12 +8042,12 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         plan([{ type: "a" }, { type: "b" }, { button: true }]);
         await registeredCommands.get("opencodeCopilotBridge.composeParallel")();
         quickPickScript = undefined;
-        add("PW the palette command composes and inserts the same way", insertedQuery().length === 1 && /^@opencode \/parallel a\n---\nb$/.test(insertedQuery()[0].query));
+        add("PW the palette command composes and inserts the same way", insertedQuery().length === 1 && /^@oc \/parallel a\n---\nb$/.test(insertedQuery()[0].query));
         add("PW lane text that starts with a model prefix is refused", Boolean(ext.__test.laneProblem("m:tundra x")) && !ext.__test.laneProblem("review the models: list"));
 
         // RV: a model id holding a colon survives the composer's round trip.
         await pwTurn([{ type: "review auth", pick: "qwen2.5-coder:7b" }, { type: "list deps" }, { button: true }]);
-        const rvBack = ext.__test.splitLanes(insertedQuery()[0].query.replace(/^@opencode \/parallel /, "")).map((l) => ext.__test.splitModelPrefix(l));
+        const rvBack = ext.__test.splitLanes(insertedQuery()[0].query.replace(/^@oc \/parallel /, "")).map((l) => ext.__test.splitModelPrefix(l));
         const smp = ext.__test.splitModelPrefix;
         add("RV a model id with a colon is kept whole, with its task", rvBack[0].model === "ollama/qwen2.5-coder:7b" && rvBack[0].task === "review auth" && smp("m:openrouter/x/deepseek-r1:free go").model === "openrouter/x/deepseek-r1:free");
         add("RV a trailing colon or comma after the model is still punctuation", smp("m:tundra: review").model === "tundra" && smp("m:tundra: review").task === "review" && smp("m:tundra,review").model === "tundra" && smp("m:tundra,review").task === "review");
@@ -8770,12 +8790,31 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
             process.env.FAKE_OC2_VERSION = "2.3.2";
             settings.executable = writeFake("fake-tw232.js", [], `if (!process.argv.includes('--version') || true) require(${JSON.stringify(path.join(__dirname, "fixtures", "fake-opencode2.js"))})(process.argv);\n`);
             fs.rmSync(twRecord, { force: true });
+            ext.__test.resetOpenCode1Deprecation();
             const tw232 = stream();
             await global.__handler({ prompt: "explain the cart on 2.3.2 [[probe:text]]" }, { history: [] }, tw232.response, tw232.token);
             const tw232Chat = plain(tw232.chatMarkdown.join(""));
             const tw232Outside = logLines.filter((l) => /OpenCode 2\.3\.2 on \S+ is outside the tested/.test(l)).length;
             add(`TW 2.3.2 runs inside the tested range: sent, and nothing said it is outside${tw232Outside ? ` (${tw232Outside} said so)` : ""}${/Hello from the scripted model/.test(tw232Chat) ? "" : ` [chat: ${tw232Chat.slice(0, 200)}]`}`,
                 /Hello from the scripted model\./.test(tw232Chat) && !/Nothing was sent/.test(tw232Chat) && !/outside the versions/.test(tw232Chat) && tw232Outside === 0);
+            add("OD …a finished turn on OpenCode 2 says nothing about OpenCode 1", /Hello from the scripted model\./.test(tw232Chat) && !/OpenCode 1 is deprecated/.test(tw232Chat));
+            // BT (0.0.243): from 2.3.0 a subagent call returns at once, "working in the background
+            // (sessionID: …)" — the wire's own 2.3.0 frames — and its result reaches the parent
+            // as a <subagent> message on the NEXT prompt (2.3.2 measured). So a chip sends that
+            // prompt. Red first: the child id was not read, and no chip was offered.
+            const bt = stream();
+            const btR = await global.__handler({ prompt: "delegate the cart review [[probe:task@explore:text]]" }, { history: [] }, bt.response, bt.token);
+            const btSid = btR?.metadata?.sessionId;
+            const btChips = global.__participant.followupProvider.provideFollowups(btR, {}, stream().token) || [];
+            add(`BT a subagent left working in the background is kept in the turn's metadata, its child id read (${JSON.stringify(btR?.metadata?.backgroundTask)})`,
+                typeof btSid === "string" && JSON.stringify(btR?.metadata?.backgroundTask) === JSON.stringify({ agent: "explore", description: "probe subagent", taskId: `${btSid}c1` }));
+            add(`BT …and the first chip collects its result, under the turn's kind (${btChips.map((c) => c.label).join(" | ")})`,
+                btChips.length >= 1 && btChips[0].label.endsWith("Collect explore") && btChips[0].command === "plan" &&
+                    btChips[0].prompt === P.COLLECT_TASK.replace("{agent}", "explore").replace("{description}", "probe subagent").replace("{task}", `${btSid}c1`));
+            const btSync = stream();
+            const btSyncR = await global.__handler({ prompt: "answer the cart directly [[probe:text]]" }, { history: [] }, btSync.response, btSync.token);
+            add("BT …a turn with no background subagent has no such chip", !btSyncR?.metadata?.backgroundTask &&
+                !(global.__participant.followupProvider.provideFollowups(btSyncR, {}, stream().token) || []).some((c) => /Collect/.test(c.label)));
             ext.deactivate();
             process.env.FAKE_OC2_VERSION = "3.0.0";
             settings.executable = writeFake("fake-tw3.js", [], `if (!process.argv.includes('--version') || true) require(${JSON.stringify(path.join(__dirname, "fixtures", "fake-opencode2.js"))})(process.argv);\n`);
@@ -9638,6 +9677,18 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         add(`MP a call it cannot run says why as a tool result, and sends nothing${mpRefusals.length ? ` (ran: ${mpRefusals.join(", ")})` : ""}`, mpRefusals.length === 0 && mpA.posts("prompt").length === mpSent);
         const mpNoDev = await mpA.call("opencode_dev", { prompt: "edit [[probe:text]]", folder: mpProject });
         add("MP opencode_dev does not exist without --dev", mpNoDev.error?.code === -32602 && mpA.posts("prompt").length === mpSent);
+        // 0.0.243: a client with no chips gets the answer's own next moves (chat's natural
+        // chips) and a background subagent's pending result as lines its model can act on.
+        // Red first: the result ended at the sessionId line.
+        const mpOffer = await mpA.finished(await mpA.call("opencode_ask", { prompt: "the stale cookie [[say:The cookie is stale. If you'd like, I can also explain how the retry loop works.]]", sessionId: mpSession }));
+        add(`MP the answer's own offer comes back as a next step, with the tool and session that run it${/Next steps/.test(mpOffer.text) ? "" : ` [${mpOffer.text.slice(-200)}]`}`,
+            mpOffer.facts.status === "done" && /Next steps this answer offers[^\n]*sessionId "ses_/.test(mpOffer.text) && mpOffer.text.includes("- Explain how the retry loop works (opencode_ask)"));
+        const mpEditOffer = await mpA.finished(await mpA.call("opencode_ask", { prompt: "the tests [[say:The tests need a database. Want me to add a mock instead?]]", sessionId: mpSession }));
+        add("MP …an editing offer is not listed when opencode_dev is not offered", mpEditOffer.facts.status === "done" && !/Next steps/.test(mpEditOffer.text) && !/opencode_dev/.test(mpEditOffer.text));
+        add("MP …and an answer that offers nothing lists nothing", mpHello(mpNext) && !/Next steps/.test(mpNext.text));
+        const mpBg = await mpA.finished(await mpA.call("opencode_ask", { prompt: "delegate the review [[probe:task@explore:text]]", sessionId: mpSession }));
+        add(`MP a subagent left working in the background says how to collect its result${/in the background/.test(mpBg.text) ? "" : ` [${mpBg.text.slice(-240)}]`}`,
+            mpBg.facts.status === "done" && /The explore subagent \(probe subagent\) is still working in the background/.test(mpBg.text) && mpBg.text.includes(`call opencode_ask with sessionId "${mpSession}"`));
         const mpPort = Number((mpA.log().match(/serve --port (\d+)/) || [])[1]);
         const mpAnswers = async () => {
             try {
@@ -9761,7 +9812,7 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         Object.assign(vscodeStub.workspace, { openTextDocument: async (o) => ((doc231 = o.content), {}) });
         vscodeStub.window.showTextDocument = async () => undefined;
         await registeredCommands.get("opencodeCopilotBridge.diagnose")();
-        add("HR Diagnose: a registered @opencode answers in a Local session; harness settings read, unset", /\| chat harness \| @opencode answers in a \*\*Local\*\* session only/.test(doc231) && doc231.includes("| harness settings | chat.defaultToCopilotHarness unset · chat.editor.localAgent.enabled unset |"));
+        add("HR Diagnose: a registered @oc answers in a Local session; harness settings read, unset", /\| chat harness \| @oc answers in a \*\*Local\*\* session only/.test(doc231) && doc231.includes("| harness settings | chat.defaultToCopilotHarness unset · chat.editor.localAgent.enabled unset |"));
 
         const saved231 = { chat: vscodeStub.chat, commands: new Map(registeredCommands), provider: gitScanProvider, warn: vscodeStub.window.showWarningMessage };
         const toasts231 = [];
@@ -9789,17 +9840,17 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         // The prewarm timer: no server after deactivate (§5).
         for (const d of ctx231.subscriptions) d.dispose?.();
         add("HR activate without a chat participant API throws nothing", threw231 === "");
-        add("HR palette commands and the gitScan provider still register without @opencode",
+        add("HR palette commands and the gitScan provider still register without @oc",
             ["diagnose", "quickActions", "worktrees", "gitScanConfig", "newSession"].every((c) => registeredCommands.has(`opencodeCopilotBridge.${c}`)) && !!gitScanProvider);
         const log231 = logLines.slice(logFrom231).join("\n");
-        add("HR the log names VS Code, the harness settings and why @opencode is missing",
-            log231.includes("chat harness: VS Code 1.136.0 · chat.defaultToCopilotHarness true · chat.editor.localAgent.enabled unset · @opencode not registered: "));
-        add("HR one toast says @opencode cannot run, nothing tries the inline participant",
-            toasts231.length === 1 && toasts231[0].includes("@opencode cannot run") && !log231.includes("inline @opencode unavailable"));
+        add("HR the log names VS Code, the harness settings and why @oc is missing",
+            log231.includes("chat harness: VS Code 1.136.0 · chat.defaultToCopilotHarness true · chat.editor.localAgent.enabled unset · @oc not registered: "));
+        add("HR one toast says @oc cannot run, nothing tries the inline participant",
+            toasts231.length === 1 && toasts231[0].includes("@oc cannot run") && !log231.includes("inline @oc unavailable"));
         doc231 = "";
         await registeredCommands.get("opencodeCopilotBridge.diagnose")?.();
         add("HR Diagnose names the failure and the harness setting",
-            /\| chat harness \| \S+ @opencode not registered: .*palette commands and gitScan still work \|/.test(doc231) && doc231.includes("chat.defaultToCopilotHarness true"));
+            /\| chat harness \| \S+ @oc not registered: .*palette commands and gitScan still work \|/.test(doc231) && doc231.includes("chat.defaultToCopilotHarness true"));
 
         vscodeStub.chat = saved231.chat;
         vscodeStub.window.showWarningMessage = saved231.warn;
@@ -9809,7 +9860,7 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         delete settings.defaultToCopilotHarness;
 
         // 0.0.235 HR (M3): VS Code shows the Local session target only while
-        // chat.editor.localAgent.enabled is not false (1.144.0 bundle), and @opencode
+        // chat.editor.localAgent.enabled is not false (1.144.0 bundle), and @oc
         // answers only there: say it outside chat, once, where the setting is.
         const toasts235 = [];
         vscodeStub.window.showWarningMessage = (text, ...items) => (toasts235.push([String(text), items]), Promise.resolve(undefined));
@@ -9823,11 +9874,11 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         const first235 = toasts235.length;
         activate235();
         add(`HR Local hidden: one warning names chat.editor.localAgent.enabled, with Open Settings (${JSON.stringify(toasts235[0] ?? null).slice(0, 160)})`,
-            first235 === 1 && /chat\.editor\.localAgent\.enabled/.test(toasts235[0]?.[0] ?? "") && /@opencode/.test(toasts235[0]?.[0] ?? "") && (toasts235[0]?.[1] ?? []).includes("Open Settings"));
+            first235 === 1 && /chat\.editor\.localAgent\.enabled/.test(toasts235[0]?.[0] ?? "") && /@oc\b/.test(toasts235[0]?.[0] ?? "") && (toasts235[0]?.[1] ?? []).includes("Open Settings"));
         add("HR …said once: the next window does not repeat it", toasts235.length === 1);
         doc231 = "";
         await registeredCommands.get("opencodeCopilotBridge.diagnose")?.();
-        add("HR Diagnose: @opencode is registered, but VS Code offers no Local session", /\| chat harness \| \S+ @opencode is registered, but chat\.editor\.localAgent\.enabled is off/.test(doc231));
+        add("HR Diagnose: @oc is registered, but VS Code offers no Local session", /\| chat harness \| \S+ @oc is registered, but chat\.editor\.localAgent\.enabled is off/.test(doc231));
         delete settings["editor.localAgent.enabled"];
         vscodeStub.window.showWarningMessage = saved231.warn;
         delete vscodeStub.workspace.openTextDocument;

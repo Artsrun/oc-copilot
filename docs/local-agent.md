@@ -112,10 +112,10 @@ OpenCode 1"; report that instead of changing it.
 
 1. **OpenCode: Diagnose**. Report the rows `version`, `server`, `chat harness`
    and `harness settings`.
-2. A new chat with **Local** as the session target: `@opencode /ping`. If Local
+2. A new chat with **Local** as the session target: `@oc /ping`. If Local
    is not offered, report that and any warning shown outside chat.
 3. Reload the window and at once send, in a Local chat,
-   `@opencode explain what src/core.ts does`. It must answer, not say "Nothing
+   `@oc explain what src/core.ts does`. It must answer, not say "Nothing
    was sent". This is the first-turn check: it only tests the fix on an
    OpenCode that lists agents in stages (2.0, 2.1, 2.2.7, 2.3.x), so report
    the version with the result.
@@ -138,7 +138,7 @@ Finish with a short table: step, result, anything the owner has to decide.
 
 ## Task 2: route measurements
 
-Why: `@opencode` answers in a Local chat session only, and VS Code's docs say
+Why: `@oc` answers in a Local chat session only, and VS Code's docs say
 Local "will be removed in February 2027". Two routes could replace it, and
 neither has been run in a real VS Code (REFS 0.0.239, 0.0.241). Route T is
 built as an alpha; these measurements say whether it works where it has to,

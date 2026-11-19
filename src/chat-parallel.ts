@@ -70,8 +70,8 @@ export async function runParallelTurn(p: ParallelTurn): Promise<vscode.ChatResul
         response.markdown(
             splitLanes(fan.task).length > 1
                 ? "`models:` runs **one** task on each model, so it takes no `|`. For different tasks, put `m:<model>` in front of each lane:\n\n" +
-                "`@opencode /parallel m:tundra review auth | m:oasis read the logs`"
-                : "Name at least two models and the task: `@opencode /parallel models:tundra,oasis review the auth flow`"
+                "`@oc /parallel m:tundra review auth | m:oasis read the logs`"
+                : "Name at least two models and the task: `@oc /parallel models:tundra,oasis review the auth flow`"
         );
         return { metadata: { kind: "parallel" } };
     }
@@ -84,7 +84,7 @@ export async function runParallelTurn(p: ParallelTurn): Promise<vscode.ChatResul
     if (specsRaw.length < 2) {
         response.markdown(
             "Give me at least two lanes separated by `|`, `;;` or a `---` line (not inside backticks).\n\n" +
-            "Example: `@opencode /parallel audit error handling | list unused deps | " +
+            "Example: `@oc /parallel audit error handling | list unused deps | " +
             "review the auth flow`"
         );
         return { metadata: { kind: "parallel", lanesMissing: true } };

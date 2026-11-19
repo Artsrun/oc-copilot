@@ -41,7 +41,7 @@ exports.WORKTREE_TURN = 0;
 const BACKOFF_KEY = "opencodeCopilotBridge.chipBackoff";
 const BACKOFF_AFTER = 3;
 const BACKOFF_MAX_HOLD = 32;
-const NEVER_HELD = new Set(["offer", "choice", "RESUME_TASK", "RERUN_TASK", "CUT_OFF"]);
+const NEVER_HELD = new Set(["offer", "choice", "RESUME_TASK", "RERUN_TASK", "COLLECT_TASK", "CUT_OFF"]);
 const readBackoff = () => {
     const stored = host_1.extensionContext?.globalState?.get(BACKOFF_KEY);
     const message = typeof stored?.message === "number" && Number.isFinite(stored.message) ? stored.message : 0;
@@ -257,6 +257,16 @@ function stateChips(metadata, kind) {
         if (chip) {
             chip.label = `${(0, followups_1.chipLabel)(key)} ${task.agent}`;
             out.push({ ...chip, kind: key });
+        }
+    }
+    const waiting = metadata.backgroundTask;
+    if (waiting && typeof waiting.agent === "string" && waiting.agent) {
+        const description = typeof waiting.description === "string" && waiting.description ? waiting.description : waiting.agent;
+        const text = (0, followups_1.fillPrompt)("COLLECT_TASK", { agent: waiting.agent, description, task: typeof waiting.taskId === "string" ? waiting.taskId : "" });
+        const chip = (0, followups_1.chipOf)("COLLECT_TASK", kind, text);
+        if (chip) {
+            chip.label = `${(0, followups_1.chipLabel)("COLLECT_TASK")} ${waiting.agent}`;
+            out.push({ ...chip, kind: "COLLECT_TASK" });
         }
     }
     if (typeof metadata.compact === "string" && metadata.compact) {

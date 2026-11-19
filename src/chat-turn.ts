@@ -9,7 +9,7 @@ import { mark, prompt as promptText } from "./followups";
 import { ChatKind, RunMetrics, RunOptions, StepRecord, finalizeStepStatuses, toolOutputBytes } from "./metrics";
 import { composeVisibleAnswer, createEchoGate, createLeakGate, isPromptEcho, metricsLogLine, scrubLeakedContext } from "./format";
 import { createFileLinker, emitAnswerParts, emitReferences, stepUris } from "./context";
-import { dataFolderRefusal, isDataFolderClash, isIdentityUnknown, isNotOpenCode1, openCode1Refusal, plainError, versionNotice, warmServer } from "./net";
+import { dataFolderRefusal, isDataFolderClash, isIdentityUnknown, isNotOpenCode1, openCode1Deprecation, openCode1Refusal, plainError, versionNotice, warmServer } from "./net";
 import { isTurnPermissionError } from "./server-session";
 import { planAgentNotice, planAgentSetting, resolvePlanAgent } from "./agents";
 import { enforcedReadOnlyNotice } from "./enforce";
@@ -530,6 +530,10 @@ async function finishTurn(t: Turn, live: Live, outcome: Outcome): Promise<vscode
     if (enforcedNote) {
         response.markdown(`\n\n> ${mark("step")} ${enforcedNote}`);
     }
+    const legacyNote = metrics && !metrics.cancelled ? openCode1Deprecation(t.executable) : undefined;
+    if (legacyNote) {
+        response.markdown(`\n\n> ${mark("warn")} ${legacyNote}`);
+    }
 
     // Files the agent read or wrote: the "Used N references" list.
     if (metrics) {
@@ -606,6 +610,7 @@ async function finishTurn(t: Turn, live: Live, outcome: Outcome): Promise<vscode
                 : `${Math.round(contextTokens / 1000)}k`
             : undefined;
     const failedTask = metrics?.failedTasks?.[0];
+    const backgroundTask = metrics?.backgroundTasks?.[0];
     const sentVariant = variantFor(lastAttempt);
     if (sessionId && metrics && !metrics.error && !metrics.timedOut && !metrics.cancelled) {
         rememberFollowups(
@@ -638,6 +643,9 @@ async function finishTurn(t: Turn, live: Live, outcome: Outcome): Promise<vscode
             ...(compactOffer ? { compact: compactOffer } : {}),
             ...(failedTask
                 ? { failedTask: { agent: failedTask.agent, description: truncate(failedTask.description, 80), ...(failedTask.sessionId ? { taskId: safeSessionId(failedTask.sessionId) } : {}) } }
+                : {}),
+            ...(backgroundTask && !failedTask
+                ? { backgroundTask: { agent: backgroundTask.agent, description: truncate(backgroundTask.description, 80), ...(backgroundTask.sessionId ? { taskId: safeSessionId(backgroundTask.sessionId) } : {}) } }
                 : {}),
             ...(cutOff ? { truncated: true } : {}),
             ...(metrics?.timedOut && metrics.stuckTool && !metrics.cancelled ? { stuckTool: truncate(metrics.stuckTool, 40) } : {}),

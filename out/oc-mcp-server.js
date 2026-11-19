@@ -43,12 +43,14 @@ const node_url_1 = require("node:url");
 const agents_1 = require("./agents");
 const core_1 = require("./core");
 const format_1 = require("./format");
+const natural_1 = require("./natural");
+const followups_1 = require("./followups");
 const net_1 = require("./net");
 const prompt_1 = require("./prompt");
 const proc_1 = require("./proc");
 const run_server_1 = require("./run-server");
 const server_session_1 = require("./server-session");
-const VERSION = "0.0.242";
+const VERSION = "0.0.243";
 const SERVER_INFO = { name: "opencode-bridge", version: VERSION };
 const MODERN = "2026-07-28";
 const LEGACY = ["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"];
@@ -351,6 +353,26 @@ function statusOf(job) {
     return job.metrics?.error || job.metrics?.timedOut ? "failed" : "done";
 }
 const textResult = (text, isError = false) => ({ content: [{ type: "text", text }], ...(isError ? { isError: true } : {}) });
+function nextSteps(job, sessionId, answer) {
+    const out = [];
+    const ask = job.kind === "dev" ? "opencode_dev" : "opencode_ask";
+    const waiting = job.metrics?.backgroundTasks?.[0];
+    if (waiting) {
+        out.push(`The ${waiting.agent} subagent (${(0, core_1.truncate)(waiting.description || waiting.agent, 80)}) is still working in the background; ` +
+            `OpenCode gives this session its result with the next prompt. To collect it, call ${ask} with sessionId "${sessionId}" and ask for that result.`);
+    }
+    const steps = (0, natural_1.naturalFollowups)({ agent: job.agent, answer, steps: job.steps }, 3)
+        .filter((c) => c.command === "plan" || (c.command === "dev" && ARGS.dev))
+        .map((c) => `- ${plainLabel(c.label, c.kind)} (${c.command === "dev" ? "opencode_dev" : "opencode_ask"})`);
+    if (steps.length) {
+        out.push(`Next steps this answer offers; send one as the prompt with sessionId "${sessionId}":\n${steps.join("\n")}`);
+    }
+    return out;
+}
+const plainLabel = (label, kind) => {
+    const kao = Object.hasOwn(followups_1.NATURAL_KAO, kind) ? followups_1.NATURAL_KAO[kind] : "";
+    return (kao && label.startsWith(`${kao} `) ? label.slice(kao.length + 1) : label).trim();
+};
 function jobResult(job) {
     const status = statusOf(job);
     const m = job.metrics;
@@ -397,6 +419,9 @@ function jobResult(job) {
     parts.push(...job.notes);
     if (m?.sessionId && status !== "cancelled") {
         parts.push(`To continue this conversation, pass sessionId "${m.sessionId}".`);
+        if (status === "done") {
+            parts.push(...nextSteps(job, m.sessionId, answer));
+        }
     }
     parts.push(line);
     return textResult(parts.join("\n\n"), status !== "done");

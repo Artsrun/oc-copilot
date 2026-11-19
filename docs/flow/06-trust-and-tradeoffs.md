@@ -66,7 +66,7 @@ flowchart LR
 
 | Risk | Why it matters |
 | --- | --- |
-| Participant API deprecated | The biggest one. VS Code's Copilot harness has no participants, and from 1.142 it is progressively the default for new chats; the API stays for Local, which VS Code's docs say "will be removed in February 2027" (1.146 notes), and a managed policy can already disable Local. `@opencode` then cannot run at all (page 8). No `@deprecated` tag yet: `api-watch.yml` fails the day one appears |
+| Participant API deprecated | The biggest one. VS Code's Copilot harness has no participants, and from 1.142 it is progressively the default for new chats; the API stays for Local, which VS Code's docs say "will be removed in February 2027" (1.146 notes), and a managed policy can already disable Local. `@oc` then cannot run at all (page 8). No `@deprecated` tag yet: `api-watch.yml` fails the day one appears |
 | Undocumented OpenCode behaviour | Pinned to the measured ranges (`TESTED_OPENCODE`, `TESTED_OPENCODE2` in `net.ts`): `?directory=` semantics, message-vs-session ids, fork dropping permission rules, session rules that only append, attach kill not stopping the run. A server outside a range earns one line saying so; nothing negotiates, so an update can still break it |
 | OpenCode 2 | On by default since 0.0.238, with `opencode2: false` as the way out. 1.x cannot open a folder 2.x created (`dataHome`). The probes (to 2.3.2) use a scripted model: REFS has no real-model run on it, and a large 1.x folder's import is not measured |
 | Proposed API | `chatParticipantAdditions` blocks Marketplace publishing and needs cast hacks that rot as the API stabilises; only inline chat depends on it, and on stable it needs the runtime flag |

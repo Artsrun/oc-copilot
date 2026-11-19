@@ -6,6 +6,7 @@
 //
 // Env: FAKE_OC2_RECORD   file that gets one JSON line per request
 //      FAKE_OC2_VERSION  the version it names (default: the recording's)
+//      a prompt's `[[say:<text>]]` makes the text turn answer <text>
 //      FAKE_OC2_DROP=1   the server ignores the injected overrides (a 2.x that
 //                        does not apply them: the bridge must refuse plan turns)
 //      FAKE_OC2_AGENT_MODEL  `provider/id`: the plan agent's own model
@@ -181,7 +182,10 @@ module.exports = (argv) => {
                         data: { sessionID: "ses_ROOT", ...(type === "session.inbox.enqueued" ? { inboxID: "msg_initfail" } : {}), ...(type === "session.execution.failed" ? { error: { type: "instructions.unavailable", message: "Instruction initialization blocked by unavailable sources: core/instructions" } } : {}) }
                     })) }
                     : wire.turns[kind];
-                const frames = turn.frames.map((f) => f.split("ses_ROOT").join(sid).replace(/ses_CHILD(\d+)/g, (_, k) => `${sid}c${k}`));
+                // `[[say:<text>]]` (0.0.243): the recorded answer says <text> instead.
+                const say = String(json?.text ?? "").match(/\[\[say:([^\]]+)\]\]/)?.[1];
+                const frames = turn.frames.map((f) => f.split("ses_ROOT").join(sid).replace(/ses_CHILD(\d+)/g, (_, k) => `${sid}c${k}`))
+                    .map((f) => (say ? f.split("Hello from the scripted model.").join(JSON.stringify(say).slice(1, -1)) : f));
                 const inbox = JSON.parse(frames.find((f) => f.includes('"type":"session.inbox.enqueued"'))).data.inboxID;
                 turns.set(sid, { frames, at: 0, kind });
                 setTimeout(() => pump(sid), 10);

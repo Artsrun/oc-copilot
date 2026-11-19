@@ -21,7 +21,7 @@ Building, recording and installing the VSIX first is task 1 of
 
 ## Core
 
-1. **Connectivity and continuity.** `@opencode /ping` is healthy, its version
+1. **Connectivity and continuity.** `@oc /ping` is healthy, its version
    row ✓. `Remember this test label: BRIDGE-CHECK. Reply briefly.`, then
    `What test label did I ask you to remember?` → `BRIDGE-CHECK`; `/session`
    shows the session.
@@ -65,7 +65,7 @@ again on `auto` with `/dev`. If the model alters the text, record INCONCLUSIVE.
 matches `git status` (branch, HEAD, upstream, XY), with at most 40 file rows
 and the omitted count. `gitScan: false` removes it; an untrusted window has
 none until trust is granted; a host without the MCP provider API still
-activates `@opencode`.
+activates `@oc`.
 
 **OpenCode:** **OpenCode: gitScan config for opencode.json** copies a snippet
 (`node`, a global-storage `git-scan-server.js`, the first folder). Merge its
@@ -118,10 +118,10 @@ VS Code 1.142 or later for items 1 and 2; items 4 and 5 need the 2.x versions
 named, with `opencode2` on. Windows and macOS have the least coverage: say which
 OS each line ran on.
 
-1. **Harness** (0.0.231): a new chat in the Local session target: `@opencode /ping`
+1. **Harness** (0.0.231): a new chat in the Local session target: `@oc /ping`
    answers. **OpenCode: Diagnose** has the rows `chat harness` and `harness
    settings`, and Output › OpenCode has one `chat harness:` line at activation.
-   Record what a new chat in the Copilot target does with `@opencode`.
+   Record what a new chat in the Copilot target does with `@oc`.
 2. **Local hidden** (0.0.235): set `chat.editor.localAgent.enabled` to `false`,
    reload: one warning outside chat, with **Open Settings**; another reload does
    not repeat it; Diagnose names it. Set it back: reload, then off again warns again.
@@ -190,13 +190,13 @@ A real VS Code and a real model. Needs a 1.x and a 2.x OpenCode side by side
    against an empty side; clicking a row shows the base on the left.
 3. **Remove all without changes** asks once, removes the idle one and its
    `ai/…` branch, keeps the edited one.
-4. `@opencode /worktree` with no task lists them, with **Worktrees…**.
+4. `@oc /worktree` with no task lists them, with **Worktrees…**.
 
 ## 0.0.228 — quick pass (about 10 minutes)
 
 A trusted Git repository; remove the worktrees after (**Remove worktree**).
 
-1. **Prefixes**: `@opencode /worktree m:<short name> e:high add a hello.txt` →
+1. **Prefixes**: `@oc /worktree m:<short name> e:high add a hello.txt` →
    the branch is `ai/add-a-hello-txt-…`; Output › OpenCode, the run line has
    `--model <id>` and `--variant high` (or the server prompt line names them).
    `m:zzqx …` is refused and no new folder appears under `<repo>.worktrees/`.
@@ -220,11 +220,11 @@ A trusted Git repository; remove the worktrees after (**Remove worktree**).
    the log has no `[91m`.
 2. **Quiet start**: in a new chat, the first message shows no "New chat" or
    "text attachment" note; a slow tool call shows no `glob: {}` row.
-3. **`/worktree` continues**: `@opencode /worktree add a hello.txt`, then in the
+3. **`/worktree` continues**: `@oc /worktree add a hello.txt`, then in the
    same chat `make it say hi twice` → "Continuing in" the same folder, one
    folder under `<repo>.worktrees/`, and the log has no second
    `worktree … from`. **New worktree** opens a new chat with
-   `@opencode /worktree ` typed. Remove the worktree after.
+   `@oc /worktree ` typed. Remove the worktree after.
 
 ## Read-only checks (0.0.215–0.0.219, 1.x)
 

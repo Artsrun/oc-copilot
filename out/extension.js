@@ -79,15 +79,15 @@ function activate(context) {
         (0, session_1.setParticipantProblem)(err instanceof Error ? err.message : String(err));
     }
     const problem = (0, session_1.getParticipantProblem)();
-    core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] chat harness: VS Code ${vscode.version ?? "?"} · ${(0, session_1.harnessNote)()}${problem ? ` · @opencode not registered: ${problem}` : ""}`);
+    core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] chat harness: VS Code ${vscode.version ?? "?"} · ${(0, session_1.harnessNote)()}${problem ? ` · @oc not registered: ${problem}` : ""}`);
     if (problem) {
-        void vscode.window.showWarningMessage?.("OpenCode: this VS Code offers no chat participants, so @opencode cannot run. The palette commands and gitScan still work; OpenCode: Diagnose says why.");
+        void vscode.window.showWarningMessage?.("OpenCode: this VS Code offers no chat participants, so @oc cannot run. The palette commands and gitScan still work; OpenCode: Diagnose says why.");
     }
     else {
         const local = (0, session_1.localSessionProblem)();
         if (local && context.globalState?.get(LOCAL_NOTICE_KEY) !== local) {
             void context.globalState?.update(LOCAL_NOTICE_KEY, local);
-            void vscode.window.showWarningMessage?.(`OpenCode: ${local}, and @opencode answers only there. Turn the setting on, or see OpenCode: Diagnose.`, "Open Settings")?.then((pick) => pick && vscode.commands.executeCommand("workbench.action.openSettings", "chat.editor.localAgent.enabled"));
+            void vscode.window.showWarningMessage?.(`OpenCode: ${local}, and @oc answers only there. Turn the setting on, or see OpenCode: Diagnose.`, "Open Settings")?.then((pick) => pick && vscode.commands.executeCommand("workbench.action.openSettings", "chat.editor.localAgent.enabled"));
         }
         else if (!local && context.globalState?.get(LOCAL_NOTICE_KEY)) {
             void context.globalState?.update(LOCAL_NOTICE_KEY, undefined);
@@ -96,7 +96,7 @@ function activate(context) {
             context.subscriptions.push(participant(context, session_1.INLINE_PARTICIPANT_ID, (r, c, s, t) => (0, chat_1.handleChat)(r, c, s, t, { inline: true })));
         }
         catch (err) {
-            core_1.logChannel.appendLine(`inline @opencode unavailable: ${err instanceof Error ? err.message : String(err)}`);
+            core_1.logChannel.appendLine(`inline @oc unavailable: ${err instanceof Error ? err.message : String(err)}`);
         }
     }
     (0, commands_registry_1.registerCommands)(context);
@@ -209,6 +209,7 @@ exports.__test = {
     setStartupDeadline: net_1.setStartupDeadline,
     setReplyConfirmWait: runs_1.setReplyConfirmWait,
     resetChipBackoff: chat_boot_1.resetChipBackoff,
+    resetOpenCode1Deprecation: net_1.resetOpenCode1Deprecation,
     CHILD_MAX_ROWS: chat_boot_1.CHILD_MAX_ROWS,
     prewarmServer: agents_1.prewarmFolder,
     createLeakGate: format_1.createLeakGate,

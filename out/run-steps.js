@@ -114,6 +114,13 @@ function noteTask(part, metrics) {
     }
     const description = typeof input?.description === "string" ? input.description : "";
     const sessionId = typeof meta?.sessionId === "string" ? meta.sessionId : undefined;
+    if (state?.status === "completed" && meta?.background === true) {
+        const waiting = (metrics.backgroundTasks ??= []);
+        if (!waiting.some((t) => (sessionId && t.sessionId === sessionId) || (t.agent === agent && t.description === description))) {
+            waiting.push({ agent, description, sessionId });
+        }
+        return;
+    }
     if (state?.status !== "error" && meta?.interrupted !== true) {
         if (state?.status === "completed" && metrics.failedTasks) {
             metrics.failedTasks = metrics.failedTasks.filter((t) => !(sessionId && t.sessionId === sessionId) && !(t.agent === agent && t.description === description));

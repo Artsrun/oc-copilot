@@ -17,7 +17,10 @@ const textOf = (content: unknown): string =>
     Array.isArray(content) ? content.map((c) => (c && typeof (c as { text?: unknown }).text === "string" ? (c as { text: string }).text : "")).join("") : "";
 
 // A subagent's result names its session: `<subagent sessionID="ses_…" state="completed">`.
-const childOf = (output: string): string | undefined => output.match(/<subagent sessionID="([^"]+)"/)?.[1];
+// From 2.3.0 the call returns at once instead, "The subagent is working in the background
+// (sessionID: ses_…)", and the result reaches the parent on its next prompt (REFS 0.0.242).
+const BACKGROUND = /working in the background \(sessionID: (ses_[A-Za-z0-9_]+)\)/;
+const childOf = (output: string): string | undefined => output.match(/<subagent sessionID="([^"]+)"/)?.[1] ?? output.match(BACKGROUND)?.[1];
 
 /** A translator for one event stream: each v2 frame → the 1.x events it stands for. */
 export function v2Translator(): (frame: Frame) => Event[] {
@@ -94,7 +97,7 @@ export function v2Translator(): (frame: Frame) => Event[] {
                     input: known.input,
                     ...(output ? { output } : {}),
                     ...(type === "session.tool.failed" ? { error: typeof error === "string" ? error : typeof error?.message === "string" ? error.message : "tool failed" } : {}),
-                    metadata: { ...((d.metadata as Record<string, unknown> | undefined) ?? {}), ...(child ? { sessionId: child } : {}) },
+                    metadata: { ...((d.metadata as Record<string, unknown> | undefined) ?? {}), ...(child ? { sessionId: child } : {}), ...(BACKGROUND.test(output) ? { background: true } : {}) },
                     time: { start: known.start ?? created, end: created }
                 };
                 tools.delete(callID);

@@ -3,7 +3,7 @@
 As of 0.0.242 (tested OpenCode: 2.0.18–2.3.2, and 1.18.27–1.19.6).
 
 > **One-line truth** (´-ω-)
-> Copilot only routes a prompt, attachments and turn history to the `@opencode`
+> Copilot only routes a prompt, attachments and turn history to the `@oc`
 > participant, in a Local chat session. OpenCode then does **all** the work with
 > its **own** tools. No tool bridge in either direction. Copilot's model picker
 > is ignored. The other way in, for a harness with no participants: Copilot's own
@@ -20,7 +20,7 @@ As of 0.0.242 (tested OpenCode: 2.0.18–2.3.2, and 1.18.27–1.19.6).
 | 5 | [APIs touched](05-apis.md) | VS Code APIs, OpenCode CLI/HTTP/SSE (both majors), git, env |
 | 6 | [Trust, pros and cons](06-trust-and-tradeoffs.md) | Risks, strengths, next steps |
 | 7 | [Lanes, chips, effort, context](07-lanes-chips-effort.md) | What the next turn costs: fan-out, chips, variants, compaction |
-| 8 | [OpenCode 2 and the Copilot harness](08-opencode2-and-harness.md) | Which major runs, what differs, where `@opencode` can answer, OpenCode as MCP tools |
+| 8 | [OpenCode 2 and the Copilot harness](08-opencode2-and-harness.md) | Which major runs, what differs, where `@oc` can answer, OpenCode as MCP tools |
 
 Not a flow page: [../local-agent.md](../local-agent.md) holds the steps for a
 coding agent on the owner's machine (release, and the two route measurements

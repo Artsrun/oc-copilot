@@ -284,6 +284,25 @@ const notOpenCode1 = new Map<string, Error>();
 // the old file must not authorize the new one: file stats per run, no process.
 const cliIdentity = new Map<string, { file: string; v2: boolean; check: Promise<void> }>();
 const IDENTITY_TIMEOUT_MS = 6000;
+// The executables whose latest `--version` check passed: their major is known, not defaulted.
+const confirmedIdentity = new Set<string>();
+
+// OpenCode 1 is deprecated (0.0.243): it runs as before, and a window says so once,
+// after a finished turn on an executable `--version` named 1.x. Later releases drop it.
+let openCode1Said = false;
+export function openCode1Deprecation(executable: string): string | undefined {
+    if (openCode1Said || !confirmedIdentity.has(executable) || executableMajor(executable) !== 1) {
+        return undefined;
+    }
+    openCode1Said = true;
+    logChannel.appendLine(`[${stamp()}] OpenCode 1 at ${executable} is deprecated in this bridge`);
+    return "OpenCode 1 is deprecated in this bridge, and a later release drops it. " +
+        "OpenCode 2 (`@opencode/cli`) runs through its own API with the same chat: README, *OpenCode 2*.";
+}
+/** For the suite: a window that has not said it yet. */
+export function resetOpenCode1Deprecation(): void {
+    openCode1Said = false;
+}
 
 /** `--version` could not say (timed out, failed, no 1.x printed): nothing ran. */
 export const isIdentityUnknown = (error: unknown): boolean => (error as { code?: unknown } | undefined)?.code === "EOPENCODEIDENTITY";
@@ -321,6 +340,7 @@ export function ensureCliIdentity(executable: string, cwd: string): Promise<void
         file = fileOf(executable, true);
         logChannel.appendLine(`[${stamp()}] ${executable} changed on disk since its identity check — checking it again`);
     }
+    confirmedIdentity.delete(executable);
     const started = Date.now();
     const check: Promise<void> = runCapture(executable, ["--version"], cwd, IDENTITY_TIMEOUT_MS, true).then((output) => {
         majorVersionNote(executable, output);
@@ -332,6 +352,7 @@ export function ensureCliIdentity(executable: string, cwd: string): Promise<void
             throw identityUnknown(executable, `printed no 1.x version (\`${truncate(output.trim().replace(/\s+/g, " ").replace(/`/g, "'"), 40)}\`)`);
         }
         logChannel.appendLine(`[${stamp()}] CLI identity verified in ${Date.now() - started}ms`);
+        confirmedIdentity.add(executable);
     }).catch((error: unknown) => {
         if (cliIdentity.get(executable)?.check === check) {
             cliIdentity.delete(executable);
@@ -802,7 +823,7 @@ export async function warmServer(cwd: string, onSlowStart?: (text: string) => vo
     }
 }
 
-// claim:prewarm-server — the first @opencode message no longer pays the
+// claim:prewarm-server — the first @oc message no longer pays the
 // server's boot (config, plugins, MCP: most of a minute measured on a first
 // start). Started after startup, in a trusted workspace only: OpenCode loads the
 // folder's own config and plugins. `transport: cli` starts no server.

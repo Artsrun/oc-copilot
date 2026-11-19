@@ -40,6 +40,8 @@ exports.httpGetJson = httpGetJson;
 exports.httpPostJson = httpPostJson;
 exports.setStartupDeadline = setStartupDeadline;
 exports.versionNotice = versionNotice;
+exports.openCode1Deprecation = openCode1Deprecation;
+exports.resetOpenCode1Deprecation = resetOpenCode1Deprecation;
 exports.ensureCliIdentity = ensureCliIdentity;
 exports.markNotOpenCode1 = markNotOpenCode1;
 exports.noteDataFolderClash = noteDataFolderClash;
@@ -224,6 +226,20 @@ function versionNotice(base) {
 const notOpenCode1 = new Map();
 const cliIdentity = new Map();
 const IDENTITY_TIMEOUT_MS = 6000;
+const confirmedIdentity = new Set();
+let openCode1Said = false;
+function openCode1Deprecation(executable) {
+    if (openCode1Said || !confirmedIdentity.has(executable) || (0, enforce_1.executableMajor)(executable) !== 1) {
+        return undefined;
+    }
+    openCode1Said = true;
+    core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] OpenCode 1 at ${executable} is deprecated in this bridge`);
+    return "OpenCode 1 is deprecated in this bridge, and a later release drops it. " +
+        "OpenCode 2 (`@opencode/cli`) runs through its own API with the same chat: README, *OpenCode 2*.";
+}
+function resetOpenCode1Deprecation() {
+    openCode1Said = false;
+}
 const isIdentityUnknown = (error) => error?.code === "EOPENCODEIDENTITY";
 exports.isIdentityUnknown = isIdentityUnknown;
 const identityUnknown = (executable, why) => Object.assign(new Error(`Nothing was run: \`${executable}\` is not confirmed as OpenCode 1 — its \`--version\` ${why}. ` +
@@ -251,6 +267,7 @@ function ensureCliIdentity(executable, cwd) {
         file = fileOf(executable, true);
         core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] ${executable} changed on disk since its identity check — checking it again`);
     }
+    confirmedIdentity.delete(executable);
     const started = Date.now();
     const check = (0, proc_1.runCapture)(executable, ["--version"], cwd, IDENTITY_TIMEOUT_MS, true).then((output) => {
         majorVersionNote(executable, output);
@@ -262,6 +279,7 @@ function ensureCliIdentity(executable, cwd) {
             throw identityUnknown(executable, `printed no 1.x version (\`${(0, core_1.truncate)(output.trim().replace(/\s+/g, " ").replace(/`/g, "'"), 40)}\`)`);
         }
         core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] CLI identity verified in ${Date.now() - started}ms`);
+        confirmedIdentity.add(executable);
     }).catch((error) => {
         if (cliIdentity.get(executable)?.check === check) {
             cliIdentity.delete(executable);

@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.followupsProblems = exports.createBadger = exports.badge = exports.naturalText = exports.chipOf = exports.chipLabel = exports.mergeRunId = exports.LANE_RUN_PROMPTS = exports.fillPrompt = exports.prompt = exports.mark = exports.NATURAL_MAX_LABEL = exports.CASES = exports.MARKS = exports.PROMPTS = exports.TAIL = exports.CHIP_COMMANDS = void 0;
+exports.followupsProblems = exports.createBadger = exports.badge = exports.naturalText = exports.chipOf = exports.chipLabel = exports.mergeRunId = exports.LANE_RUN_PROMPTS = exports.fillPrompt = exports.prompt = exports.mark = exports.NATURAL_KAO = exports.NATURAL_MAX_LABEL = exports.CASES = exports.MARKS = exports.PROMPTS = exports.TAIL = exports.CHIP_COMMANDS = void 0;
 const data = __importStar(require("./followups.json"));
 exports.CHIP_COMMANDS = ["dev", "plan", "new", "ping", "parallel", "compact", "model"];
 exports.TAIL = data.tail;
@@ -42,6 +42,7 @@ exports.PROMPTS = Object.fromEntries(Object.entries(data.prompts).map(([k, v]) =
 exports.MARKS = data.marks;
 exports.CASES = data.cases;
 exports.NATURAL_MAX_LABEL = data.natural.maxLabel;
+exports.NATURAL_KAO = Object.fromEntries(Object.entries(data.natural).flatMap(([k, v]) => (v && typeof v === "object" && "kao" in v ? [[k, String(v.kao)]] : [])));
 const mark = (key) => exports.MARKS[key];
 exports.mark = mark;
 const prompt = (key) => exports.PROMPTS[key];

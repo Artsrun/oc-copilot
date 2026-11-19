@@ -70,7 +70,7 @@ export async function diagnose(): Promise<void> {
     lines.push(
         row(
             "active session",
-            state.id ? `\`${state.id}\` · ${state.turns} turn(s)` : "_none — send an @opencode message_"
+            state.id ? `\`${state.id}\` · ${state.turns} turn(s)` : "_none — send an @oc message_"
         )
     );
     lines.push(
@@ -109,10 +109,10 @@ export async function diagnose(): Promise<void> {
         row(
             "chat harness",
             problem
-                ? `${mark("fail")} @opencode not registered: ${truncate(problem, 80).replace(/\|/g, "\\|")} — this host has no chat participants; palette commands and gitScan still work`
+                ? `${mark("fail")} @oc not registered: ${truncate(problem, 80).replace(/\|/g, "\\|")} — this host has no chat participants; palette commands and gitScan still work`
                 : local
-                    ? `${mark("fail")} @opencode is registered, but ${local}: turn the setting on (README, *Copilot harness*)`
-                    : "@opencode answers in a **Local** session only: the Copilot harness has no chat participants, and VS Code's docs say Local is removed in February 2027 (README, *Copilot harness*)"
+                    ? `${mark("fail")} @oc is registered, but ${local}: turn the setting on (README, *Copilot harness*)`
+                    : "@oc answers in a **Local** session only: the Copilot harness has no chat participants, and VS Code's docs say Local is removed in February 2027 (README, *Copilot harness*)"
         )
     );
     lines.push(row("harness settings", harnessNote()));
@@ -146,7 +146,7 @@ export async function quickActions(): Promise<void> {
     const items: Array<vscode.QuickPickItem & { run: () => unknown }> = [
         {
             label: "$(add) New session",
-            detail: "A new chat with @opencode typed" + (state.id ? ` — the current chat keeps ${state.id}` : ""),
+            detail: "A new chat with @oc typed" + (state.id ? ` — the current chat keeps ${state.id}` : ""),
             run: () => vscode.commands.executeCommand("opencodeCopilotBridge.newSession")
         },
         {

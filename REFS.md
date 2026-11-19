@@ -5,6 +5,37 @@ actually measured, so nobody re-derives it.
 
 ---
 
+## 0.0.243: where a 2.3 background subagent's result goes; chips on a corpus (2026-11-19)
+
+**Dated 2026-11-19.** Linux, Node 22.23.4, `@opencode/cli` 2.3.2, the bridge's `out/`,
+scripted model. A build turn `[[probe:task@general:slow]]` (a ~10 s child), then, 15 s
+later, a second prompt to the same session:
+
+- Turn 1 ended at 5.4 s. The tool's whole text: "The subagent is working in the background
+  (sessionID: ses_…). You will receive a `<subagent>` message when it goes idle, and again
+  after each later round of work. DO NOT sleep, poll, proactively check on its progress, or
+  duplicate this subagent's work. Work on non-overlapping tasks, or briefly tell the user
+  what you launched and end your response. …"
+- Turn 2's one model request held, before the new prompt, a **user** message
+  `<subagent sessionID="ses_…" state="completed" description="probe subagent">` with the
+  child's whole answer. Nothing ran between the turns (0.0.242: no parent turn in 30 s).
+
+So the result is collected by sending the next prompt: the Collect chip, and the MCP
+result's line. 2.3's tool text names the child only as "(sessionID: …)", which the
+translator did not read: no child id for the family's asks or a Resume chip before this.
+
+**Chips on a corpus.** Fifteen typical endings of coding-agent answers through
+`suggestFollowups` (`out/`, a host installed: without one, `config()` throws and the
+catch returns no chips). Offers, a numbered plan, findings by severity, failing tests,
+"hard to say" and an edited file each gave the expected chips; "any questions?", "hope this
+helps" and "no issues found" gave none. Wrong: "Should I use a cookie or a header for the
+token?" gave ONE chip, "Use a cookie or a header for the token": `OFFERS` matched before
+the either/or rule, and the noun alternative kept the sentence whole. Left as it is: a
+recommendation with no question ("I recommend Option A.") gives no chip, by design
+(`RECOMMENDS` needs a `?`; informational "I'd recommend …" lines would chip otherwise).
+
+---
+
 ## 0.0.242: OpenCode 2 applies opencode.json's rules; 2.3 backgrounds subagents (2026-11-18)
 
 **Dated 2026-11-18.** Linux, Node 22.23.4, real binaries in scratch prefixes (`opencode-ai`

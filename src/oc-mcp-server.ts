@@ -17,13 +17,15 @@ import { resolvePlanAgent } from "./agents";
 import { Cancel, config, delay, logChannel, secs, setHost, setLogChannel, Settings, stamp, truncate, underRoot } from "./core";
 import { createEchoGate } from "./format";
 import { RunMetrics, StepRecord } from "./metrics";
+import { naturalFollowups } from "./natural";
+import { NATURAL_KAO } from "./followups";
 import { connectSse, dataFolderRefusal, ensureServer, stopServer } from "./net";
 import { planTimeout } from "./prompt";
 import { runCapture } from "./proc";
 import { runOpenCodeServer } from "./run-server";
 import { abortServerRun } from "./server-session";
 
-const VERSION = "0.0.242";
+const VERSION = "0.0.243";
 const SERVER_INFO = { name: "opencode-bridge", version: VERSION };
 const MODERN = "2026-07-28";
 const LEGACY = ["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"];
@@ -403,6 +405,31 @@ interface ToolResult {
 
 const textResult = (text: string, isError = false): ToolResult => ({ content: [{ type: "text", text }], ...(isError ? { isError: true } : {}) });
 
+// A client with no chips (0.0.243): what chat would offer under this answer, as lines its
+// model can act on. A 2.3+ subagent still working hands its result to the parent with the
+// next prompt (REFS 0.0.242); an editing step is listed only where opencode_dev is offered.
+function nextSteps(job: Job, sessionId: string, answer: string): string[] {
+    const out: string[] = [];
+    const ask = job.kind === "dev" ? "opencode_dev" : "opencode_ask";
+    const waiting = job.metrics?.backgroundTasks?.[0];
+    if (waiting) {
+        out.push(`The ${waiting.agent} subagent (${truncate(waiting.description || waiting.agent, 80)}) is still working in the background; ` +
+            `OpenCode gives this session its result with the next prompt. To collect it, call ${ask} with sessionId "${sessionId}" and ask for that result.`);
+    }
+    const steps = naturalFollowups({ agent: job.agent, answer, steps: job.steps }, 3)
+        .filter((c) => c.command === "plan" || (c.command === "dev" && ARGS.dev))
+        .map((c) => `- ${plainLabel(c.label, c.kind)} (${c.command === "dev" ? "opencode_dev" : "opencode_ask"})`);
+    if (steps.length) {
+        out.push(`Next steps this answer offers; send one as the prompt with sessionId "${sessionId}":\n${steps.join("\n")}`);
+    }
+    return out;
+}
+// A cue chip's label starts with its kind's kaomoji (followups.json); a client's model reads the words.
+const plainLabel = (label: string, kind: string): string => {
+    const kao = Object.hasOwn(NATURAL_KAO, kind) ? NATURAL_KAO[kind] : "";
+    return (kao && label.startsWith(`${kao} `) ? label.slice(kao.length + 1) : label).trim();
+};
+
 /** What a call returns for a job: the answer, then one line of handles and facts. */
 function jobResult(job: Job): ToolResult {
     const status = statusOf(job);
@@ -453,6 +480,9 @@ function jobResult(job: Job): ToolResult {
     parts.push(...job.notes);
     if (m?.sessionId && status !== "cancelled") {
         parts.push(`To continue this conversation, pass sessionId "${m.sessionId}".`);
+        if (status === "done") {
+            parts.push(...nextSteps(job, m.sessionId, answer));
+        }
     }
     parts.push(line);
     return textResult(parts.join("\n\n"), status !== "done");

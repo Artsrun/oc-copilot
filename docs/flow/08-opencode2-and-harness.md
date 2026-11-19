@@ -91,7 +91,7 @@ new `dataHome`. `dataHome` is `XDG_DATA_HOME` for every process the bridge start
 (`dataHomeEnv`); changing it stops the managed server and forgets the clash
 (`forgetDataFolderClash`). See `docs/data-folder-design.md`.
 
-## (◕‿◕) Where `@opencode` can answer
+## (◕‿◕) Where `@oc` can answer
 
 VS Code 1.142 started moving new chats to the Copilot harness, which has no chat
 participants. The API is documented as deprecated, kept for Local sessions, and
@@ -106,7 +106,7 @@ flowchart TD
 
   A(["activate"]):::bridge
   T{{"(・ω・)? createChatParticipant throws?"}}:::bridge
-  W1["(°ロ°) one warning: @opencode cannot run; getParticipantProblem"]:::stop
+  W1["(°ロ°) one warning: @oc cannot run; getParticipantProblem"]:::stop
   L{{"(・ω・)? localSessionProblem: chat.editor.localAgent.enabled false?"}}:::bridge
   W2["(°ロ°) one warning outside chat, Open Settings, remembered per reason"]:::stop
   IN["inline participant, guarded: needs the proposal"]:::bridge
@@ -123,7 +123,7 @@ flowchart TD
   REG --> H
 ```
 
-- **Why outside chat:** with Local hidden, Send stays disabled for `@opencode` and
+- **Why outside chat:** with Local hidden, Send stays disabled for `@oc` and
   no turn of ours runs, so no reply could say it.
 - **Not read:** managed sandbox or permission settings also disable Local;
   `localSessionProblem` looks only at the one setting.

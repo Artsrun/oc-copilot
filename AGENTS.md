@@ -8,11 +8,18 @@ shipped a defect. The source cites sections by number (`src/proc.ts` → §2 rul
 
 ## §1 · What this is, and the map
 
-A VS Code extension: the `@opencode` chat participant, running a local OpenCode
+A VS Code extension: the `@oc` chat participant, running a local OpenCode
 agent behind it — one OpenCode session per Copilot chat thread — and the same
 engine as MCP tools for a client with no chat participants (the Copilot
 harness). No framework, no bundler, no test runner: plain TypeScript → `out/`,
 plain Node for the suite.
+
+**OpenCode 1 is deprecated (0.0.243).** It runs, and a window says so once after a
+finished 1.x turn (`openCode1Deprecation`, `OD`). The removal is staged: the suite's
+groups move from the 1.x CLI fakes (`transport: "cli"`, `writeFake`) to the 2.x fake
+(`scripts/fixtures/fake-opencode2.js`) one green commit at a time, and only then do the
+CLI transport, 1.x routes and the `opencode2`/`transport` settings go. New code targets
+2.x; never delete a 1.x path while a check still drives it.
 
 | Path | What lives there |
 | --- | --- |
@@ -47,7 +54,7 @@ plain Node for the suite.
 | `src/natural.ts` | Answer-derived chips: the agent's own offer or either/or, a named step 1, a review's findings by severity (`findingsOf`: headings, item tags, a Severity column, `<li>`), the file it edited, failing tests, Dig deeper — or nothing. `laneItems` is the lanes rule for the chip and for `autoParallel: auto`. |
 | `src/core.ts` | **The foundation, and the engine's one seam to its host**: imports nothing local and no `vscode`. `setHost` (a host's `Settings`, folder, trust and state), `config()`, `hostFolder`, `hostTrusted`, `hostState`, `logChannel`, `Cancel` (Stop as the engine reads it), text helpers, `untilStop`, `underRoot` (a file's path under a root, links resolved). |
 | `src/host.ts` | **VS Code as the engine's host**: installs itself with `setHost` when it loads (workspace configuration, the chosen folder, workspace trust, `globalState`); `extensionContext`, `vsConfig` (the whole configuration: `inspect`, `update`), the status bar (`setStatus`), folder resolution (`resolveFolder`, `relTo`, `rememberFolder`). |
-| `src/extension.ts` | `activate()` (panel and inline participant, each guarded; commands and gitScan register regardless; the one warning when `@opencode` cannot run or Local is hidden), the `__test` handle, `deactivate()`. |
+| `src/extension.ts` | `activate()` (panel and inline participant, each guarded; commands and gitScan register regardless; the one warning when `@oc` cannot run or Local is hidden), the `__test` handle, `deactivate()`. |
 | `src/commands.ts`, `commands-registry.ts` | Palette commands, worktree buttons, config listener. |
 | `src/worktree.ts`, `chat-worktree.ts` | `/worktree`: git via `execFile`, an isolated dev run from HEAD (the uncommitted count is said); a follow-up in the same chat continues its worktree and session (`reopenWorktree` checks what the metadata names); its turns read `model:`, `effort:`, attachments and the vague-prompt gate as a chat turn does, and `/session` and `/compact` reach its session (`threadWorktree`). OpenCode: Worktrees lists them (`listWorktrees`, `pickWorktree` in `commands.ts`); Show full diff is `vscode.changes` with the base side from a read-only `ocb-base:` provider (`changedFiles`, `baseText`). |
 | `src/format.ts`, `metrics.ts`, `prompt.ts` | Metrics → markdown; run types; timeouts and vague-prompt detection. |
@@ -77,7 +84,7 @@ chat-parallel →  agents · chat-boot · compose · context · models · net ·
      agents   →  enforce · oc-api · net · proc      net → enforce · proc · v2-events      proc → enforce · core      enforce → core
     models    →  context · env · net · oc-api · proc      commands → env · models · net · oc-api · proc · session · worktree
 commands-registry → commands · compose · models · net · session · worktree
-oc-mcp-server →  agents · format · net · prompt · proc · run-server · server-session · core   (imported by nothing: its own process)
+oc-mcp-server →  agents · format · natural · net · prompt · proc · run-server · server-session · core   (imported by nothing: its own process)
     oc-mcp    →  host · core   (used by extension and commands)
      host     →  core   (every module that needs the window: status bar, folder choice, `vsConfig`)
      all      →  core.ts · followups.ts (JSON only) · natural.ts (→ followups)
@@ -491,12 +498,15 @@ history belongs in `CHANGELOG.md`, not in the source.
   background" at once (2.2.7 offered a `background` flag and waited by default; 2.3.2
   has no flag), the parent answers, and the turn ends while the child works: 1.7 s for
   a ~10 s child that 2.2.7 waited 10.6 s for (2.3.2, scripted model). No parent turn ran
-  in the 30 s after it went idle. What the child did is not in that turn's answer;
-  whether its spend and a Resume chip are is not measured (REFS 0.0.242, `probe-opencode2.js`).
+  in the 30 s after it went idle. The child's result is put in the parent session as a
+  `<subagent sessionID=… state="completed">` user message, read with the NEXT prompt (2.3.2):
+  so the child id is read from "(sessionID: …)" (`v2Translator`), the turn keeps
+  `backgroundTask`, and the Collect chip (`BT`) and the MCP result's next steps send that prompt.
+  Whether its spend reaches the turn is not measured (REFS 0.0.242, 0.0.243).
 - **A task result carries no cost or tokens** (OpenCode #47822): a subagent's
   spend is read from its own session's `message.updated` (`SC`).
 - **The Copilot harness has no chat participants** (VS Code 1.142+; the API
-  is "deprecated", kept for Local sessions). `@opencode` answers in a Local
+  is "deprecated", kept for Local sessions). `@oc` answers in a Local
   session only, and VS Code's docs give Local an end: "will be removed in
   February 2027" (1.146 notes, 2026-11-11; REFS 0.0.239). Registering it can throw on a host without the API, so it is
   guarded: activation must still register the commands and gitScan, and

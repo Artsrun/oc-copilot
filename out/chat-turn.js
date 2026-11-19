@@ -352,6 +352,10 @@ async function finishTurn(t, live, outcome) {
     if (enforcedNote) {
         response.markdown(`\n\n> ${(0, followups_1.mark)("step")} ${enforcedNote}`);
     }
+    const legacyNote = metrics && !metrics.cancelled ? (0, net_1.openCode1Deprecation)(t.executable) : undefined;
+    if (legacyNote) {
+        response.markdown(`\n\n> ${(0, followups_1.mark)("warn")} ${legacyNote}`);
+    }
     if (metrics) {
         (0, context_1.emitReferences)(response, (0, context_1.stepUris)(cwd, metrics.steps));
     }
@@ -407,6 +411,7 @@ async function finishTurn(t, live, outcome) {
             : `${Math.round(contextTokens / 1000)}k`
         : undefined;
     const failedTask = metrics?.failedTasks?.[0];
+    const backgroundTask = metrics?.backgroundTasks?.[0];
     const sentVariant = variantFor(lastAttempt);
     if (sessionId && metrics && !metrics.error && !metrics.timedOut && !metrics.cancelled) {
         (0, chat_boot_1.rememberFollowups)(sessionId, turns, (0, chat_boot_1.suggestFollowups)({
@@ -434,6 +439,9 @@ async function finishTurn(t, live, outcome) {
             ...(compactOffer ? { compact: compactOffer } : {}),
             ...(failedTask
                 ? { failedTask: { agent: failedTask.agent, description: (0, core_1.truncate)(failedTask.description, 80), ...(failedTask.sessionId ? { taskId: (0, runs_1.safeSessionId)(failedTask.sessionId) } : {}) } }
+                : {}),
+            ...(backgroundTask && !failedTask
+                ? { backgroundTask: { agent: backgroundTask.agent, description: (0, core_1.truncate)(backgroundTask.description, 80), ...(backgroundTask.sessionId ? { taskId: (0, runs_1.safeSessionId)(backgroundTask.sessionId) } : {}) } }
                 : {}),
             ...(cutOff ? { truncated: true } : {}),
             ...(metrics?.timedOut && metrics.stuckTool && !metrics.cancelled ? { stuckTool: (0, core_1.truncate)(metrics.stuckTool, 40) } : {}),

@@ -3,6 +3,29 @@
 Full release history, newest first; releases before the last one are condensed
 to their summary and headlines. The README ships the last five.
 
+### 0.0.243
+
+`@oc`, OpenCode 1 deprecated, and follow-ups for OpenCode 2.3's background subagents.
+
+- **`@oc`, not `@opencode`.** The participant's name; its ids and the
+  `opencodeCopilotBridge.*` settings stay, so existing chats keep their sessions.
+  Dated history (this file's older entries, REFS) keeps the name it had.
+- **OpenCode 1 is deprecated.** It runs as before; a window says so once, after a
+  finished turn whose `--version` named 1.x (`openCode1Deprecation`). The removal is
+  staged (AGENTS §1): the suite moves to the 2.x fake first. Check `OD` (mutant: 1 red).
+- **New chip, Collect `<agent>`:** on 2.3+, a subagent still working when the turn ends
+  reports to the parent session as a `<subagent>` message that the model reads with
+  the next prompt (2.3.2, measured); the chip is that prompt. The child id is now read
+  from 2.3's "(sessionID: …)" too, which it was not. Check `BT` (mutant: 2 red).
+- **Sharper either/or offers:** "Should I use a cookie or a header for the token?" was
+  one chip repeating the question; it is now *Use a cookie* | *Use a header for the
+  token*, and an "or" that cannot be split gives no chip. Check `NF` (red first: 3).
+- **MCP tools say what comes next:** a done `opencode_ask`/`opencode_dev` result lists
+  the answer's own next moves (chat's natural chips, with the tool to send each; editing
+  ones only with `--dev`) and how to collect a background subagent's result. The 2.x
+  fake can say a given answer (`[[say:…]]`). Check `MP`.
+- Stale: the `opencode2` setting's description named 2.2.7 as the tested top.
+
 ### 0.0.242
 
 A false warning removed, two claims corrected, OpenCode 1.19.6 and 2.3.2 in the tested

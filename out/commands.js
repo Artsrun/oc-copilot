@@ -97,7 +97,7 @@ async function diagnose() {
         : "0 — _no wall-clock cap; idleTimeoutMs is the only cap armed_"));
     lines.push(row("workspace", cwd));
     const state = folder ? (0, session_1.getActiveSession)(cwd) : { turns: 0 };
-    lines.push(row("active session", state.id ? `\`${state.id}\` · ${state.turns} turn(s)` : "_none — send an @opencode message_"));
+    lines.push(row("active session", state.id ? `\`${state.id}\` · ${state.turns} turn(s)` : "_none — send an @oc message_"));
     lines.push(row("session scope", settings.get("sessionScope", "thread") === "workspace"
         ? "**workspace** — every chat in this folder shares one session"
         : "**thread** — each Copilot chat keeps its own session"));
@@ -115,10 +115,10 @@ async function diagnose() {
     const problem = (0, session_1.getParticipantProblem)();
     const local = (0, session_1.localSessionProblem)();
     lines.push(row("chat harness", problem
-        ? `${(0, followups_1.mark)("fail")} @opencode not registered: ${(0, core_1.truncate)(problem, 80).replace(/\|/g, "\\|")} — this host has no chat participants; palette commands and gitScan still work`
+        ? `${(0, followups_1.mark)("fail")} @oc not registered: ${(0, core_1.truncate)(problem, 80).replace(/\|/g, "\\|")} — this host has no chat participants; palette commands and gitScan still work`
         : local
-            ? `${(0, followups_1.mark)("fail")} @opencode is registered, but ${local}: turn the setting on (README, *Copilot harness*)`
-            : "@opencode answers in a **Local** session only: the Copilot harness has no chat participants, and VS Code's docs say Local is removed in February 2027 (README, *Copilot harness*)"));
+            ? `${(0, followups_1.mark)("fail")} @oc is registered, but ${local}: turn the setting on (README, *Copilot harness*)`
+            : "@oc answers in a **Local** session only: the Copilot harness has no chat participants, and VS Code's docs say Local is removed in February 2027 (README, *Copilot harness*)"));
     lines.push(row("harness settings", (0, session_1.harnessNote)()));
     lines.push(row("copilot harness tools", (0, oc_mcp_1.copilotConfigNote)().replace(/\|/g, "\\|")));
     lines.push(row("extension host", vscode.env?.remoteName ?? "local"));
@@ -140,7 +140,7 @@ async function quickActions() {
     const items = [
         {
             label: "$(add) New session",
-            detail: "A new chat with @opencode typed" + (state.id ? ` — the current chat keeps ${state.id}` : ""),
+            detail: "A new chat with @oc typed" + (state.id ? ` — the current chat keeps ${state.id}` : ""),
             run: () => vscode.commands.executeCommand("opencodeCopilotBridge.newSession")
         },
         {

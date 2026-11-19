@@ -31,6 +31,10 @@ export const PROMPTS: Readonly<Record<PromptKey, string>> = Object.fromEntries(
 export const MARKS: Readonly<Record<MarkKey, string>> = data.marks;
 export const CASES = data.cases as Readonly<Record<Outcome, readonly ChipKey[]>>;
 export const NATURAL_MAX_LABEL: number = data.natural.maxLabel;
+/** Each natural chip kind's kaomoji, by kind: a reader without chips strips it from a label. */
+export const NATURAL_KAO: Readonly<Record<string, string>> = Object.fromEntries(
+    Object.entries(data.natural).flatMap(([k, v]) => (v && typeof v === "object" && "kao" in v ? [[k, String((v as { kao: unknown }).kao)]] : []))
+);
 
 export const mark = (key: MarkKey): string => MARKS[key];
 export const prompt = (key: PromptKey): string => PROMPTS[key];

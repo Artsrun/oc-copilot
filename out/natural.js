@@ -79,10 +79,20 @@ const WANT_A_VERB = {
 };
 const NOT_AN_ACTION = /\s*[—–]\s*or\s+.*$|\s*,?\s+or\s+(?:is|are|do|does|should|would|was|were|did|just|leave|stop|not|anything|something|shall|is it|are you)\b.*$/i;
 const ANY_OF = /^(.*?)\b(?:any|one|some|all|each|either|both)\s+of\s+(?:these|those|them|the above|the following)\b\s*[—–:(,-]*\s*(?:e\.g\.,?|i\.e\.,?|such as|like|namely)?\s*(.+?)\s*[—–)]*\s*$/i;
+const OBJECT = /^(?:(?:a|an|the|this|that|these|those|my|your|its|their|our)\b|`)/i;
+const sharedVerb = (parts) => {
+    const words = parts[0].split(/\s+/);
+    const at = words.findIndex((w, i) => i > 0 && OBJECT.test(w));
+    const verb = at > 0 && at <= 3 ? words.slice(0, at).join(" ") : "";
+    return verb && isVerb(firstWord(verb)) && parts.slice(1).every((p) => OBJECT.test(p)) ? [parts[0], ...parts.slice(1).map((p) => `${verb} ${p}`)] : [];
+};
 const splitAlternatives = (body) => {
     const parts = body.split(/,\s*(?:or|and\/or|and)\s+|\s+or\s+|,\s+/).map((p) => p.trim()).filter(Boolean);
     const list = parts.length > 2 || !/,\s*and\s+/i.test(body);
-    return list && parts.length > 1 && parts.every((p) => isVerb(firstWord(p))) ? parts : [body];
+    if (list && parts.length > 1 && parts.every((p) => isVerb(firstWord(p)))) {
+        return parts;
+    }
+    return /\s+or\s+/i.test(body) && parts.length <= 3 && isVerb(firstWord(parts[0])) ? sharedVerb(parts) : [body];
 };
 const actionsFromOffer = (body) => {
     const any = body.match(ANY_OF);

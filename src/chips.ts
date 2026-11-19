@@ -75,7 +75,7 @@ export const WORKTREE_TURN = 0;
 const BACKOFF_KEY = "opencodeCopilotBridge.chipBackoff";
 const BACKOFF_AFTER = 3;
 const BACKOFF_MAX_HOLD = 32;
-const NEVER_HELD = new Set(["offer", "choice", "RESUME_TASK", "RERUN_TASK", "CUT_OFF"]);
+const NEVER_HELD = new Set(["offer", "choice", "RESUME_TASK", "RERUN_TASK", "COLLECT_TASK", "CUT_OFF"]);
 
 interface Backoff {
     /** Messages counted so far: a hold lasts until this reaches `until`. */
@@ -363,6 +363,18 @@ function stateChips(metadata: Record<string, unknown>, kind: "dev" | "plan"): Of
         if (chip) {
             chip.label = `${chipLabel(key)} ${task.agent}`;
             out.push({ ...chip, kind: key });
+        }
+    }
+    // 2.3.0+: a subagent still working when the turn ended. Its result comes to the parent
+    // with the next prompt, so the chip is that prompt. Never held: unfinished work.
+    const waiting = metadata.backgroundTask as { agent?: unknown; description?: unknown; taskId?: unknown } | undefined;
+    if (waiting && typeof waiting.agent === "string" && waiting.agent) {
+        const description = typeof waiting.description === "string" && waiting.description ? waiting.description : waiting.agent;
+        const text = fillPrompt("COLLECT_TASK", { agent: waiting.agent, description, task: typeof waiting.taskId === "string" ? waiting.taskId : "" });
+        const chip = chipOf("COLLECT_TASK", kind, text);
+        if (chip) {
+            chip.label = `${chipLabel("COLLECT_TASK")} ${waiting.agent}`;
+            out.push({ ...chip, kind: "COLLECT_TASK" });
         }
     }
     if (typeof metadata.compact === "string" && metadata.compact) {

@@ -54,7 +54,7 @@ const laneProblem = (task) => {
 exports.laneProblem = laneProblem;
 const composeLanes = (lanes) => lanes.map((l) => (l.model ? `m:${l.model} ` : "") + l.task.trim()).join("\n---\n");
 exports.composeLanes = composeLanes;
-const chatQuery = (lanes) => `@opencode /parallel ${(0, exports.composeLanes)(lanes)}`;
+const chatQuery = (lanes) => `@oc /parallel ${(0, exports.composeLanes)(lanes)}`;
 exports.chatQuery = chatQuery;
 const insertIntoChat = async (query) => {
     try {

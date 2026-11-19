@@ -24,8 +24,8 @@ export const INLINE_PARTICIPANT_ID = "opencodeCopilotBridge.inline";
 export const OWN_PARTICIPANTS: ReadonlySet<string> = new Set([PARTICIPANT_ID, INLINE_PARTICIPANT_ID]);
 
 // VS Code's Copilot harness has no chat participants (1.142+, "Chat participant
-// (deprecated)"): @opencode answers in a Local session only, and a host that
-// drops the API throws at registration. Empty while @opencode is registered (HR).
+// (deprecated)"): @oc answers in a Local session only, and a host that
+// drops the API throws at registration. Empty while @oc is registered (HR).
 let participantProblem = "";
 
 export function setParticipantProblem(problem: string): void {
@@ -46,7 +46,7 @@ export function localSessionProblem(): string {
 }
 
 // The host's own harness settings, read only: whether a new chat starts where
-// @opencode can answer. "unset" before VS Code 1.142 named them.
+// @oc can answer. "unset" before VS Code 1.142 named them.
 export function harnessNote(): string {
     const chat = vscode.workspace.getConfiguration?.("chat");
     const read = (key: string): string => {
