@@ -7,6 +7,10 @@
 // Env: FAKE_OC2_RECORD   file that gets one JSON line per request
 //      FAKE_OC2_VERSION  the version it names (default: the recording's)
 //      a prompt's `[[say:<text>]]` makes the text turn answer <text>
+//      FAKE_OC2_SCRIPT_DIR  a prompt's `[[script:<name>]]` plays <dir>/<name>.json, read per
+//                        prompt: `{ paceMs, hold, events: [{reasoning}|{tool, input, output}|{text}] }`
+//                        inside the recorded text turn's envelope; `hold` goes silent until
+//                        the bridge interrupts (the recorded interrupt's end follows)
 //      FAKE_OC2_DROP=1   the server ignores the injected overrides (a 2.x that
 //                        does not apply them: the bridge must refuse plan turns)
 //      FAKE_OC2_AGENT_MODEL  `provider/id`: the plan agent's own model
@@ -95,12 +99,55 @@ module.exports = (argv) => {
             }
             t.at += 1;
             emit(frame);
+            // A scripted turn's pace: one frame, then the next after `pace` ms.
+            if (t.pace && t.at < t.frames.length) {
+                setTimeout(() => pump(sid), t.pace);
+                return;
+            }
             if (frame.includes('"type":"permission.asked"')) {
                 setTimeout(() => pump(sid), 5);
                 return;
             }
         }
         turns.delete(sid);
+    };
+    // A scripted turn (`[[script:<name>]]`): the recorded text turn's envelope around the
+    // events the suite wrote, each a frame of OpenCode 2's own shape (wire-v2.json).
+    const scripted = (name) => {
+        const spec = JSON.parse(fs.readFileSync(path.join(process.env.FAKE_OC2_SCRIPT_DIR || ".", `${name}.json`), "utf8"));
+        const tpl = wire.turns.text.frames.map((f) => JSON.parse(f));
+        const at = (type) => tpl.findIndex((f) => f.type === type);
+        const msg = tpl[at("session.step.started")].data.assistantMessageID;
+        const frame = (type, data) => JSON.stringify({ id: `evt_s${type}${Math.random().toString(36).slice(2, 8)}`, created: Date.now(), type, data: { sessionID: "ses_ROOT", assistantMessageID: msg, ...data } });
+        const body = [];
+        let ordinal = 0;
+        let open = "";
+        const close = () => {
+            if (open) body.push(frame(`session.${open}.ended`, { ordinal, text: "" }));
+            if (open) ordinal += 1;
+            open = "";
+        };
+        spec.events.forEach((e, i) => {
+            if (typeof e.reasoning === "string") {
+                if (open !== "reasoning") { close(); open = "reasoning"; body.push(frame("session.reasoning.started", { ordinal })); }
+                body.push(frame("session.reasoning.delta", { ordinal, delta: e.reasoning }));
+            } else if (typeof e.text === "string") {
+                close();
+                body.push(frame("session.text.started", { ordinal }), frame("session.text.delta", { ordinal, delta: e.text }), frame("session.text.ended", { ordinal, text: e.text }));
+                ordinal += 1;
+            } else if (e.tool) {
+                close();
+                const id = `call_s${i}`;
+                body.push(frame("session.tool.input.started", { id, name: e.tool }), frame("session.tool.called", { id, input: e.input ?? {}, executed: false }),
+                    frame("session.tool.success", { id, content: [{ type: "text", text: String(e.output ?? "") }], metadata: { status: "completed" }, executed: false }));
+            }
+        });
+        close();
+        const head = wire.turns.text.frames.slice(0, at("session.text.started"));
+        const tail = spec.hold
+            ? wire.turns.interrupt.frames.slice(wire.turns.interrupt.frames.findIndex((f) => f.includes('"type":"session.step.failed"')))
+            : wire.turns.text.frames.slice(at("session.text.ended") + 1);
+        return { frames: [...head, ...body, ...tail], pace: Number(spec.paceMs) || 0, hold: Boolean(spec.hold) };
     };
     const kindOf = (text) => (/probe:initfail/.test(text) ? "initfail" : /probe:ratelimit/.test(text) ? "retry" : /probe:slow/.test(text) ? "interrupt" : /probe:task@/.test(text) ? "subagent" : /probe:bash/.test(text) ? "permission" : "text");
 
@@ -181,13 +228,15 @@ module.exports = (argv) => {
                         id: `evt_initfail${i}`, created: Date.now(), type,
                         data: { sessionID: "ses_ROOT", ...(type === "session.inbox.enqueued" ? { inboxID: "msg_initfail" } : {}), ...(type === "session.execution.failed" ? { error: { type: "instructions.unavailable", message: "Instruction initialization blocked by unavailable sources: core/instructions" } } : {}) }
                     })) }
-                    : wire.turns[kind];
+                    : /\[\[script:[\w-]+\]\]/.test(String(json?.text ?? ""))
+                        ? scripted(String(json.text).match(/\[\[script:([\w-]+)\]\]/)[1])
+                        : wire.turns[kind];
                 // `[[say:<text>]]` (0.0.243): the recorded answer says <text> instead.
                 const say = String(json?.text ?? "").match(/\[\[say:([^\]]+)\]\]/)?.[1];
                 const frames = turn.frames.map((f) => f.split("ses_ROOT").join(sid).replace(/ses_CHILD(\d+)/g, (_, k) => `${sid}c${k}`))
                     .map((f) => (say ? f.split("Hello from the scripted model.").join(JSON.stringify(say).slice(1, -1)) : f));
                 const inbox = JSON.parse(frames.find((f) => f.includes('"type":"session.inbox.enqueued"'))).data.inboxID;
-                turns.set(sid, { frames, at: 0, kind });
+                turns.set(sid, { frames, at: 0, kind: turn.hold ? "interrupt" : kind, pace: turn.pace ?? 0 });
                 setTimeout(() => pump(sid), 10);
                 return send(200, { data: { id: inbox, sessionID: sid, type: "user", payload: { text: json?.text }, delivery: "steer" } });
             }

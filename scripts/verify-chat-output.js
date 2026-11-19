@@ -1343,6 +1343,36 @@ function collectConfigProperties(configuration) {
 
     // ==================== v14 ====================
 
+    // OpenCode 2 as a group's OpenCode (0.0.243, AGENTS §1: the suite moves to the 2.x fake
+    // before 1.x code goes). `oc2Use` runs a block on the fake 2.x server — its own record
+    // of requests, its server stopped after — and puts the 1.x settings back. A prompt's
+    // `[[script:<name>]]` plays `oc2Script(name, spec)`'s events inside a recorded turn.
+    const oc2Record = path.join(work, "oc2-record.jsonl");
+    const oc2Scripts = path.join(work, "oc2-scripts");
+    fs.mkdirSync(oc2Scripts, { recursive: true });
+    process.env.FAKE_OC2_SCRIPT_DIR = oc2Scripts;
+    const oc2Fake = writeFake("fake-oc2-groups.js", [], `if (!process.argv.includes('--version') || true) require(${JSON.stringify(path.join(__dirname, "fixtures", "fake-opencode2.js"))})(process.argv);\n`);
+    const oc2Reqs = () => (fs.existsSync(oc2Record) ? fs.readFileSync(oc2Record, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)) : []);
+    // What reached OpenCode: each prompt's session and text, and the sessions created.
+    const oc2Prompts = () => oc2Reqs().filter((r) => r.method === "POST" && /^\/api\/session\/[^/]+\/prompt$/.test(r.path ?? "")).map((r) => ({ session: r.path.split("/")[3], text: String(r.body?.text ?? "") }));
+    const oc2Created = () => oc2Reqs().filter((r) => r.method === "POST" && r.path === "/api/session").length;
+    const oc2Script = (name, spec) => fs.writeFileSync(path.join(oc2Scripts, `${name}.json`), JSON.stringify(spec));
+    const oc2Use = async (block) => {
+        const saved = { executable: settings.executable, serverPort: settings.serverPort, transport: settings.transport, serverStartupPollMs: settings.serverStartupPollMs, opencode2: settings.opencode2 };
+        const savedRecord = process.env.FAKE_OC2_RECORD;
+        process.env.FAKE_OC2_RECORD = oc2Record;
+        fs.rmSync(oc2Record, { force: true });
+        Object.assign(settings, { executable: oc2Fake, serverPort: 0, transport: "server", serverStartupPollMs: 50, opencode2: true });
+        try {
+            return await block();
+        } finally {
+            ext.deactivate();
+            Object.assign(settings, saved);
+            if (savedRecord === undefined) delete process.env.FAKE_OC2_RECORD;
+            else process.env.FAKE_OC2_RECORD = savedRecord;
+        }
+    };
+
     // S: Copilot's own instruction-file references must never become context.
     // This is the bug that printed a raw <workspace-context> block into chat.
     settings.executable = happy;
@@ -1353,21 +1383,27 @@ function collectConfigProperties(configuration) {
     fs.writeFileSync(instr, "# house rules\n");
     const agentsMd = path.join(work, "AGENTS.md");
     fs.writeFileSync(agentsMd, "# agents\n");
+    // On OpenCode 2 (0.0.243): what was posted to the session is what OpenCode got.
     const sInstr = stream();
-    await global.__handler(
-        {
-            prompt: "what are the risks?",
-            references: [
-                { id: "copilot.instructions", value: { fsPath: instr, scheme: "file" } },
-                { id: "vscode.file", value: { fsPath: agentsMd, scheme: "file" } },
-                { id: "copilot.instructions", value: "<instructions>Here is a list of instruction files that contain rules for working with this codebase…</instructions>" }
-            ]
-        },
-        {},
-        sInstr.response,
-        sInstr.token
-    );
-    const sentS = (lastArgv("fake-ok.js").slice(-1)[0]) || "";
+    const sPosted = await oc2Use(async () => {
+        await global.__handler(
+            {
+                prompt: "what are the risks?",
+                references: [
+                    { id: "copilot.instructions", value: { fsPath: instr, scheme: "file" } },
+                    { id: "vscode.file", value: { fsPath: agentsMd, scheme: "file" } },
+                    { id: "copilot.instructions", value: "<instructions>Here is a list of instruction files that contain rules for working with this codebase…</instructions>" }
+                ]
+            },
+            {},
+            sInstr.response,
+            sInstr.token
+        );
+        return oc2Prompts();
+    });
+    const sentS = sPosted.at(-1)?.text ?? "";
+    // The boundary first: the absences below would pass on a turn that never reached OpenCode.
+    add(`S the turn reached OpenCode 2 with the user's words (${sPosted.length} prompt)`, sPosted.length === 1 && sentS.includes("what are the risks?") && /Hello from the scripted model\./.test(sInstr.chatMarkdown.join("")));
     add("S instruction-file references are not resent", !/copilot-instructions|AGENTS\.md/.test(sentS));
     add("S string-valued references are dropped", !/<instructions>/.test(sentS));
     add("S no context block when nothing real was attached", !/Files the user attached:/.test(sentS));
@@ -2695,40 +2731,40 @@ function collectConfigProperties(configuration) {
         ext.__test.resolveSessionState({}, work).id === "ses_folder"
     );
 
-    // End to end, across the process boundary: `--session` in the child's argv is
-    // the observable artifact, not anything the extension merely returns.
+    // End to end, across the process boundary, on OpenCode 2 (0.0.243): which session the
+    // prompt was POSTed to is the observable artifact — a new chat creates one, a continuing
+    // chat posts to its own — not anything the extension merely returns.
     const ga1 = stream();
+    const ga2 = stream();
+    const ga3 = stream();
     const gaLog = logLines.length;
-    const gaR1 = await global.__handler({ prompt: "start something new here" }, { history: [] }, ga1.response, ga1.token);
-    add("GA a new chat spawns OpenCode without --session", !lastArgv("fake-ok.js").includes("--session"));
-    add("GA the turn reports its session back to the thread", gaR1.metadata.sessionId === "ses_test");
+    const ga = await oc2Use(async () => {
+        const gaR1 = await global.__handler({ prompt: "start something new here" }, { history: [] }, ga1.response, ga1.token);
+        const after1 = { created: oc2Created(), prompts: oc2Prompts() };
+        const gaR2 = await global.__handler({ prompt: "and now continue that work" }, { history: [turnOf(gaR1.metadata)] }, ga2.response, ga2.token);
+        const after2 = { created: oc2Created(), prompts: oc2Prompts() };
+        const gaR3 = await global.__handler({ prompt: "an unrelated question entirely" }, { history: [] }, ga3.response, ga3.token);
+        return { gaR1, gaR2, gaR3, after1, after2, after3: { created: oc2Created(), prompts: oc2Prompts() } };
+    });
+    const { gaR1, gaR2, gaR3 } = ga;
+    const gaS1 = ga.after1.prompts.at(-1)?.session;
+    add(`GA a new chat creates a session of its own and sends the prompt there (${ga.after1.created} created, prompt to ${gaS1})`,
+        ga.after1.created === 1 && ga.after1.prompts.length === 1 && Boolean(gaS1) && gaS1 !== "ses_folder" && ga.after1.prompts[0].text.includes("start something new here"));
+    add("GA the turn reports that session back to the thread", gaR1.metadata.sessionId === gaS1);
     add("GA the turn stamps the folder it ran in", gaR1.metadata.cwd === work);
     add("GA the turn starts this chat's own turn count at 1", gaR1.metadata.turns === 1);
     // 0.0.225: the log says which session the folder held; chat starts with the
     // answer (it was the first of three notes before any answer, 0.0.223 live).
     add("GA a new chat logs that the older session is untouched, and says nothing in chat",
         logLines.slice(gaLog).some((l) => /new chat: a fresh OpenCode session; ses_\w+ is untouched/.test(l)) && !/New chat|untouched/.test(ga1.chatMarkdown.join("")));
-
-    const ga2 = stream();
-    const gaR2 = await global.__handler(
-        { prompt: "and now continue that work" },
-        { history: [turnOf(gaR1.metadata)] },
-        ga2.response,
-        ga2.token
-    );
-    const gaArgv = lastArgv("fake-ok.js");
-    add(
-        "GA the next turn in the same chat resumes it",
-        gaArgv.includes("--session") && gaArgv[gaArgv.indexOf("--session") + 1] === "ses_test"
-    );
-    add("GA the thread carries its own turn count forward", gaR2.metadata.turns === 2);
+    add(`GA the next turn in the same chat resumes it: no new session, the prompt to the same one (${ga.after2.prompts.at(-1)?.session})`,
+        ga.after2.created === 1 && ga.after2.prompts.length === 2 && ga.after2.prompts[1].session === gaS1 && ga.after2.prompts[1].text.includes("continue that work"));
+    add("GA the thread carries its own turn count forward", gaR2.metadata.turns === 2 && gaR2.metadata.sessionId === gaS1);
     add("GA a continuing chat has no new-chat line", !/New chat|untouched/.test(ga2.chatMarkdown.join("")));
-
     // A second chat opened in the same folder at the same moment: its own
-    // conversation, even though the folder pointer now says ses_test.
-    const ga3 = stream();
-    await global.__handler({ prompt: "an unrelated question entirely" }, { history: [] }, ga3.response, ga3.token);
-    add("GA a second chat in the same folder still starts clean", !lastArgv("fake-ok.js").includes("--session"));
+    // conversation, even though the folder pointer now names the first chat's session.
+    const gaS3 = ga.after3.prompts.at(-1)?.session;
+    add(`GA a second chat in the same folder still starts clean (${gaS3})`, ga.after3.created === 2 && Boolean(gaS3) && gaS3 !== gaS1 && gaR3.metadata.sessionId === gaS3);
     // v212: the notice printed on the first turn of every new chat in the folder.
     add("GA …and a second new chat has none either", !/New chat|untouched/.test(ga3.chatMarkdown.join("")));
 
@@ -2935,60 +2971,44 @@ function collectConfigProperties(configuration) {
     // path that was NOT broken. The setting is scoped here for the same reason CJ
     // scopes it: flipping the file default would silently change the conditions of
     // every other check at once.
+    // On OpenCode 2 (0.0.243): the same 40 reasoning deltas and a read every seventh, as
+    // 2.x frames at 25 ms (`[[script:]]`), on a server already up: its boot lines are not
+    // what this measures.
     const beatEvents = [];
     for (let i = 0; i < 40; i++) {
-        beatEvents.push({
-            type: "reasoning",
-            sessionID: "ses_beat",
-            part: { text: `reasoning chunk number ${i} about the auth flow` }
-        });
+        beatEvents.push({ reasoning: `reasoning chunk number ${i} about the auth flow ` });
         if (i % 7 === 0) {
-            beatEvents.push({
-                type: "tool_use",
-                sessionID: "ses_beat",
-                part: { tool: "read", state: { input: { filePath: `src/f${i}.ts` }, output: "x", time: { start: 0, end: 5 } } }
-            });
+            beatEvents.push({ tool: "read", input: { filePath: `src/f${i}.ts` }, output: "x" });
         }
     }
-    beatEvents.push({ type: "text", sessionID: "ses_beat", part: { text: "Done." } });
-    const chatty = writeFake(
-        "fake-chatty.js",
-        [],
-        "const evs = " +
-        JSON.stringify(beatEvents) +
-        ";\nlet i = 0;\nconst t = setInterval(() => {\n" +
-        "  if (i >= evs.length) { clearInterval(t); return; }\n" +
-        "  process.stdout.write(JSON.stringify(evs[i++]) + '\\n');\n" +
-        "}, 25);\n"
-    );
-    settings.executable = chatty;
+    beatEvents.push({ text: "Done." });
+    oc2Script("ja-chatty", { paceMs: 25, events: beatEvents });
+    // The other half of the fix: reasoning now rides the backoff ladder, so on a
+    // slow run the elapsed readout is the only thing left moving. If it stopped
+    // moving, a long turn would look frozen — the exact symptom the heartbeat was
+    // added to prevent. One event, then silence; the idle cap ends the run.
+    oc2Script("ja-slow", { events: [{ reasoning: "thinking hard about it" }], hold: true });
     settings.progressHeartbeatMs = 1000;
     settings.timeoutMs = 30000;
-    settings.idleTimeoutMs = 0;
-    memento.clear();
     const ja = stream();
-    await global.__handler({ prompt: "explain the auth flow" }, {}, ja.response, ja.token);
-
+    const jaSlow = stream();
+    await oc2Use(async () => {
+        settings.idleTimeoutMs = 0;
+        const warm = stream();
+        await global.__handler({ prompt: "warm the server [[probe:text]]" }, { history: [] }, warm.response, warm.token);
+        memento.clear();
+        await global.__handler({ prompt: "explain the auth flow [[script:ja-chatty]]" }, {}, ja.response, ja.token);
+        settings.idleTimeoutMs = 4000;
+        memento.clear();
+        await global.__handler({ prompt: "a slow run that goes quiet [[script:ja-slow]]" }, {}, jaSlow.response, jaSlow.token);
+    });
+    add(`JA the scripted run reached chat: its reads and its answer (${ja.progress.length} progress lines)`,
+        /Done\./.test(ja.chatMarkdown.join("")) && ja.progress.some((p) => p.includes("src/f0.ts")));
     add("JA 40 reasoning deltas do not become 40 chat steps", ja.progress.length <= 12);
     add(
         "JA every tool step still reaches the progress line",
         [0, 7, 14, 21, 28, 35].every((i) => ja.progress.some((p) => p.includes(`src/f${i}.ts`)))
     );
-
-    // The other half of the fix: reasoning now rides the backoff ladder, so on a
-    // slow run the elapsed readout is the only thing left moving. If it stopped
-    // moving, a long turn would look frozen — the exact symptom the heartbeat was
-    // added to prevent. One event, then silence; the idle cap ends the run.
-    const slowFake = writeFake(
-        "fake-slow-tick.js",
-        [{ type: "reasoning", sessionID: "ses_slow", part: { text: "thinking hard about it" } }],
-        "setTimeout(() => {}, 60000);\n"
-    );
-    settings.executable = slowFake;
-    settings.idleTimeoutMs = 4000;
-    memento.clear();
-    const jaSlow = stream();
-    await global.__handler({ prompt: "a slow run that goes quiet" }, {}, jaSlow.response, jaSlow.token);
     add("JA the elapsed ticker still moves on a slow run", new Set(jaSlow.progress).size >= 2);
     add(
         "JA the ticker still reports elapsed against the cap",

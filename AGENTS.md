@@ -19,7 +19,9 @@ finished 1.x turn (`openCode1Deprecation`, `OD`). The removal is staged: the sui
 groups move from the 1.x CLI fakes (`transport: "cli"`, `writeFake`) to the 2.x fake
 (`scripts/fixtures/fake-opencode2.js`) one green commit at a time, and only then do the
 CLI transport, 1.x routes and the `opencode2`/`transport` settings go. New code targets
-2.x; never delete a 1.x path while a check still drives it.
+2.x; never delete a 1.x path while a check still drives it. Ported: `S`, `GA` (end to
+end), `JA`. A ported group asserts what crossed 2.x's boundary, and a mutant per group
+turned it red before its green was trusted.
 
 | Path | What lives there |
 | --- | --- |
@@ -263,6 +265,11 @@ pick the next free one.
 - `ext.deactivate()` runs near the end; later groups must not start a server.
   Settings keys go in the base `settings` object, never only inside a group.
 - Every `__test` key is read as `ext.__test.<key>` (`MA`).
+- **A group on OpenCode 2**: `oc2Use(async () => …)` runs it on the 2.x fake (its own
+  request record, its server stopped after, the 1.x settings put back); `oc2Prompts()` is
+  each posted prompt's session and text, `oc2Created()` the sessions made. A custom stream
+  is `oc2Script(name, { paceMs, hold, events })` and `[[script:name]]` in the prompt:
+  reasoning, tool and text events become 2.x frames inside the recorded text turn.
 
 ---
 

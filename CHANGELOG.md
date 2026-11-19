@@ -25,6 +25,10 @@ to their summary and headlines. The README ships the last five.
   ones only with `--dev`) and how to collect a background subagent's result. The 2.x
   fake can say a given answer (`[[say:…]]`). Check `MP`.
 - Stale: the `opencode2` setting's description named 2.2.7 as the tested top.
+- **Suite, first port to OpenCode 2:** `S`, `GA` (end to end) and `JA` run on the 2.x fake
+  (`oc2Use`; scripted turns, `[[script:…]]`). Each asserts what crossed 2.x's boundary (the
+  posted prompt, the session it went to); `S` and `JA` gained a boundary check, and a mutant
+  per group turned it red. No shipped code changed.
 
 ### 0.0.242
 
