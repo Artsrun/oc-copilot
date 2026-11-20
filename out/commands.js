@@ -121,6 +121,7 @@ async function diagnose() {
             : "@oc answers in a **Local** session only: the Copilot harness has no chat participants, and VS Code's docs say Local is removed in February 2027 (README, *Copilot harness*)"));
     lines.push(row("harness settings", (0, session_1.harnessNote)()));
     lines.push(row("copilot harness tools", (0, oc_mcp_1.copilotConfigNote)().replace(/\|/g, "\\|")));
+    lines.push(row("opentelemetry", otlpNote()));
     lines.push(row("extension host", vscode.env?.remoteName ?? "local"));
     lines.push(row("ui kind", String(vscode.env?.uiKind ?? "?")));
     lines.push(row("workspace trust", vscode.workspace.isTrusted === false ? (0, followups_1.mark)("fail") + " untrusted — spawning is restricted" : (0, followups_1.mark)("ok") + " trusted"));
@@ -232,5 +233,16 @@ async function pickWorktree() {
     if (action) {
         await vscode.commands.executeCommand(`opencodeCopilotBridge.${action.id}`, { root: listed.root, path: wt.path, branch: wt.branch, baseSha: wt.base });
     }
+}
+function otlpNote() {
+    const otlp = (0, proc_1.otlpEndpoint)();
+    if (otlp.from === "off") {
+        return "off: the bridge removes OTEL_EXPORTER_OTLP_ENDPOINT from every process it starts";
+    }
+    if (otlp.from === "none") {
+        return "not set: OpenCode exports nothing (`otlpEndpoint`)";
+    }
+    const source = otlp.from === "setting" ? "the otlpEndpoint setting" : "VS Code's environment (OTEL_EXPORTER_OTLP_ENDPOINT)";
+    return `\`${(0, core_1.truncate)(otlp.endpoint ?? "", 80)}\` from ${source}: OpenCode 2 sends its traces and logs there, and its logs include each prompt's text`;
 }
 //# sourceMappingURL=commands.js.map

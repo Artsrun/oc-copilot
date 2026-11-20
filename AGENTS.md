@@ -47,7 +47,7 @@ turned it red before its green was trusted.
 | `src/v2-events.ts` | **OpenCode 2's event stream read as 1.x events** (`v2Translator`, stateful per stream; `shell`→`bash`, `subagent`→`task`), plus `v2.delivered` / `v2.compaction`, which only `oc-api` reads. Leaf. |
 | `src/net.ts` | Bounded HTTP, the managed `opencode serve`, shared SSE demux by session id, the not-OpenCode-1 refusal (`markNotOpenCode1`, `openCode1Refusal`), the data-folder refusal (`noteDataFolderClash`, `dataFolderRefusal`: a 1.x on a folder OpenCode 2 created), `plainError` (stderr without colour codes) and the CLI identity check (`ensureCliIdentity`: one `--version` per executable file). |
 | `src/session.ts` | Session state per chat thread (`threadSession`), the chat's last worktree (`threadWorktree`), handoff chain and the way back after one, completion toasts, status bar, what the host's harness allows (`harnessNote`, `getParticipantProblem`, `localSessionProblem`). |
-| `src/proc.ts` | Spawning: shim resolution (`~/` paths too), `cmd.exe` quoting, `killTree`, `PWD = cwd`, `dataHomeEnv` (`XDG_DATA_HOME` from `dataHome`), `runCapture` (a short command's output), `executableStamp` (the files a name runs, as they are on disk). §2 rule 3. |
+| `src/proc.ts` | Spawning: shim resolution (`~/` paths too), `cmd.exe` quoting, `killTree`, `PWD = cwd`, `dataHomeEnv` (`XDG_DATA_HOME` from `dataHome`), `otlpEndpoint` (`OTEL_EXPORTER_OTLP_ENDPOINT`: the setting, `off`, or the host's), `runCapture` (a short command's output), `executableStamp` (the files a name runs, as they are on disk). §2 rule 3. |
 | `src/models.ts` | Model catalog (server `GET /config/providers`, else `opencode models --verbose`), names, variant names, cache tiers, the picker, `writeModelPin`, short names, `modelResolver` (one forced refetch per turn), `effortFor` / `higherEffort`, `contextNote`. |
 | `src/agents.ts` | Which agent a read-only turn runs as: `planAgent`, only once OpenCode lists it. A server's list carries each agent's own `permission` rules. `prewarmFolder`: the server, then the folder's agent list. |
 | `src/context.ts` | Attachments/selection folding, every reference noted kept or dropped (`referenceLogLine`, `contextNotice`: what OpenCode won't get, said in chat), references, answer file pills (`createFileLinker`), `parseChatPrompt`, `splitModelPrefix`, `splitModelsFanout`. |
@@ -216,6 +216,7 @@ A probe measures one thing on this machine and prints it. Paste its output.
 | `scripts/probe-opencode2.js` | With `opencode2`, against a real 2.x through `out/`: text turn, plan writes (absent ×3), `/dev` and enforcement-off controls (`CREATED`), a subagent, Stop, `/sessions`; reads outside the folder and `.env` (refused), `/dev` outside (known), MCP only via `readOnlyTools`, plan first on a fresh server, effort with no model named. Expectations that differ by version name the version measured. |
 | `scripts/probe-data-folder.js` | Two real binaries, one data folder, through `out/`: does 2.x import a 1.x folder, does a chat bound to a 1.x session go on, does 1.x still open it, and what each sees afterwards. Row counts from a copy of the database. |
 | `scripts/probe-mcp.js` | Against a real binary, `out/oc-mcp-server.js` driven over stdio as an MCP client drives it (`scripts/fixtures/mcp-client.js`): `opencode_ask` writes (absent ×3), reads outside the folder and `.env` (refused), a session continued by `sessionId`, a job handed back and collected, `opencode_cancel` and the client's own cancel, the same session answering at once after a stop, `--dev` and its control (`CREATED`), stdin closed (the server and its OpenCode gone). |
+| `scripts/probe-ahp.js` | Route H: the third-party `opencode-ahp` plugin (an AHP listener inside `opencode serve`; `npm install` it into a temp prefix and read it first) against a real 2.x, a raw AHP 1.0.0 client: listener after a location boot, `initialize`, `createSession`, the agent picker; plan writes (shell, write, through `explore`: absent ×3 on the bridge's server, recorded on a stock one) and the build control (`CREATED`); Stop, and the next turn. Stock server, the bridge's, and the bridge's with the plugin in `OPENCODE_CONFIG_CONTENT` (nothing in the workspace). |
 | `scripts/record-wire-fixtures.js` | Records a real 1.x and 2.x server's frames per scripted turn into `scripts/fixtures/wire-v*.json`, the `TW` fakes' input. |
 | `scripts/probe-model.js` | The scripted OpenAI-compatible model both use (`[[probe:<action>]]`): every tool attempt certain, no provider, no cost. |
 
@@ -552,6 +553,18 @@ history belongs in `CHANGELOG.md`, not in the source.
   it reads the user's `mcp-config.json`. The bridge copies the entry for the user
   and never writes that file; the server it names lives in global storage, since
   the extension's own folder is named by its version.
+- **OpenCode 2 exports OTLP whenever `OTEL_EXPORTER_OTLP_ENDPOINT` is set**, traces
+  and logs together (JSON over HTTP), and its logs carry each prompt's text. No other
+  variable turns either off, a per-signal endpoint alone exports nothing, and 1.x's
+  `experimental.openTelemetry` key is dropped by 2.x (2.3.2). An endpoint in VS Code's
+  environment, set for another tool, gets OpenCode's prompts: `otlpEndpoint` decides,
+  and Diagnose says where they go (`OT`, REFS 0.0.244). A turn's requests join a
+  `traceparent` it sends; its model work runs in a trace of its own, joined by `session.id`.
+- **Through an AHP host, read-only is the bridge's rules or nothing.** `opencode-ahp` in
+  a stock `opencode serve`: plan ran `echo > f`, and so did `explore` under it; in the
+  bridge's own server (`ensureServer`, the overrides) plan was offered no writing tool.
+  The plugin can come in through `OPENCODE_CONFIG_CONTENT` (§2 rule 5), and its listener
+  exists only while the folder's location is up (`scripts/probe-ahp.js`, REFS 0.0.244).
 
 ### Claims
 

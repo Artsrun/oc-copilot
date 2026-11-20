@@ -2,7 +2,7 @@
   "name": "opencode-copilot-bridge",
   "displayName": "OpenCode Copilot Bridge",
   "description": "Delegate research, planning, and development to OpenCode from GitHub Copilot Chat.",
-  "version": "0.0.243",
+  "version": "0.0.244",
   "publisher": "local",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -29,7 +29,8 @@
         "opencodeCopilotBridge.serverHostname",
         "opencodeCopilotBridge.serverPort",
         "opencodeCopilotBridge.enforceReadOnly",
-        "opencodeCopilotBridge.readOnlyTools"
+        "opencodeCopilotBridge.readOnlyTools",
+        "opencodeCopilotBridge.otlpEndpoint"
       ]
     },
     "virtualWorkspaces": {
@@ -280,6 +281,12 @@
             "default": "",
             "scope": "machine",
             "description": "OpenCode's data folder (XDG_DATA_HOME) for every process the bridge starts; ~/ is your home folder. Empty: VS Code's own environment. Give an OpenCode 1.x its own folder when OpenCode 2 created the default one. Changing it stops this window's server."
+          },
+          "opencodeCopilotBridge.otlpEndpoint": {
+            "type": "string",
+            "default": "",
+            "scope": "machine",
+            "description": "Where OpenCode 2 sends its OpenTelemetry traces and logs (OTLP over HTTP, JSON; e.g. http://127.0.0.1:4318). OpenCode's logs include each prompt's text. \"off\": nothing, even if VS Code's environment sets OTEL_EXPORTER_OTLP_ENDPOINT. Empty: VS Code's own environment. Changing it stops this window's server."
           },
           "opencodeCopilotBridge.pure": {
             "type": "boolean",

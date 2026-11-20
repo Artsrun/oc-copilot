@@ -5,6 +5,112 @@ actually measured, so nobody re-derives it.
 
 ---
 
+## 0.0.244: an AHP host inside the bridge's server; OpenCode 2's OTLP export; worktrees over the API (2026-11-20)
+
+**Dated 2026-11-20.** Linux, Node 22.23.5, `@opencode/cli` 2.3.2 (npm `latest` today;
+`opencode-ai` 1.19.6), the scripted model, isolated HOME and XDG folders. Ad hoc scripts
+outside the repo (like 0.0.241's settle loop), each through the bridge's `out/` where a row
+names the bridge. Why: Local's removal (0.0.239) leaves two routes; route T is built
+(0.0.241), and these decide how route H and the per-request view are built.
+
+**npm today:** `@microsoft/agent-host-protocol` 1.1.0 is `latest` (published today; its
+`SUPPORTED_PROTOCOL_VERSIONS` adds 1.1.0 to 1.0.0 and 0.9.0); 0.0.239's "1.1.0 is not
+[released]" no longer holds. `ahp-acp-gateway` 0.2.2. `opencode-ahp` 0.1.11 (2026-11-19, MIT,
+github.com/mattzink/opencode-ahp): a plugin that adds an AHP WebSocket listener to
+`opencode serve` (`plugins: [{package, options: {token, port, host}}]`, plus
+`experimental.location_idle_timeout: false`); it pins the 1.0.0 SDK.
+
+### Route H: `opencode-ahp` in a real 2.3.2, a raw AHP client
+
+Three servers, each with the plugin: stock `opencode serve` (plugin in the project's
+`opencode.json`); the bridge's (`ensureServer`, so `spawnOpenCode` and the enforced
+overrides; plugin in `opencode.json`); the bridge's with the plugin in
+`OPENCODE_CONFIG_CONTENT` and nothing in the workspace (Rule 5). The location booted by
+`GET /api/location?location[directory]=…`; the client sent `initialize`, `createSession`
+(`workingDirectories`: the project), `subscribe`, then `chat/turnStarted` with
+`agent: {uri: "opencode:agent/<id>"}` and `model: {id: "probe/scripted"}`, approving
+every ask (none came). The output, `bridge` rows identical to `bridge-env`:
+
+```
+  [stock] AHP listener /healthz after a location boot                ok        · 1470 ms after the boot request
+  [stock] initialize offering 1.1.0 and 1.0.0                        1.1.0
+  [stock] initialize offering 1.1.0 only                             1.1.0
+  [stock] agent picker: Build, General, Explore, Plan
+  [stock] plan · shell echo > p1.txt                                 CREATED   · tools [shell]
+  [stock] plan · write p2.txt                                        absent    · tools [write]
+  [stock] plan → explore · shell echo > p3.txt                       CREATED   · tools [subagent]
+  [stock] control: build · shell echo > b1.txt                       CREATED
+  [stock] Stop: plan · slow, cancelled at 1.5 s                      turnCancelled · stream parts in the 3 s after 0
+  [stock] next turn, same chat, right after Stop                     turnComplete · "Hello from the scripted model."
+  [bridge-env] AHP listener /healthz after a location boot           ok        · 1107 ms after the boot request
+  [bridge-env] plan · shell echo > p1.txt                            absent    · tools []
+  [bridge-env] plan · write p2.txt                                   absent    · tools []
+  [bridge-env] plan → explore · shell echo > p3.txt                  absent    · tools [subagent]
+  [bridge-env] control: build · shell echo > b1.txt                  CREATED
+  [bridge-env] Stop: plan · slow, cancelled at 1.5 s                 turnCancelled · stream parts in the 3 s after 0
+  [bridge-env] next turn, same chat, right after Stop                turnComplete · "Hello from the scripted model."
+ALL 33 ROWS AS EXPECTED (44 s)
+```
+
+- **Read-only through an AHP host is the bridge's rules or nothing.** The stock `plan`
+  ran `echo > p1.txt` (read-only by instruction, as on 1.19.0 and 2.0.29, §7), and so did
+  `explore` under it. Under the overrides plan was offered no writing tool at all.
+- **The plugin goes in through the environment**: `OPENCODE_CONFIG_CONTENT` with
+  `plugins` merges with the bridge's overrides (`enforcedConfigContent` keeps a user's
+  object), and the listener came up the same.
+- **The listener exists only while the location is up**; one location request boots it
+  (1.1–2.1 s). The bridge's prewarm makes that request today.
+- **Version negotiation is by major:** with the 1.0.0 SDK the plugin answered `1.1.0` to
+  a client offering only `1.1.0`.
+- Not measured: VS Code's Agents window against it (`docs/local-agent.md` task 2, part
+  B), two windows (two servers, one configured port), Windows and macOS.
+
+### OpenCode 2's OTLP export
+
+`opencode run --format json "[[probe:bash:echo hi]]"` in a fresh project, a local
+OTLP/HTTP receiver, the child's environment read back from `/proc/<pid>/environ`:
+
+| Child environment | What the receiver got |
+| --- | --- |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` = the receiver (with or without `experimental.openTelemetry`) | `/v1/traces` 9–12 requests (~237 KB) and `/v1/logs` 5–6 (~27 KB), `application/json`, user agent `OTel-OTLP-Exporter-JavaScript/0.219.0` |
+| the same plus `OTEL_LOGS_EXPORTER=none`, or `OTEL_TRACES_EXPORTER=none`, or `OTEL_SDK_DISABLED=true` | the same |
+| the endpoint `http://127.0.0.1:1`, or empty | nothing |
+| empty, with `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` = the receiver | nothing |
+
+- **The prompt's text is in `/v1/logs`** (an `event` record); the answer, the tool's
+  output and the project path were in neither stream.
+- **513 spans in 31 traces for one turn**, scope `effect`, resource
+  `telemetry.sdk.name=@effect/opentelemetry`, `opencode.client=cli`, `opencode.run=…`.
+  Mostly plumbing (`PluginHost.make`, `Plugin.load`, `State.notify`, `FileSystem.*`); the
+  turn's own are `LLM.stream`, `Tool.execute` and `SessionStep.attempt`, with
+  `gen_ai.agent.name`, `gen_ai.provider.name`, `gen_ai.request.model`,
+  `gen_ai.response.finish_reasons`, `gen_ai.usage.{input,output,cache_read.input,cache_creation.input}_tokens`,
+  `opencode.usage.cost_usd`, `opencode.llm.first_output_ms`, `session.id`.
+- **`experimental.openTelemetry` is a 1.x key that 2.x drops**: 2.3.2's config reader runs
+  it, with `batch_tool` and `primary_tools`, through a diagnostic and keeps nothing. The
+  variable alone is the switch.
+- **Trace context, through the bridge's own server** (`ensureServer`, one engine plan
+  turn, every request carrying our `traceparent`): `GET /api/agent` with it put 329
+  spans in our trace, parent our span; the turn's requests (`Session.create`,
+  `switchAgent`, `switchModel`, the inbox) joined the turn's trace (49 spans), but its
+  model work (`LLM.stream`, `Tool.execute`, `SessionStep.attempt`) ran in a trace of its
+  own. So a per-request view joins the bridge's span to OpenCode's work by `session.id`,
+  not by trace.
+- 1.19.6's `opencode run` did not finish in 120–240 s in this harness, with or without
+  the key; not pursued (1.x is deprecated).
+
+Shipped from this: `otlpEndpoint` (`otlpEndpoint()` in `src/proc.ts`), check `OT`.
+
+### Worktrees over OpenCode 2's API
+
+`GET /api/worktree` needs `projectID` (`GET /api/location` names it). `POST /api/worktree
+{projectID}` created `<data>/opencode/worktree/<id6>/tidy-cabin`, `{projectID, name:
+"probe-wt"}` created `…/probe-wt`, both `git worktree`s detached at HEAD; the list then
+named them with `strategy: "git"`. Outside the workspace, unlike `/worktree`'s
+`<repo>.worktrees/`. Nothing changed: `/worktree` stays as it is.
+
+---
+
 ## 0.0.243: where a 2.3 background subagent's result goes; chips on a corpus (2026-11-19)
 
 **Dated 2026-11-19.** Linux, Node 22.23.4, `@opencode/cli` 2.3.2, the bridge's `out/`,

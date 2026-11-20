@@ -3,6 +3,34 @@
 Full release history, newest first; releases before the last one are condensed
 to their summary and headlines. The README ships the last five.
 
+### 0.0.244
+
+OpenCode 2's own OpenTelemetry, one setting away; and three measurements for the road
+after the Local harness (REFS 0.0.244): an AHP host inside the bridge's server, OpenCode's
+OTLP export, and worktrees over its API.
+
+- **New setting `otlpEndpoint`.** OpenCode 2.3.2 exports OTLP (traces and logs, JSON over
+  HTTP) whenever `OTEL_EXPORTER_OTLP_ENDPOINT` names an endpoint; `OTEL_LOGS_EXPORTER`,
+  `OTEL_TRACES_EXPORTER` and `OTEL_SDK_DISABLED` change nothing, a traces-only endpoint
+  exports nothing, and 1.x's `experimental.openTelemetry` key is dropped by 2.x's config
+  reader. Its logs carry each prompt's text; its spans carry `gen_ai.*` (agent, provider,
+  model, token and cache usage), `opencode.usage.cost_usd` and `session.id`. Every spawn
+  gets the setting's URL, or with `off` none (an endpoint VS Code's environment set for
+  another tool would otherwise receive the prompts), or with empty the host's own. A
+  change stops this window's server, which keeps the environment it started with; the
+  setting is restricted in an untrusted workspace; Diagnose's `opentelemetry` row names
+  the endpoint, where it came from and that the logs hold prompts. Checks `OT` (red
+  first: 6 of 7), `GC` (red first).
+- **Measured, not shipped: OpenCode in the Agents window through `opencode-ahp`** (MIT,
+  0.1.11, a plugin inside `opencode serve`). Through a stock server, plan wrote with the
+  shell and through `explore`; through the bridge's own server (`ensureServer`, its
+  overrides) every read-only row was absent and the build control `CREATED`, with the
+  plugin injected through `OPENCODE_CONFIG_CONTENT`, nothing in the workspace. 33 of 33
+  rows; Stop and the next turn clean.
+- **Measured: OpenCode 2.3.2 creates worktrees over its API** (`POST /api/worktree`,
+  `projectID` from `GET /api/location`), under its own data folder, detached at HEAD.
+  `/worktree` is unchanged.
+
 ### 0.0.243
 
 `@oc`, OpenCode 1 deprecated, and follow-ups for OpenCode 2.3's background subagents.

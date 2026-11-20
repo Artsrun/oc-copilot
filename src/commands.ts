@@ -4,7 +4,7 @@ import { platform } from "node:process";
 import { config, truncate } from "./core";
 import { activeCwd, resolveFolder } from "./host";
 import { mark } from "./followups";
-import { resolveExecutable, runCapture } from "./proc";
+import { otlpEndpoint, resolveExecutable, runCapture } from "./proc";
 import { dataFolderRefusal, knownServerBase, lastServeFailure, majorVersionNote } from "./net";
 import { api } from "./oc-api";
 import { copilotConfigNote } from "./oc-mcp";
@@ -117,6 +117,7 @@ export async function diagnose(): Promise<void> {
     );
     lines.push(row("harness settings", harnessNote()));
     lines.push(row("copilot harness tools", copilotConfigNote().replace(/\|/g, "\\|")));
+    lines.push(row("opentelemetry", otlpNote()));
     lines.push(row("extension host", vscode.env?.remoteName ?? "local"));
     lines.push(row("ui kind", String(vscode.env?.uiKind ?? "?")));
     lines.push(
@@ -249,4 +250,17 @@ export async function pickWorktree(): Promise<void> {
     if (action) {
         await vscode.commands.executeCommand(`opencodeCopilotBridge.${action.id}`, { root: listed.root, path: wt.path, branch: wt.branch, baseSha: wt.base });
     }
+}
+
+/** Diagnose's row: where OpenCode's OTLP export goes, and what it carries (REFS 0.0.244). */
+function otlpNote(): string {
+    const otlp = otlpEndpoint();
+    if (otlp.from === "off") {
+        return "off: the bridge removes OTEL_EXPORTER_OTLP_ENDPOINT from every process it starts";
+    }
+    if (otlp.from === "none") {
+        return "not set: OpenCode exports nothing (`otlpEndpoint`)";
+    }
+    const source = otlp.from === "setting" ? "the otlpEndpoint setting" : "VS Code's environment (OTEL_EXPORTER_OTLP_ENDPOINT)";
+    return `\`${truncate(otlp.endpoint ?? "", 80)}\` from ${source}: OpenCode 2 sends its traces and logs there, and its logs include each prompt's text`;
 }

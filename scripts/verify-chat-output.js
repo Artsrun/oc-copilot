@@ -105,7 +105,7 @@ function writeFake(name, events, extraJs) {
         // v183: what the real CLI resolves its directory from (PWD first).
         "fs.writeFileSync(" +
         JSON.stringify(file + ".env") +
-        ", JSON.stringify({ pwd: process.env.PWD ?? null, cwd: process.cwd(), occ: process.env.OPENCODE_CONFIG_CONTENT ?? null, xdg: process.env.XDG_DATA_HOME ?? null }));\n" +
+        ", JSON.stringify({ pwd: process.env.PWD ?? null, cwd: process.cwd(), occ: process.env.OPENCODE_CONFIG_CONTENT ?? null, xdg: process.env.XDG_DATA_HOME ?? null, otlp: process.env.OTEL_EXPORTER_OTLP_ENDPOINT ?? null }));\n" +
         ((extraJs || "").includes("--version") ? "" : "if (process.argv.includes('--version')) { process.stdout.write('1.19.0\\n'); process.exit(0); }\n") +
         "const events = " +
         JSON.stringify(events) +
@@ -247,6 +247,7 @@ const settings = {
     enforceReadOnly: true,
     opencode2: true,
     dataHome: "",
+    otlpEndpoint: "",
     readOnlyTools: ["git-scan_gitScan"],
     attachDevToServer: true,
     prewarmServer: true,
@@ -2045,6 +2046,40 @@ function collectConfigProperties(configuration) {
     await global.__handler({ prompt: "with no dataHome" }, {}, se6.response, se6.token);
     add("SE an empty dataHome passes VS Code's own XDG_DATA_HOME", lastEnv("fake-ok.js").xdg === (process.env.XDG_DATA_HOME ?? null));
     settings.executable = happy;
+
+    // 0.0.244 OT: OpenCode 2 exports OTLP (traces and logs, JSON over HTTP) whenever
+    // OTEL_EXPORTER_OTLP_ENDPOINT names an endpoint, and its logs carry each prompt's text;
+    // no other variable turns either off (2.3.2, REFS 0.0.244). `otlpEndpoint` decides what
+    // every spawn gets: a URL, "off" (the host's value removed), or empty (the host's own).
+    {
+        const hostOtlp = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+        process.env.OTEL_EXPORTER_OTLP_ENDPOINT = "http://host-env.invalid:4318";
+        const otTurn = async (prompt) => { const st = stream(); await global.__handler({ prompt }, {}, st.response, st.token); return lastEnv("fake-ok.js").otlp; };
+        settings.otlpEndpoint = "http://127.0.0.1:4318";
+        const ot1 = await otTurn("otlp to a URL");
+        add(`OT a URL in otlpEndpoint reaches the spawn as OTEL_EXPORTER_OTLP_ENDPOINT (${ot1})`, ot1 === "http://127.0.0.1:4318");
+        settings.otlpEndpoint = " Off ";
+        const ot2 = await otTurn("otlp off");
+        add(`OT "off" removes the host's endpoint from the spawn (${ot2})`, ot2 === null);
+        settings.otlpEndpoint = "";
+        const ot3 = await otTurn("otlp inherited");
+        add(`OT empty passes the host's own endpoint (${ot3})`, ot3 === "http://host-env.invalid:4318");
+        // A running server keeps the environment it started with: a change stops it.
+        const otLog = logLines.length;
+        workspaceEvents.configuration.forEach((cb) => cb({ affectsConfiguration: (key) => key === "opencodeCopilotBridge" || key === "opencodeCopilotBridge.otlpEndpoint" }));
+        add("OT a changed otlpEndpoint stops this window's server", logLines.slice(otLog).some((l) => /otlpEndpoint changed: the managed server stops/.test(l)));
+        // Diagnose says where OpenCode's spans and logs go, and that the logs hold prompts.
+        const otDoc = async () => { let doc = ""; Object.assign(vscodeStub.workspace, { openTextDocument: async (o) => ((doc = o.content), {}) }); vscodeStub.window.showTextDocument = async () => undefined; await registeredCommands.get("opencodeCopilotBridge.diagnose")(); return doc.split("\n").find((l) => l.startsWith("| opentelemetry |")) ?? ""; };
+        const otRowEnv = await otDoc();
+        add(`OT Diagnose names the host's endpoint and that OpenCode's logs carry prompts (${otRowEnv})`, otRowEnv.includes("http://host-env.invalid:4318") && /environment/.test(otRowEnv) && /prompt/.test(otRowEnv));
+        settings.otlpEndpoint = "off";
+        const otRowOff = await otDoc();
+        add(`OT Diagnose: off (${otRowOff})`, /\| opentelemetry \| off/.test(otRowOff) && !otRowOff.includes("host-env.invalid"));
+        settings.otlpEndpoint = "";
+        if (hostOtlp === undefined) delete process.env.OTEL_EXPORTER_OTLP_ENDPOINT; else process.env.OTEL_EXPORTER_OTLP_ENDPOINT = hostOtlp;
+        const otRowNone = await otDoc();
+        add(`OT Diagnose with nothing set: OpenCode exports nothing (${otRowNone})`, hostOtlp !== undefined || /\| opentelemetry \| not set/.test(otRowNone));
+    }
     // 0.0.225: a running tool part before its input arrives is `{}` — the row read
     // `glob: {}` for 40 s (0.0.223 live). It names nothing yet, so no row.
     add("SE a tool call with no input yet has no detail (no `glob: {}` row); real input still shows",
@@ -2810,7 +2845,7 @@ function collectConfigProperties(configuration) {
     const gcTrust = (gcPkg.capabilities || {}).untrustedWorkspaces || {};
     const gcRestricted = gcTrust.restrictedConfigurations || [];
     add("GC the manifest limits an untrusted workspace", gcTrust.supported === "limited");
-    for (const key of ["executable", "serverHostname", "serverPort"]) {
+    for (const key of ["executable", "serverHostname", "serverPort", "otlpEndpoint"]) {
         add(
             `GC ${key} is restricted in an untrusted workspace`,
             gcRestricted.includes(`opencodeCopilotBridge.${key}`)
