@@ -1,6 +1,6 @@
 // `/worktree <task>` — opt-in isolation.
 //
-// The default is cooperative: @opencode edits the checkout you and Copilot are
+// The default is cooperative: @oc edits the checkout you and Copilot are
 // already in. `/worktree` is the explicit exception: a fresh git worktree + branch
 // NEXT TO the repo (never inside it — Rule 5), so the run cannot touch your
 // checkout. What it guarantees and what it does not is stated once, here, and

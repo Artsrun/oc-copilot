@@ -10,7 +10,7 @@ flowchart LR
   classDef back fill:#f3e8ff,stroke:#9333ea,color:#581c87
   classDef off fill:#f3f4f6,stroke:#9ca3af,color:#6b7280,stroke-dasharray: 4 3
 
-  U(["(・o・) User: @opencode task, in a Local chat session"]):::host
+  U(["(・o・) User: @oc task, in a Local chat session"]):::host
   subgraph A["A: VS Code and Copilot Chat"]
     P["(・o・) prompt and /command"]:::host
     R["(◕‿◕) references and selection"]:::host
@@ -70,4 +70,4 @@ flowchart LR
    rules are read back where it runs, and a reopened rule means nothing is sent
    (page 3).
 7. **The front door is deprecated.** The Copilot harness has no chat
-   participants, so `@opencode` answers in Local sessions only (page 8).
+   participants, so `@oc` answers in Local sessions only (page 8).

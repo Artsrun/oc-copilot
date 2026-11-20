@@ -160,7 +160,7 @@ metadata, because metadata is the only binding.
 | Images, binary attachments, anything not a file on disk | Not sent, and the chat says so (`contextNotice`) |
 | An unsaved file when no excerpt fits; `.env` text on a read-only turn | Path only or withheld, and said |
 | VS Code's current-file chip | Implicit: said once per window. `#file` or `includeEditorSelection` sends it |
-| Copilot's customizations index and instruction files | Logged only: OpenCode loads its own |
+| Copilot's customizations index and instruction files | Logged only. OpenCode reads `AGENTS.md` (`CLAUDE.md` without one) and what `opencode.json` `instructions` lists; `.github/copilot-instructions.md` only from that list (REFS 0.0.242) |
 
 Output › OpenCode logs every reference the host sent, kept or dropped and why
 (`referenceLogLine`).

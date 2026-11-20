@@ -30,7 +30,7 @@ export const laneProblem = (task: string): string | undefined => {
 export const composeLanes = (lanes: readonly ComposedLane[]): string =>
     lanes.map((l) => (l.model ? `m:${l.model} ` : "") + l.task.trim()).join("\n---\n");
 
-export const chatQuery = (lanes: readonly ComposedLane[]): string => `@opencode /parallel ${composeLanes(lanes)}`;
+export const chatQuery = (lanes: readonly ComposedLane[]): string => `@oc /parallel ${composeLanes(lanes)}`;
 
 /** Put the command in the chat input without sending it. */
 export const insertIntoChat = async (query: string): Promise<boolean> => {

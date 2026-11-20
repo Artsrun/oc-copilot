@@ -31,7 +31,7 @@ export function planTimeout(): TimeoutPlan {
     return { timeoutMs: base, idleTimeoutMs: idle, reason: "fixed cap" };
 }
 
-// Vague-prompt clarification. `@opencode ping` costs a full model run to learn
+// Vague-prompt clarification. `@oc ping` costs a full model run to learn
 // nothing, so asking first is cheaper — with a one-click "run it anyway".
 
 const CONNECTIVITY_WORDS = /^(ping|test|hello|hi|hey|yo|check|status|are you (there|alive|up)|you there)\W*$/i;

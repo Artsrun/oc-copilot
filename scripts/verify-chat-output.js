@@ -820,40 +820,79 @@ function collectConfigProperties(configuration) {
     await global.__handler({ prompt: "/new" }, {}, i5.response, i5.token);
     add("I typed /new still works", i5.chatMarkdown.join("").includes("fresh OpenCode session"));
 
+    // OpenCode 2 as a group's OpenCode (0.0.243, AGENTS §1: the suite moves to the 2.x fake
+    // before 1.x code goes). `oc2Use` runs a block on the fake 2.x server — its own record
+    // of requests, its server stopped after — and puts the 1.x settings back. A prompt's
+    // `[[script:<name>]]` plays `oc2Script(name, spec)`'s events inside a recorded turn.
+    const oc2Record = path.join(work, "oc2-record.jsonl");
+    const oc2Scripts = path.join(work, "oc2-scripts");
+    fs.mkdirSync(oc2Scripts, { recursive: true });
+    process.env.FAKE_OC2_SCRIPT_DIR = oc2Scripts;
+    const oc2Fake = writeFake("fake-oc2-groups.js", [], `if (!process.argv.includes('--version') || true) require(${JSON.stringify(path.join(__dirname, "fixtures", "fake-opencode2.js"))})(process.argv);\n`);
+    const oc2Reqs = () => (fs.existsSync(oc2Record) ? fs.readFileSync(oc2Record, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)) : []);
+    // What reached OpenCode: each prompt's session and text, and the sessions created.
+    const oc2Prompts = () => oc2Reqs().filter((r) => r.method === "POST" && /^\/api\/session\/[^/]+\/prompt$/.test(r.path ?? "")).map((r) => ({ session: r.path.split("/")[3], text: String(r.body?.text ?? "") }));
+    const oc2Created = () => oc2Reqs().filter((r) => r.method === "POST" && r.path === "/api/session").length;
+    const oc2Script = (name, spec) => fs.writeFileSync(path.join(oc2Scripts, `${name}.json`), JSON.stringify(spec));
+    const oc2Use = async (block) => {
+        const saved = { executable: settings.executable, serverPort: settings.serverPort, transport: settings.transport, serverStartupPollMs: settings.serverStartupPollMs, opencode2: settings.opencode2 };
+        const savedRecord = process.env.FAKE_OC2_RECORD;
+        process.env.FAKE_OC2_RECORD = oc2Record;
+        fs.rmSync(oc2Record, { force: true });
+        Object.assign(settings, { executable: oc2Fake, serverPort: 0, transport: "server", serverStartupPollMs: 50, opencode2: true });
+        try {
+            return await block();
+        } finally {
+            ext.deactivate();
+            Object.assign(settings, saved);
+            if (savedRecord === undefined) delete process.env.FAKE_OC2_RECORD;
+            else process.env.FAKE_OC2_RECORD = savedRecord;
+        }
+    };
+
     // J: attached files become a context block AND clickable references.
     memento.clear();
     const attached = path.join(work, "src", "login.ts");
     fs.mkdirSync(path.dirname(attached), { recursive: true });
     fs.writeFileSync(attached, "export const login = () => {};\n");
+    // On OpenCode 2 (0.0.243): the posted prompt is what OpenCode got. The scripted turn
+    // reads src/session.ts, so the tool-path reference is told apart from the attachment
+    // (the 1.x fake read login.ts, the attached file itself).
+    oc2Script("j-read", { events: [{ tool: "read", input: { filePath: "src/session.ts" }, output: "export const s = 1;" }, { text: "It exports login." }] });
     const j = stream();
-    await global.__handler(
-        {
-            prompt: "explain this file",
-            references: [{ id: "vscode.file", value: { fsPath: attached, scheme: "file" } }]
-        },
-        {},
-        j.response,
-        j.token
-    );
-    const argvJ = lastArgv("fake-ok.js");
-    const sentJ = argvJ[argvJ.length - 1] || "";
-    add("J attachment reaches the prompt as context", /Files the user attached:/.test(sentJ) && sentJ.includes("src/login.ts"));
-    add("J the task leads, context trails", sentJ.trimStart().startsWith("explain this file") && /\(Context only\./.test(sentJ));
-    add("J attachment is emitted as a chat reference", j.refs.some((r) => r === attached));
-    add("J tool file paths are emitted as references", j.refs.some((r) => /login\.ts$/.test(r)));
-
-    // Opt-out must be honoured.
-    settings.includeChatReferences = false;
-    memento.clear();
     const j2 = stream();
-    await global.__handler(
-        { prompt: "explain this file", references: [{ id: "vscode.file", value: { fsPath: attached, scheme: "file" } }] },
-        {},
-        j2.response,
-        j2.token
-    );
-    const sentJ2 = (lastArgv("fake-ok.js").slice(-1)[0]) || "";
-    add("J includeChatReferences=false sends no context block", !/Files the user attached:/.test(sentJ2));
+    const jSent = await oc2Use(async () => {
+        await global.__handler(
+            { prompt: "explain this file [[script:j-read]]", references: [{ id: "vscode.file", value: { fsPath: attached, scheme: "file" } }] },
+            {},
+            j.response,
+            j.token
+        );
+        const first = oc2Prompts();
+        // Opt-out must be honoured.
+        settings.includeChatReferences = false;
+        try {
+            memento.clear();
+            await global.__handler(
+                { prompt: "explain this file [[script:j-read]]", references: [{ id: "vscode.file", value: { fsPath: attached, scheme: "file" } }] },
+                {},
+                j2.response,
+                j2.token
+            );
+        } finally {
+            settings.includeChatReferences = true;
+        }
+        return { first, all: oc2Prompts() };
+    });
+    const sentJ = jSent.first.at(-1)?.text ?? "";
+    add(`J the turn reached OpenCode 2 and answered (${jSent.first.length} prompt)`, jSent.first.length === 1 && /It exports login\./.test(j.chatMarkdown.join("")));
+    add("J attachment reaches the prompt as context", /Files the user attached:/.test(sentJ) && sentJ.includes("src/login.ts"));
+    // The file list itself after the task: the closing note alone is written with no files too.
+    add("J the task leads, context trails", sentJ.trimStart().startsWith("explain this file") && sentJ.indexOf("Files the user attached:") > sentJ.indexOf("explain this file") && sentJ.indexOf("(Context only.") > sentJ.indexOf("Files the user attached:"));
+    add("J attachment is emitted as a chat reference", j.refs.some((r) => r === attached));
+    add(`J tool file paths are emitted as references (${j.refs.map((r) => path.basename(r)).join(", ")})`, j.refs.some((r) => r === path.join(work, "src", "session.ts")));
+    const sentJ2 = jSent.all.at(-1)?.text ?? "";
+    add("J includeChatReferences=false sends no context block", jSent.all.length === 2 && sentJ2.includes("explain this file") && !/Files the user attached:/.test(sentJ2));
     add(
         "JN …and logs the attachment it left out, without a chat line",
         logLines.some((l) => /references \(1\): kept none; dropped vscode\.file src\/login\.ts \(file: includeChatReferences is off\)/.test(l)) && !/Not sent to OpenCode/.test(j2.chatMarkdown.join(""))
@@ -1238,41 +1277,37 @@ function collectConfigProperties(configuration) {
 
     // J: a /parallel turn hands the attachment to every lane. 0.0.195 built the
     // context after the parallel branch had returned, so `#file:` reached no lane.
+    // On OpenCode 2 (0.0.243): each lane is a session of its own; its posted prompt is read.
     {
-        const jpLog = path.join(work, "fake-jp.argvs");
-        const jpFake = writeFake(
-            "fake-jp.js",
-            [{ type: "text", sessionID: "ses_jp", part: { text: "lane ok" } }],
-            `fs.appendFileSync(${JSON.stringify(jpLog)}, JSON.stringify(process.argv) + "\\n");\n`
-        );
         const jpRun = async (prompt) => {
-            settings.executable = jpFake;
-            settings.transport = "cli";
-            fs.rmSync(jpLog, { force: true });
             memento.clear();
             const st = stream();
+            const before = oc2Prompts().length;
             await global.__handler(
                 { prompt, command: "parallel", references: [{ id: "vscode.file", value: { fsPath: attached, scheme: "file" } }] },
                 {},
                 st.response,
                 st.token
             );
-            const runs = fs.existsSync(jpLog) ? fs.readFileSync(jpLog, "utf8").trim().split("\n").map((l) => JSON.parse(l)) : [];
-            return { runs, st, text: st.chatMarkdown.join("") };
+            return { lanes: oc2Prompts().slice(before), st, text: st.chatMarkdown.join("") };
         };
-        const jp = await jpRun("review auth | list deps");
-        const jpTasks = jp.runs.map((a) => a[a.length - 1]);
+        const { jp, jpOff } = await oc2Use(async () => {
+            const on = await jpRun("review auth | list deps");
+            settings.includeChatReferences = false;
+            try {
+                return { jp: on, jpOff: await jpRun("review auth | list deps") };
+            } finally {
+                settings.includeChatReferences = true;
+            }
+        });
+        const jpTasks = jp.lanes.map((l) => l.text);
         add(
-            "J every /parallel lane gets the attachment, its own task leading",
+            `J every /parallel lane gets the attachment, its own task leading, in a session of its own (${jp.lanes.length} lanes)`,
             jpTasks.length === 2 && jpTasks.every((t) => /Files the user attached:/.test(t) && t.includes("src/login.ts")) &&
-                jpTasks.some((t) => t.startsWith("review auth")) && jpTasks.some((t) => t.startsWith("list deps"))
+                jpTasks.some((t) => t.startsWith("review auth")) && jpTasks.some((t) => t.startsWith("list deps")) && jp.lanes[0].session !== jp.lanes[1].session
         );
         add("J a /parallel attachment is a chat reference, and no lane title carries the context block", jp.st.refs.some((r) => r === attached) && !/### \d\. [^\n]*Files the user attached/.test(jp.text));
-        settings.includeChatReferences = false;
-        const jpOff = await jpRun("review auth | list deps");
-        add("J includeChatReferences=false keeps /parallel lanes bare", jpOff.runs.length === 2 && jpOff.runs.every((a) => !/Files the user attached:/.test(a[a.length - 1])));
-        settings.includeChatReferences = true;
-        settings.executable = happy;
+        add("J includeChatReferences=false keeps /parallel lanes bare", jpOff.lanes.length === 2 && jpOff.lanes.every((l) => !/Files the user attached:/.test(l.text)));
     }
 
     // K: heartbeat keeps the progress line alive with an elapsed readout.
@@ -1353,41 +1388,42 @@ function collectConfigProperties(configuration) {
     fs.writeFileSync(instr, "# house rules\n");
     const agentsMd = path.join(work, "AGENTS.md");
     fs.writeFileSync(agentsMd, "# agents\n");
+    // On OpenCode 2 (0.0.243): what was posted to the session is what OpenCode got.
     const sInstr = stream();
-    await global.__handler(
-        {
-            prompt: "what are the risks?",
-            references: [
-                { id: "copilot.instructions", value: { fsPath: instr, scheme: "file" } },
-                { id: "vscode.file", value: { fsPath: agentsMd, scheme: "file" } },
-                { id: "copilot.instructions", value: "<instructions>Here is a list of instruction files that contain rules for working with this codebase…</instructions>" }
-            ]
-        },
-        {},
-        sInstr.response,
-        sInstr.token
-    );
-    const sentS = (lastArgv("fake-ok.js").slice(-1)[0]) || "";
+    const sPosted = await oc2Use(async () => {
+        await global.__handler(
+            {
+                prompt: "what are the risks?",
+                references: [
+                    { id: "copilot.instructions", value: { fsPath: instr, scheme: "file" } },
+                    { id: "vscode.file", value: { fsPath: agentsMd, scheme: "file" } },
+                    { id: "copilot.instructions", value: "<instructions>Here is a list of instruction files that contain rules for working with this codebase…</instructions>" }
+                ]
+            },
+            {},
+            sInstr.response,
+            sInstr.token
+        );
+        return oc2Prompts();
+    });
+    const sentS = sPosted.at(-1)?.text ?? "";
+    // The boundary first: the absences below would pass on a turn that never reached OpenCode.
+    add(`S the turn reached OpenCode 2 with the user's words (${sPosted.length} prompt)`, sPosted.length === 1 && sentS.includes("what are the risks?") && /Hello from the scripted model\./.test(sInstr.chatMarkdown.join("")));
     add("S instruction-file references are not resent", !/copilot-instructions|AGENTS\.md/.test(sentS));
     add("S string-valued references are dropped", !/<instructions>/.test(sentS));
     add("S no context block when nothing real was attached", !/Files the user attached:/.test(sentS));
     add("S instruction files are not shown as chat references", !sInstr.refs.some((r) => /AGENTS\.md|copilot-instructions/.test(r)));
 
+
     // T: a model that echoes the context block anyway must not leak it into chat.
-    const leak = writeFake("fake-leak.js", [
-        {
-            type: "text",
-            sessionID: "ses_leak",
-            part: { text: "<workspace-context>\nFiles the user attached:\n- a.ts\n</workspace-context>\n\nThe real answer is 42." }
-        },
-        { type: "step_finish", sessionID: "ses_leak", part: { reason: "stop", cost: 0, tokens: { input: 1, output: 1, reasoning: 0, total: 2, cache: { read: 0, write: 0 } } } }
-    ]);
-    settings.executable = leak;
+    // On OpenCode 2 (0.0.243): streamed as deltas, the block split across three of them,
+    // which the 1.x fake (one whole part at the end) never did.
+    oc2Script("t-leak", { events: [{ text: ["<workspace-", "context>\nFiles the user attached:\n- a.ts\n</workspace-con", "text>\n\nThe real answer is 42."] }] });
     memento.clear();
     const t1 = stream();
-    await global.__handler({ prompt: "leak test" }, {}, t1.response, t1.token);
+    await oc2Use(() => global.__handler({ prompt: "leak test [[script:t-leak]]" }, {}, t1.response, t1.token));
     const chatT = t1.chatMarkdown.join("");
-    add("T leaked context block is scrubbed from chat", !/workspace-context/.test(chatT));
+    add("T leaked context block is scrubbed from chat", !/workspace-context|workspace-|Files the user attached/.test(chatT));
     add("T the real answer survives scrubbing", chatT.includes("The real answer is 42"));
     settings.executable = happy;
 
@@ -1894,49 +1930,39 @@ function collectConfigProperties(configuration) {
     // 0.0.149's idle cap was computed and discarded; strict does not imply this.
     add("BG noUnusedLocals is on", /"noUnusedLocals"\s*:\s*true/.test(readRepo("tsconfig.json") || ""));
 
-    // ============ v148 (the "@opencode ping returns nothing" report) ============
+    // ============ v148 (the "@oc ping returns nothing" report) ============
 
-    // CA: THE REPORTED BUG. A run that completes, prints non-JSON output, and
-    // reports no events used to render as a COMPLETELY EMPTY chat reply while the
-    // work had actually happened. Reproduce it: a fake that prints prose, not events.
-    // The raw-stdout salvage is gone, so an unparsed run now reports as empty —
-    // that is the accepted cost of dropping the safety net.
-    const proseFake = writeFake(
-        "fake-prose.js",
-        [],
-        "process.stdout.write('> plan \u00b7 Aspen\\n');\n" +
-        "process.stdout.write('App.js defines the root router and mounts four providers.\\n');\n" +
-        "process.stdout.write('It has 412 lines and imports 19 modules.\\n');\n"
-    );
-    settings.executable = proseFake;
-    settings.chatDensity = "full";
-    memento.clear();
-    const ca = stream();
-    await global.__handler({ prompt: "read App.js and Report" }, {}, ca.response, ca.token);
-    const chatCA = ca.chatMarkdown.join("");
-    add("CA an unparsed run is never a blank reply", chatCA.trim().length > 0);
-
-    // CB: a truly empty run explains itself instead of rendering nothing.
-    const silentFake = writeFake("fake-silent.js", [], "process.exit(3);\n");
-    settings.executable = silentFake;
-    memento.clear();
-    const cb = stream();
-    await global.__handler({ prompt: "this will produce nothing at all" }, {}, cb.response, cb.token);
-    const chatCB = cb.chatMarkdown.join("");
-    add("CB an empty run still says something", chatCB.trim().length > 0);
-    add("CB its exit code goes to the debug log", logLines.some((l) => / exit code 3\b/.test(l)));
-
-    // CC: a CLI error event must reach chat. Before v148 only the SSE path handled
+    // CA: THE REPORTED BUG. A run that completes with no answer used to render as a
+    // COMPLETELY EMPTY chat reply while the work had actually happened (v148: a 1.x CLI
+    // run that printed prose, not events). On OpenCode 2 (0.0.243) there is no stdout to
+    // parse; the promise is the same: a run that ends without answer text says so, in
+    // words, not a metrics line that merely makes the reply non-blank.
+    oc2Script("ca-empty", { events: [] });
+    // CB: a run that fails with no output and no message explains itself.
+    oc2Script("cb-fail", { events: [], fail: { type: "unknown" } });
+    // CC: a provider's error must reach chat. Before v148 only the SSE path handled
     // session.error; on the CLI path it fell into `default:` and was dropped.
-    const errFake = writeFake("fake-err.js", [
-        { type: "session.error", sessionID: "ses_e", part: { message: "provider returned 401 Unauthorized" } }
-    ]);
-    settings.executable = errFake;
-    memento.clear();
+    oc2Script("cc-error", { events: [], fail: { type: "provider", message: "provider returned 401 Unauthorized" } });
+    settings.chatDensity = "full";
+    const ca = stream();
+    const cb = stream();
     const cc = stream();
-    await global.__handler({ prompt: "trigger a provider error" }, {}, cc.response, cc.token);
+    const cbLog = logLines.length;
+    await oc2Use(async () => {
+        memento.clear();
+        await global.__handler({ prompt: "read App.js and Report [[script:ca-empty]]" }, {}, ca.response, ca.token);
+        memento.clear();
+        await global.__handler({ prompt: "this will produce nothing at all [[script:cb-fail]]" }, {}, cb.response, cb.token);
+        memento.clear();
+        await global.__handler({ prompt: "trigger a provider error [[script:cc-error]]" }, {}, cc.response, cc.token);
+    });
+    const chatCA = ca.chatMarkdown.join("");
+    add(`CA a run with no answer text is never a blank reply: it says so${/returned no output/.test(chatCA) ? "" : ` [${plain(chatCA).slice(0, 160)}]`}`, chatCA.trim().length > 0 && /OpenCode returned no output\./.test(chatCA));
+    const chatCB = cb.chatMarkdown.join("");
+    add(`CB a run that fails with no output says it failed${/reported an error/.test(chatCB) ? "" : ` [${plain(chatCB).slice(0, 160)}]`}`, /OpenCode reported an error/.test(chatCB));
+    add("CB its failure goes to the debug log", logLines.slice(cbLog).some((l) => /session\.error/.test(l)));
     const chatCC = cc.chatMarkdown.join("");
-    add("CC a CLI session.error reaches chat", /401 Unauthorized/.test(chatCC));
+    add("CC a provider's session error reaches chat, its own words", /401 Unauthorized/.test(chatCC));
 
     // CD: an aborted step reporting cost 0 and no tokens is a run with no output,
     // not one with known usage.
@@ -1965,6 +1991,8 @@ function collectConfigProperties(configuration) {
         `SE …offers the debug log, and chips that fit it (${seChips.map((c) => c.label).join(" | ")})`,
         se.buttons.some((b) => b.command === "opencodeCopilotBridge.showLog") && seR.metadata.error === "Error: Model not found: acme/ghost" && seChips.some((c) => /Pick model/.test(c.label))
     );
+    // A CLI that exits 3 and prints nothing (CB's fake before CB moved to OpenCode 2).
+    const silentFake = writeFake("fake-silent.js", [], "process.exit(3);\n");
     settings.executable = silentFake;
     memento.clear();
     const se0 = stream();
@@ -2694,42 +2722,53 @@ function collectConfigProperties(configuration) {
         ext.__test.resolveSessionState({}, work).id === "ses_folder"
     );
 
-    // End to end, across the process boundary: `--session` in the child's argv is
-    // the observable artifact, not anything the extension merely returns.
+    // End to end, across the process boundary, on OpenCode 2 (0.0.243): which session the
+    // prompt was POSTed to is the observable artifact — a new chat creates one, a continuing
+    // chat posts to its own — not anything the extension merely returns.
     const ga1 = stream();
+    const ga2 = stream();
+    const ga3 = stream();
     const gaLog = logLines.length;
-    const gaR1 = await global.__handler({ prompt: "start something new here" }, { history: [] }, ga1.response, ga1.token);
-    add("GA a new chat spawns OpenCode without --session", !lastArgv("fake-ok.js").includes("--session"));
-    add("GA the turn reports its session back to the thread", gaR1.metadata.sessionId === "ses_test");
+    const ga = await oc2Use(async () => {
+        const gaR1 = await global.__handler({ prompt: "start something new here" }, { history: [] }, ga1.response, ga1.token);
+        const after1 = { created: oc2Created(), prompts: oc2Prompts() };
+        const gaR2 = await global.__handler({ prompt: "and now continue that work" }, { history: [turnOf(gaR1.metadata)] }, ga2.response, ga2.token);
+        const after2 = { created: oc2Created(), prompts: oc2Prompts() };
+        const gaR3 = await global.__handler({ prompt: "an unrelated question entirely" }, { history: [] }, ga3.response, ga3.token);
+        return { gaR1, gaR2, gaR3, after1, after2, after3: { created: oc2Created(), prompts: oc2Prompts() } };
+    });
+    const { gaR1, gaR2, gaR3 } = ga;
+    const gaS1 = ga.after1.prompts.at(-1)?.session;
+    add(`GA a new chat creates a session of its own and sends the prompt there (${ga.after1.created} created, prompt to ${gaS1})`,
+        ga.after1.created === 1 && ga.after1.prompts.length === 1 && Boolean(gaS1) && gaS1 !== "ses_folder" && ga.after1.prompts[0].text.includes("start something new here"));
+    add("GA the turn reports that session back to the thread", gaR1.metadata.sessionId === gaS1);
     add("GA the turn stamps the folder it ran in", gaR1.metadata.cwd === work);
     add("GA the turn starts this chat's own turn count at 1", gaR1.metadata.turns === 1);
     // 0.0.225: the log says which session the folder held; chat starts with the
     // answer (it was the first of three notes before any answer, 0.0.223 live).
     add("GA a new chat logs that the older session is untouched, and says nothing in chat",
         logLines.slice(gaLog).some((l) => /new chat: a fresh OpenCode session; ses_\w+ is untouched/.test(l)) && !/New chat|untouched/.test(ga1.chatMarkdown.join("")));
-
-    const ga2 = stream();
-    const gaR2 = await global.__handler(
-        { prompt: "and now continue that work" },
-        { history: [turnOf(gaR1.metadata)] },
-        ga2.response,
-        ga2.token
-    );
-    const gaArgv = lastArgv("fake-ok.js");
-    add(
-        "GA the next turn in the same chat resumes it",
-        gaArgv.includes("--session") && gaArgv[gaArgv.indexOf("--session") + 1] === "ses_test"
-    );
-    add("GA the thread carries its own turn count forward", gaR2.metadata.turns === 2);
+    add(`GA the next turn in the same chat resumes it: no new session, the prompt to the same one (${ga.after2.prompts.at(-1)?.session})`,
+        ga.after2.created === 1 && ga.after2.prompts.length === 2 && ga.after2.prompts[1].session === gaS1 && ga.after2.prompts[1].text.includes("continue that work"));
+    add("GA the thread carries its own turn count forward", gaR2.metadata.turns === 2 && gaR2.metadata.sessionId === gaS1);
     add("GA a continuing chat has no new-chat line", !/New chat|untouched/.test(ga2.chatMarkdown.join("")));
-
     // A second chat opened in the same folder at the same moment: its own
-    // conversation, even though the folder pointer now says ses_test.
-    const ga3 = stream();
-    await global.__handler({ prompt: "an unrelated question entirely" }, { history: [] }, ga3.response, ga3.token);
-    add("GA a second chat in the same folder still starts clean", !lastArgv("fake-ok.js").includes("--session"));
+    // conversation, even though the folder pointer now names the first chat's session.
+    const gaS3 = ga.after3.prompts.at(-1)?.session;
+    add(`GA a second chat in the same folder still starts clean (${gaS3})`, ga.after3.created === 2 && Boolean(gaS3) && gaS3 !== gaS1 && gaR3.metadata.sessionId === gaS3);
     // v212: the notice printed on the first turn of every new chat in the folder.
     add("GA …and a second new chat has none either", !/New chat|untouched/.test(ga3.chatMarkdown.join("")));
+
+    // OD (0.0.243): OpenCode 1 is deprecated. A window says so once, after a finished turn
+    // whose `--version` named a 1.x; the turn itself runs as before. Red first: never said.
+    ext.__test.resetOpenCode1Deprecation();
+    const od1 = stream();
+    await global.__handler({ prompt: "explain the redirect for od one" }, { history: [] }, od1.response, od1.token);
+    const od2 = stream();
+    await global.__handler({ prompt: "explain the redirect for od two" }, { history: [] }, od2.response, od2.token);
+    const odSaid = (s) => /OpenCode 1 is deprecated/.test(plain(s.chatMarkdown.join("")));
+    add(`OD a finished turn on OpenCode 1 says it is deprecated, once per window, and still answers${odSaid(od1) ? "" : ` [chat: ${plain(od1.chatMarkdown.join("")).slice(-240)}]`}`,
+        odSaid(od1) && !odSaid(od2) && /redirect/i.test(plain(od1.chatMarkdown.join(""))) && logLines.some((l) => /OpenCode 1 at \S+ is deprecated/.test(l)));
 
     // Tripwire: the handler must never go back to reading the folder pointer for
     // continuity, which is exactly how this bug was written in the first place.
@@ -2849,7 +2888,7 @@ function collectConfigProperties(configuration) {
     add("GD a turn writes no transcript at all", !fs.existsSync(path.join(work, "sessions", "ses_test.md")));
 
     // HA: the extension had no surface of its own. With no `icon` in the manifest
-    // the Extensions view AND the @opencode chat avatar both fell back to the
+    // the Extensions view AND the @oc chat avatar both fell back to the
     // default placeholder (the avatar derives from the extension icon; there is no
     // per-participant icon), and `contributes.menus` held only commandPalette so no
     // command reached a toolbar. v169 retires opencode-16.svg/opencode.svg; the
@@ -2923,60 +2962,44 @@ function collectConfigProperties(configuration) {
     // path that was NOT broken. The setting is scoped here for the same reason CJ
     // scopes it: flipping the file default would silently change the conditions of
     // every other check at once.
+    // On OpenCode 2 (0.0.243): the same 40 reasoning deltas and a read every seventh, as
+    // 2.x frames at 25 ms (`[[script:]]`), on a server already up: its boot lines are not
+    // what this measures.
     const beatEvents = [];
     for (let i = 0; i < 40; i++) {
-        beatEvents.push({
-            type: "reasoning",
-            sessionID: "ses_beat",
-            part: { text: `reasoning chunk number ${i} about the auth flow` }
-        });
+        beatEvents.push({ reasoning: `reasoning chunk number ${i} about the auth flow ` });
         if (i % 7 === 0) {
-            beatEvents.push({
-                type: "tool_use",
-                sessionID: "ses_beat",
-                part: { tool: "read", state: { input: { filePath: `src/f${i}.ts` }, output: "x", time: { start: 0, end: 5 } } }
-            });
+            beatEvents.push({ tool: "read", input: { filePath: `src/f${i}.ts` }, output: "x" });
         }
     }
-    beatEvents.push({ type: "text", sessionID: "ses_beat", part: { text: "Done." } });
-    const chatty = writeFake(
-        "fake-chatty.js",
-        [],
-        "const evs = " +
-        JSON.stringify(beatEvents) +
-        ";\nlet i = 0;\nconst t = setInterval(() => {\n" +
-        "  if (i >= evs.length) { clearInterval(t); return; }\n" +
-        "  process.stdout.write(JSON.stringify(evs[i++]) + '\\n');\n" +
-        "}, 25);\n"
-    );
-    settings.executable = chatty;
+    beatEvents.push({ text: "Done." });
+    oc2Script("ja-chatty", { paceMs: 25, events: beatEvents });
+    // The other half of the fix: reasoning now rides the backoff ladder, so on a
+    // slow run the elapsed readout is the only thing left moving. If it stopped
+    // moving, a long turn would look frozen — the exact symptom the heartbeat was
+    // added to prevent. One event, then silence; the idle cap ends the run.
+    oc2Script("ja-slow", { events: [{ reasoning: "thinking hard about it" }], hold: true });
     settings.progressHeartbeatMs = 1000;
     settings.timeoutMs = 30000;
-    settings.idleTimeoutMs = 0;
-    memento.clear();
     const ja = stream();
-    await global.__handler({ prompt: "explain the auth flow" }, {}, ja.response, ja.token);
-
+    const jaSlow = stream();
+    await oc2Use(async () => {
+        settings.idleTimeoutMs = 0;
+        const warm = stream();
+        await global.__handler({ prompt: "warm the server [[probe:text]]" }, { history: [] }, warm.response, warm.token);
+        memento.clear();
+        await global.__handler({ prompt: "explain the auth flow [[script:ja-chatty]]" }, {}, ja.response, ja.token);
+        settings.idleTimeoutMs = 4000;
+        memento.clear();
+        await global.__handler({ prompt: "a slow run that goes quiet [[script:ja-slow]]" }, {}, jaSlow.response, jaSlow.token);
+    });
+    add(`JA the scripted run reached chat: its reads and its answer (${ja.progress.length} progress lines)`,
+        /Done\./.test(ja.chatMarkdown.join("")) && ja.progress.some((p) => p.includes("src/f0.ts")));
     add("JA 40 reasoning deltas do not become 40 chat steps", ja.progress.length <= 12);
     add(
         "JA every tool step still reaches the progress line",
         [0, 7, 14, 21, 28, 35].every((i) => ja.progress.some((p) => p.includes(`src/f${i}.ts`)))
     );
-
-    // The other half of the fix: reasoning now rides the backoff ladder, so on a
-    // slow run the elapsed readout is the only thing left moving. If it stopped
-    // moving, a long turn would look frozen — the exact symptom the heartbeat was
-    // added to prevent. One event, then silence; the idle cap ends the run.
-    const slowFake = writeFake(
-        "fake-slow-tick.js",
-        [{ type: "reasoning", sessionID: "ses_slow", part: { text: "thinking hard about it" } }],
-        "setTimeout(() => {}, 60000);\n"
-    );
-    settings.executable = slowFake;
-    settings.idleTimeoutMs = 4000;
-    memento.clear();
-    const jaSlow = stream();
-    await global.__handler({ prompt: "a slow run that goes quiet" }, {}, jaSlow.response, jaSlow.token);
     add("JA the elapsed ticker still moves on a slow run", new Set(jaSlow.progress).size >= 2);
     add(
         "JA the ticker still reports elapsed against the cap",
@@ -4629,6 +4652,14 @@ const lbProvider = (global.__participant || {}).followupProvider;
     add("NF an offer after a dash, in participle form, reads as an action", nfLabels(nfLane).join("|") === "Walk through the claim-anchor and documentation checks");
     const nfOr = nf("dev", "The fix is on a scratch branch. Should I merge it into main or open a PR?");
     add("NF 'X or Y' between two actions is two chips", nfLabels(nfOr).join("|") === "Merge it into main|Open a PR" && nfOr.every((c) => c.command === "dev"));
+    // 0.0.243: "use A or B" is one verb over two objects. It was ONE chip that repeated the
+    // question ("Use a cookie or a header for the token"); the verb now goes to each object.
+    const nfVerbOr = nf("plan", "Both approaches work. Should I use a cookie or a header for the token?");
+    add(`NF 'verb A or B' is a chip per object, the verb shared (${nfLabels(nfVerbOr).join(" | ")})`, nfLabels(nfVerbOr).join("|") === "Use a cookie|Use a header for the token");
+    const nfVerbAt = nf("plan", "Do you want me to look at the cache or the database layer?");
+    add(`NF …the verb keeps its particle (${nfLabels(nfVerbAt).join(" | ")})`, nfLabels(nfVerbAt).join("|") === "Look at the cache|Look at the database layer" && nfVerbAt.every((c) => c.command === "plan"));
+    const nfVerbOdd = nf("plan", "Want me to compare Postgres or MySQL performance?");
+    add(`NF …and an alternative that is no object of the verb gives no chip (${nfLabels(nfVerbOdd).join(" | ")})`, nfVerbOdd.length === 0);
     const nfWalk = nf("plan", "That's the flow. Would you like me to walk you through the SSE demultiplexer next?");
     add("NF the agent's 'you' becomes the user's 'me', and a trailing 'next' is dropped", nfLabels(nfWalk).join("|") === "Walk me through the SSE demultiplexer");
     const nfChoice = nf("plan", "Both work. Which do you prefer: integer cents or decimal.js?");
@@ -5238,22 +5269,22 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         await registeredCommands.get("opencodeCopilotBridge.quickActions")();
         const opened = executed.filter((c) => c[0] === "workbench.action.chat.open");
         // v190: Ask OpenCode merged into New session (both opened a chat with
-        // @opencode typed); New session does it in a NEW chat.
+        // @oc typed); New session does it in a NEW chat.
         add("QA Quick Actions leads with New session; Ask OpenCode is gone", !!picked && /New session/.test(picked[0].label) && !picked.some((i) => /Ask OpenCode/.test(i.label)));
         add("QA Quick Actions offers Worktrees… (0.0.229)", !!picked && picked.some((i) => /Worktrees…/.test(i.label)));
         add(
-            "QA New session opens a new chat, types @opencode and sends nothing",
-            executed.some((c) => c[0] === "workbench.action.chat.newChat") && opened.length === 1 && opened[0][1].query === "@opencode " && opened[0][1].isPartialQuery === true
+            "QA New session opens a new chat, types @oc and sends nothing",
+            executed.some((c) => c[0] === "workbench.action.chat.newChat") && opened.length === 1 && opened[0][1].query === "@oc " && opened[0][1].isPartialQuery === true
         );
         executed.length = 0;
         await registeredCommands.get("opencodeCopilotBridge.retryLast")();
         add(
             "QA 'OpenCode: Ask in Chat' from the palette does the same",
-            executed.length === 1 && executed[0][1].query === "@opencode " && executed[0][1].isPartialQuery === true
+            executed.length === 1 && executed[0][1].query === "@oc " && executed[0][1].isPartialQuery === true
         );
         executed.length = 0;
         await registeredCommands.get("opencodeCopilotBridge.retryLast")("fix the loop");
-        add("QA an explicit prompt is sent as given", executed.length === 1 && executed[0][1].query === "@opencode fix the loop" && !executed[0][1].isPartialQuery);
+        add("QA an explicit prompt is sent as given", executed.length === 1 && executed[0][1].query === "@oc fix the loop" && !executed[0][1].isPartialQuery);
         vscodeStub.commands.executeCommand = realExec;
         vscodeStub.window.showQuickPick = realPick;
     }
@@ -6605,15 +6636,19 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         // 0.0.232: 1.19.5 measured (probe-readonly 48 rows, wire 0 differences from 1.19.0; REFS).
         v5.version = "1.19.5";
         const vn195 = await v5Turn("explain the cart for vn 1.19.5");
+        // 0.0.242: 1.19.6 measured (probe-readonly 48 rows, probe-mcp 19, wire shapes as 1.19.0's).
         v5.version = "1.19.6";
+        const vn196 = await v5Turn("explain the cart for vn 1.19.6");
+        v5.version = "1.19.7";
         const vn1 = await v5Turn("explain the cart for vn new");
         const vn2 = await v5Turn("explain the cart for vn again");
         v5.version = undefined;
         add("VN a version inside the tested range says nothing", !/outside the versions/.test(vn0.md));
         add("VN 1.18.35 says nothing", !/outside the versions/.test(vn35.md) && /answered by/.test(vn35.md));
         add("VN 1.19.0 says nothing", !/outside the versions/.test(vn190.md) && /answered by/.test(vn190.md));
-        add("VN 1.19.5, the newest measured, says nothing", !/outside the versions/.test(vn195.md) && /answered by/.test(vn195.md));
-        add("VN …one outside it says so once per window, and the turn runs", /OpenCode 1\.19\.6 is outside the versions this bridge was tested with \(1\.18\.27–1\.19\.5\)/.test(vn1.md) && /answered by/.test(vn1.md) && !/outside the versions/.test(vn2.md));
+        add("VN 1.19.5 says nothing", !/outside the versions/.test(vn195.md) && /answered by/.test(vn195.md));
+        add("VN 1.19.6, the newest measured, says nothing", !/outside the versions/.test(vn196.md) && /answered by/.test(vn196.md));
+        add("VN …one outside it says so once per window, and the turn runs", /OpenCode 1\.19\.7 is outside the versions this bridge was tested with \(1\.18\.27–1\.19\.6\)/.test(vn1.md) && /answered by/.test(vn1.md) && !/outside the versions/.test(vn2.md));
 
 
         // demux hands unattributed events to every subscriber, and v184 counted
@@ -7221,7 +7256,7 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
     ext.deactivate();
     add("GC deactivate does not resurrect the usage store", globalMemento.get("opencode.usage.v1") === undefined);
 
-    // IL (v186): @opencode in inline chat (Ctrl+I). The manifest half guards the
+    // IL (v186): @oc in inline chat (Ctrl+I). The manifest half guards the
     // stable-host trap measured in chatParticipant.contribution.ts (main): a
     // participant declaring `locations` without the chatParticipantAdditions
     // proposal is SKIPPED — so the panel participant must never declare it.
@@ -7231,8 +7266,8 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
     const ilInline = ilParts.find((p) => p.id === "opencodeCopilotBridge.inline");
     add("IL the panel participant declares no locations (a stable host would skip it)", Boolean(ilMain) && ilMain.locations === undefined);
     add(
-        "IL the inline participant is @opencode in the editor only",
-        Boolean(ilInline) && ilInline.name === "opencode" && JSON.stringify(ilInline.locations) === JSON.stringify(["editor"])
+        "IL the inline participant is @oc in the editor only",
+        Boolean(ilInline) && ilInline.name === "oc" && JSON.stringify(ilInline.locations) === JSON.stringify(["editor"])
     );
     add("IL the only API proposal is chatParticipantAdditions", JSON.stringify(ilPkg.enabledApiProposals) === JSON.stringify(["chatParticipantAdditions"]));
     add("IL the inline participant has its activation event", ilPkg.activationEvents.includes("onChatParticipant:opencodeCopilotBridge.inline"));
@@ -7301,7 +7336,7 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
     // MB (v187): followups hardening. A chip with nothing to send is left out
     // (never thrown — provideFollowups would lose every chip), and the JSON's
     // cross-references are checked here, at build time, by the same function
-    // activation logs with. A broken JSON must not stop @opencode activating.
+    // activation logs with. A broken JSON must not stop @oc activating.
     {
         const mbNoText = (() => {
             try {
@@ -7785,7 +7820,7 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
 
     // ==================== v190 ====================
     // NS: "Ask OpenCode" and "New session" merged. New session = a new chat
-    // with @opencode typed (a new thread is a new session); nothing is sent.
+    // with @oc typed (a new thread is a new session); nothing is sent.
     {
         const executed = [];
         const realExec = vscodeStub.commands.executeCommand;
@@ -7999,16 +8034,16 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         add("PW pages count lanes (step 1, 2, 3)", pages.slice(0, 3).map((p) => p.step).join() === "1,2,3" && /lane 2/.test(pages[1].title));
         add("PW Submit appears from two lanes on, as a button and as the last item", pages[1].buttons === 0 && !pages[1].items.some((l) => /Submit/.test(l)) && pages[2].buttons === 1 && /Submit — insert 2 lanes/.test(pages[2].items[pages[2].items.length - 1]));
         add("PW Submit inserts the command into the chat input and sends nothing", q1.length === 1 && q1[0].isPartialQuery === true && !fs.existsSync(path.join(work, "fake-ok.js.argv")) && w1.r.metadata.kind === "composed");
-        const lanesBack = ext.__test.splitLanes(q1[0].query.replace(/^@opencode \/parallel /, "")).map((l) => ext.__test.splitModelPrefix(l));
-        add("PW the inserted command splits back into exactly those lanes and models", q1[0].query.startsWith("@opencode /parallel ") && lanesBack.length === 2 && lanesBack[0].model === "acme-gateway/Tundra" && lanesBack[0].task === "review auth" && !lanesBack[1].model && lanesBack[1].task === "list deps");
+        const lanesBack = ext.__test.splitLanes(q1[0].query.replace(/^@oc \/parallel /, "")).map((l) => ext.__test.splitModelPrefix(l));
+        add("PW the inserted command splits back into exactly those lanes and models", q1[0].query.startsWith("@oc /parallel ") && lanesBack.length === 2 && lanesBack[0].model === "acme-gateway/Tundra" && lanesBack[0].task === "review auth" && !lanesBack[1].model && lanesBack[1].task === "list deps");
         const chipsOf = (r) => global.__participant.followupProvider.provideFollowups(r, {}, stream().token);
         const w1Chips = chipsOf(w1.r);
-        add("PW the reply shows the command; its one chip runs those lanes, and there is no button", w1.text.includes(q1[0].query) && w1.buttons.length === 0 && w1Chips.length === 1 && w1Chips[0].command === "parallel" && w1Chips[0].prompt === q1[0].query.replace(/^@opencode \/parallel /, ""));
+        add("PW the reply shows the command; its one chip runs those lanes, and there is no button", w1.text.includes(q1[0].query) && w1.buttons.length === 0 && w1Chips.length === 1 && w1Chips[0].command === "parallel" && w1Chips[0].prompt === q1[0].query.replace(/^@oc \/parallel /, ""));
         add("PW the composed metadata carries its text as composedLanes, never lanes", typeof w1.r.metadata.composedLanes === "string" && w1.r.metadata.lanes === undefined);
         add("RV every composer label is an icon alone, so a typed task never matches or reorders it", pages.length >= 3 && pages.every((p) => p.iconOnly) && !pages.some((p) => p.items.some((l) => l.includes("`"))));
 
         const w2 = await pwTurn([{ type: "grep a | wc -l" }, { type: "grep `a | wc -l`" }, { type: "list deps" }, { type: "and a third", pick: "Submit" }]);
-        const lanes2 = ext.__test.splitLanes(insertedQuery()[0].query.replace(/^@opencode \/parallel /, ""));
+        const lanes2 = ext.__test.splitLanes(insertedQuery()[0].query.replace(/^@oc \/parallel /, ""));
         add("PW a task that would split is refused on its page, and the lane is not added", /would split this into 2 lanes/.test(pages[1].title) && pages[1].step === 1);
         add("PW backticks make it one lane; the Submit item also takes the lane typed on its page", lanes2.length === 3 && lanes2[0] === "grep `a | wc -l`" && lanes2[2] === "and a third" && w2.r.metadata.kind === "composed");
 
@@ -8018,12 +8053,12 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         plan([{ type: "a" }, { type: "b" }, { button: true }]);
         await registeredCommands.get("opencodeCopilotBridge.composeParallel")();
         quickPickScript = undefined;
-        add("PW the palette command composes and inserts the same way", insertedQuery().length === 1 && /^@opencode \/parallel a\n---\nb$/.test(insertedQuery()[0].query));
+        add("PW the palette command composes and inserts the same way", insertedQuery().length === 1 && /^@oc \/parallel a\n---\nb$/.test(insertedQuery()[0].query));
         add("PW lane text that starts with a model prefix is refused", Boolean(ext.__test.laneProblem("m:tundra x")) && !ext.__test.laneProblem("review the models: list"));
 
         // RV: a model id holding a colon survives the composer's round trip.
         await pwTurn([{ type: "review auth", pick: "qwen2.5-coder:7b" }, { type: "list deps" }, { button: true }]);
-        const rvBack = ext.__test.splitLanes(insertedQuery()[0].query.replace(/^@opencode \/parallel /, "")).map((l) => ext.__test.splitModelPrefix(l));
+        const rvBack = ext.__test.splitLanes(insertedQuery()[0].query.replace(/^@oc \/parallel /, "")).map((l) => ext.__test.splitModelPrefix(l));
         const smp = ext.__test.splitModelPrefix;
         add("RV a model id with a colon is kept whole, with its task", rvBack[0].model === "ollama/qwen2.5-coder:7b" && rvBack[0].task === "review auth" && smp("m:openrouter/x/deepseek-r1:free go").model === "openrouter/x/deepseek-r1:free");
         add("RV a trailing colon or comma after the model is still punctuation", smp("m:tundra: review").model === "tundra" && smp("m:tundra: review").task === "review" && smp("m:tundra,review").model === "tundra" && smp("m:tundra,review").task === "review");
@@ -8689,8 +8724,8 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
             const tw7 = stream();
             await global.__handler({ prompt: "explain the cart on three [[probe:text]]" }, { history: [] }, tw7.response, tw7.token);
             const tw7Chat = plain(tw7.chatMarkdown.join(""));
-            add(`TW a 3.x with opencode2 runs on the 2.x adapter and says it is outside the tested 2.0.18–2.3.0${/Hello from the scripted model/.test(tw7Chat) ? "" : ` [chat: ${tw7Chat.slice(0, 400)}]`}`,
-                /Hello from the scripted model\./.test(tw7Chat) && /3\.0\.0 is outside the versions this bridge was tested with \(2\.0\.18–2\.3\.0\)/.test(tw7Chat));
+            add(`TW a 3.x with opencode2 runs on the 2.x adapter and says it is outside the tested 2.0.18–2.3.2${/Hello from the scripted model/.test(tw7Chat) ? "" : ` [chat: ${tw7Chat.slice(0, 400)}]`}`,
+                /Hello from the scripted model\./.test(tw7Chat) && /3\.0\.0 is outside the versions this bridge was tested with \(2\.0\.18–2\.3\.2\)/.test(tw7Chat));
             add("TW …its own `--version` was read (3.0.0), not a cached 2.x identity",
                 logLines.slice(tw7Log).some((l) => /fake-tw3\.js --version/.test(l)) && logLines.slice(tw7Log).some((l) => /CLI identity verified/.test(l)));
             ext.deactivate();
@@ -8761,6 +8796,37 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
             add(`TW 2.3.0 runs inside the tested range: sent, and no turn of the run said it is outside${tw230Outside ? ` (${tw230Outside} said so)` : ""}${/Hello from the scripted model/.test(tw230Chat) ? "" : ` [chat: ${tw230Chat.slice(0, 200)}]`}`,
                 /Hello from the scripted model\./.test(tw230Chat) && !/Nothing was sent/.test(tw230Chat) && tw230Outside === 0);
             ext.deactivate();
+            // 0.0.242: 2.3.2 (the latest, 2026-11-18): probe-opencode2 30 of 30, ACP 9, MCP 19, data
+            // folder 11, wire shapes as 2.3.0's; stages as 2.3.0 does. Red first on 0.0.241's range.
+            process.env.FAKE_OC2_VERSION = "2.3.2";
+            settings.executable = writeFake("fake-tw232.js", [], `if (!process.argv.includes('--version') || true) require(${JSON.stringify(path.join(__dirname, "fixtures", "fake-opencode2.js"))})(process.argv);\n`);
+            fs.rmSync(twRecord, { force: true });
+            ext.__test.resetOpenCode1Deprecation();
+            const tw232 = stream();
+            await global.__handler({ prompt: "explain the cart on 2.3.2 [[probe:text]]" }, { history: [] }, tw232.response, tw232.token);
+            const tw232Chat = plain(tw232.chatMarkdown.join(""));
+            const tw232Outside = logLines.filter((l) => /OpenCode 2\.3\.2 on \S+ is outside the tested/.test(l)).length;
+            add(`TW 2.3.2 runs inside the tested range: sent, and nothing said it is outside${tw232Outside ? ` (${tw232Outside} said so)` : ""}${/Hello from the scripted model/.test(tw232Chat) ? "" : ` [chat: ${tw232Chat.slice(0, 200)}]`}`,
+                /Hello from the scripted model\./.test(tw232Chat) && !/Nothing was sent/.test(tw232Chat) && !/outside the versions/.test(tw232Chat) && tw232Outside === 0);
+            add("OD …a finished turn on OpenCode 2 says nothing about OpenCode 1", /Hello from the scripted model\./.test(tw232Chat) && !/OpenCode 1 is deprecated/.test(tw232Chat));
+            // BT (0.0.243): from 2.3.0 a subagent call returns at once, "working in the background
+            // (sessionID: …)" — the wire's own 2.3.0 frames — and its result reaches the parent
+            // as a <subagent> message on the NEXT prompt (2.3.2 measured). So a chip sends that
+            // prompt. Red first: the child id was not read, and no chip was offered.
+            const bt = stream();
+            const btR = await global.__handler({ prompt: "delegate the cart review [[probe:task@explore:text]]" }, { history: [] }, bt.response, bt.token);
+            const btSid = btR?.metadata?.sessionId;
+            const btChips = global.__participant.followupProvider.provideFollowups(btR, {}, stream().token) || [];
+            add(`BT a subagent left working in the background is kept in the turn's metadata, its child id read (${JSON.stringify(btR?.metadata?.backgroundTask)})`,
+                typeof btSid === "string" && JSON.stringify(btR?.metadata?.backgroundTask) === JSON.stringify({ agent: "explore", description: "probe subagent", taskId: `${btSid}c1` }));
+            add(`BT …and the first chip collects its result, under the turn's kind (${btChips.map((c) => c.label).join(" | ")})`,
+                btChips.length >= 1 && btChips[0].label.endsWith("Collect explore") && btChips[0].command === "plan" &&
+                    btChips[0].prompt === P.COLLECT_TASK.replace("{agent}", "explore").replace("{description}", "probe subagent").replace("{task}", `${btSid}c1`));
+            const btSync = stream();
+            const btSyncR = await global.__handler({ prompt: "answer the cart directly [[probe:text]]" }, { history: [] }, btSync.response, btSync.token);
+            add("BT …a turn with no background subagent has no such chip", !btSyncR?.metadata?.backgroundTask &&
+                !(global.__participant.followupProvider.provideFollowups(btSyncR, {}, stream().token) || []).some((c) => /Collect/.test(c.label)));
+            ext.deactivate();
             process.env.FAKE_OC2_VERSION = "3.0.0";
             settings.executable = writeFake("fake-tw3.js", [], `if (!process.argv.includes('--version') || true) require(${JSON.stringify(path.join(__dirname, "fixtures", "fake-opencode2.js"))})(process.argv);\n`);
             settings.opencode2 = false;
@@ -8772,30 +8838,27 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
             settings.opencode2 = true;
             settings.executable = twFake;
 
-            // 0.0.223: OpenCode 2 ignores 1.x's agent.<n>.permission in opencode.json (2.0.29, measured): said once.
-            // 0.0.225: an empty global config dir — a developer's own global
-            // opencode.json with agent permissions was named first and broke the match.
+            // 0.0.242: OpenCode 2 APPLIES opencode.json's `permission` and `agent.<n>.permission`
+            // (2.0.29, 2.2.5, 2.2.7, 2.3.0, 2.3.2: settled `GET /api/agent`, and a subagent's shell
+            // deny held in a real turn). 0.0.223 read the agent list's stock stage and warned on
+            // every 2.x turn of such a folder. Red first: the old notice named both files below.
+            // An empty global config dir: a developer's own global opencode.json stays out of it.
             const twGlobal = fs.mkdtempSync(path.join(os.tmpdir(), "ocb-twglobal-"));
             const twGlobalSaved = process.env.OPENCODE_CONFIG_DIR;
             process.env.OPENCODE_CONFIG_DIR = twGlobal;
             const twCfg = path.join(work, "opencode.json");
             const twCfgHad = fs.existsSync(twCfg) ? fs.readFileSync(twCfg) : undefined;
             fs.writeFileSync(twCfg, JSON.stringify({ agent: { plan: { permission: { "*": "deny", read: "allow" } } } }));
-            const tw9 = stream();
-            await global.__handler({ prompt: "explain the cart with old rules [[probe:text]]" }, { history: [] }, tw9.response, tw9.token);
-            const tw10 = stream();
-            await global.__handler({ prompt: "and again with old rules [[probe:text]]" }, { history: [] }, tw10.response, tw10.token);
-            add("TW on OpenCode 2, 1.x agent permission rules in opencode.json are named once",
-                /ignores the 1\.x permission rules in .?opencode\.json \(plan\)/.test(plain(tw9.chatMarkdown.join(""))) && !/ignores the 1\.x permission rules/.test(plain(tw10.chatMarkdown.join(""))));
-            // 0.0.225: keyed by folder AND finding (CHANGELOG 0.0.223), so a file added later is named.
             const twDotDir = path.join(work, ".opencode");
             const twDotHad = fs.existsSync(twDotDir);
             fs.mkdirSync(twDotDir, { recursive: true });
             fs.writeFileSync(path.join(twDotDir, "opencode.json"), JSON.stringify({ agent: { build: { permission: { bash: "ask" } } } }));
-            const tw11 = stream();
-            await global.__handler({ prompt: "and with one more rules file [[probe:text]]" }, { history: [] }, tw11.response, tw11.token);
-            add("TW …and a rules file added later is named on the next turn",
-                /ignores the 1\.x permission rules in .*\.opencode\/opencode\.json \(build\)/.test(plain(tw11.chatMarkdown.join(""))));
+            const twLogFrom = logLines.length;
+            const tw9 = stream();
+            await global.__handler({ prompt: "explain the cart with agent rules [[probe:text]]" }, { history: [] }, tw9.response, tw9.token);
+            const tw9Chat = plain(tw9.chatMarkdown.join(""));
+            add(`TW on OpenCode 2, agent permission rules in opencode.json are not called ignored: the turn ran and nothing said so${/Hello from the scripted model/.test(tw9Chat) ? "" : ` [chat: ${tw9Chat.slice(0, 200)}]`}`,
+                /Hello from the scripted model\./.test(tw9Chat) && !/ignores/.test(tw9Chat) && !logLines.slice(twLogFrom).some((l) => /ignores 1\.x permission rules/.test(l)));
             if (twDotHad) fs.rmSync(path.join(twDotDir, "opencode.json"), { force: true }); else fs.rmSync(twDotDir, { recursive: true, force: true });
             if (twCfgHad === undefined) fs.rmSync(twCfg, { force: true }); else fs.writeFileSync(twCfg, twCfgHad);
             ext.deactivate();
@@ -9361,8 +9424,13 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         const gsRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ocb-gs-"));
         const gsRepo = path.join(gsRoot, "repo");
         fs.mkdirSync(gsRepo);
+        // 0.0.242: config from the environment (GIT_CONFIG_COUNT/KEY_n/VALUE_n, GIT_CONFIG_PARAMETERS)
+        // outranks the fixture repo's own: an inherited core.fsmonitor=false kept the fsmonitor
+        // control from running (red, reproduced). The fixture's git reads only the repo's config.
+        const gitEnv210 = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^GIT_CONFIG_(?:COUNT|PARAMETERS|KEY_\d+|VALUE_\d+)$/.test(key)));
+        Object.assign(gitEnv210, { GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: process.platform === "win32" ? "NUL" : "/dev/null" });
         const git210 = (cwd, ...args) => {
-            const r = cp210.spawnSync("git", args, { cwd, encoding: "utf8", env: { ...process.env, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: process.platform === "win32" ? "NUL" : "/dev/null" } });
+            const r = cp210.spawnSync("git", args, { cwd, encoding: "utf8", env: gitEnv210 });
             if (r.status !== 0) throw new Error(`GS git ${args.join(" ")}: ${r.stderr}`);
             return r.stdout;
         };
@@ -9620,6 +9688,18 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         add(`MP a call it cannot run says why as a tool result, and sends nothing${mpRefusals.length ? ` (ran: ${mpRefusals.join(", ")})` : ""}`, mpRefusals.length === 0 && mpA.posts("prompt").length === mpSent);
         const mpNoDev = await mpA.call("opencode_dev", { prompt: "edit [[probe:text]]", folder: mpProject });
         add("MP opencode_dev does not exist without --dev", mpNoDev.error?.code === -32602 && mpA.posts("prompt").length === mpSent);
+        // 0.0.243: a client with no chips gets the answer's own next moves (chat's natural
+        // chips) and a background subagent's pending result as lines its model can act on.
+        // Red first: the result ended at the sessionId line.
+        const mpOffer = await mpA.finished(await mpA.call("opencode_ask", { prompt: "the stale cookie [[say:The cookie is stale. If you'd like, I can also explain how the retry loop works.]]", sessionId: mpSession }));
+        add(`MP the answer's own offer comes back as a next step, with the tool and session that run it${/Next steps/.test(mpOffer.text) ? "" : ` [${mpOffer.text.slice(-200)}]`}`,
+            mpOffer.facts.status === "done" && /Next steps this answer offers[^\n]*sessionId "ses_/.test(mpOffer.text) && mpOffer.text.includes("- Explain how the retry loop works (opencode_ask)"));
+        const mpEditOffer = await mpA.finished(await mpA.call("opencode_ask", { prompt: "the tests [[say:The tests need a database. Want me to add a mock instead?]]", sessionId: mpSession }));
+        add("MP …an editing offer is not listed when opencode_dev is not offered", mpEditOffer.facts.status === "done" && !/Next steps/.test(mpEditOffer.text) && !/opencode_dev/.test(mpEditOffer.text));
+        add("MP …and an answer that offers nothing lists nothing", mpHello(mpNext) && !/Next steps/.test(mpNext.text));
+        const mpBg = await mpA.finished(await mpA.call("opencode_ask", { prompt: "delegate the review [[probe:task@explore:text]]", sessionId: mpSession }));
+        add(`MP a subagent left working in the background says how to collect its result${/in the background/.test(mpBg.text) ? "" : ` [${mpBg.text.slice(-240)}]`}`,
+            mpBg.facts.status === "done" && /The explore subagent \(probe subagent\) is still working in the background/.test(mpBg.text) && mpBg.text.includes(`call opencode_ask with sessionId "${mpSession}"`));
         const mpPort = Number((mpA.log().match(/serve --port (\d+)/) || [])[1]);
         const mpAnswers = async () => {
             try {
@@ -9743,7 +9823,7 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         Object.assign(vscodeStub.workspace, { openTextDocument: async (o) => ((doc231 = o.content), {}) });
         vscodeStub.window.showTextDocument = async () => undefined;
         await registeredCommands.get("opencodeCopilotBridge.diagnose")();
-        add("HR Diagnose: a registered @opencode answers in a Local session; harness settings read, unset", /\| chat harness \| @opencode answers in a \*\*Local\*\* session only/.test(doc231) && doc231.includes("| harness settings | chat.defaultToCopilotHarness unset · chat.editor.localAgent.enabled unset |"));
+        add("HR Diagnose: a registered @oc answers in a Local session; harness settings read, unset", /\| chat harness \| @oc answers in a \*\*Local\*\* session only/.test(doc231) && doc231.includes("| harness settings | chat.defaultToCopilotHarness unset · chat.editor.localAgent.enabled unset |"));
 
         const saved231 = { chat: vscodeStub.chat, commands: new Map(registeredCommands), provider: gitScanProvider, warn: vscodeStub.window.showWarningMessage };
         const toasts231 = [];
@@ -9771,17 +9851,17 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         // The prewarm timer: no server after deactivate (§5).
         for (const d of ctx231.subscriptions) d.dispose?.();
         add("HR activate without a chat participant API throws nothing", threw231 === "");
-        add("HR palette commands and the gitScan provider still register without @opencode",
+        add("HR palette commands and the gitScan provider still register without @oc",
             ["diagnose", "quickActions", "worktrees", "gitScanConfig", "newSession"].every((c) => registeredCommands.has(`opencodeCopilotBridge.${c}`)) && !!gitScanProvider);
         const log231 = logLines.slice(logFrom231).join("\n");
-        add("HR the log names VS Code, the harness settings and why @opencode is missing",
-            log231.includes("chat harness: VS Code 1.136.0 · chat.defaultToCopilotHarness true · chat.editor.localAgent.enabled unset · @opencode not registered: "));
-        add("HR one toast says @opencode cannot run, nothing tries the inline participant",
-            toasts231.length === 1 && toasts231[0].includes("@opencode cannot run") && !log231.includes("inline @opencode unavailable"));
+        add("HR the log names VS Code, the harness settings and why @oc is missing",
+            log231.includes("chat harness: VS Code 1.136.0 · chat.defaultToCopilotHarness true · chat.editor.localAgent.enabled unset · @oc not registered: "));
+        add("HR one toast says @oc cannot run, nothing tries the inline participant",
+            toasts231.length === 1 && toasts231[0].includes("@oc cannot run") && !log231.includes("inline @oc unavailable"));
         doc231 = "";
         await registeredCommands.get("opencodeCopilotBridge.diagnose")?.();
         add("HR Diagnose names the failure and the harness setting",
-            /\| chat harness \| \S+ @opencode not registered: .*palette commands and gitScan still work \|/.test(doc231) && doc231.includes("chat.defaultToCopilotHarness true"));
+            /\| chat harness \| \S+ @oc not registered: .*palette commands and gitScan still work \|/.test(doc231) && doc231.includes("chat.defaultToCopilotHarness true"));
 
         vscodeStub.chat = saved231.chat;
         vscodeStub.window.showWarningMessage = saved231.warn;
@@ -9791,7 +9871,7 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         delete settings.defaultToCopilotHarness;
 
         // 0.0.235 HR (M3): VS Code shows the Local session target only while
-        // chat.editor.localAgent.enabled is not false (1.144.0 bundle), and @opencode
+        // chat.editor.localAgent.enabled is not false (1.144.0 bundle), and @oc
         // answers only there: say it outside chat, once, where the setting is.
         const toasts235 = [];
         vscodeStub.window.showWarningMessage = (text, ...items) => (toasts235.push([String(text), items]), Promise.resolve(undefined));
@@ -9805,11 +9885,11 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         const first235 = toasts235.length;
         activate235();
         add(`HR Local hidden: one warning names chat.editor.localAgent.enabled, with Open Settings (${JSON.stringify(toasts235[0] ?? null).slice(0, 160)})`,
-            first235 === 1 && /chat\.editor\.localAgent\.enabled/.test(toasts235[0]?.[0] ?? "") && /@opencode/.test(toasts235[0]?.[0] ?? "") && (toasts235[0]?.[1] ?? []).includes("Open Settings"));
+            first235 === 1 && /chat\.editor\.localAgent\.enabled/.test(toasts235[0]?.[0] ?? "") && /@oc\b/.test(toasts235[0]?.[0] ?? "") && (toasts235[0]?.[1] ?? []).includes("Open Settings"));
         add("HR …said once: the next window does not repeat it", toasts235.length === 1);
         doc231 = "";
         await registeredCommands.get("opencodeCopilotBridge.diagnose")?.();
-        add("HR Diagnose: @opencode is registered, but VS Code offers no Local session", /\| chat harness \| \S+ @opencode is registered, but chat\.editor\.localAgent\.enabled is off/.test(doc231));
+        add("HR Diagnose: @oc is registered, but VS Code offers no Local session", /\| chat harness \| \S+ @oc is registered, but chat\.editor\.localAgent\.enabled is off/.test(doc231));
         delete settings["editor.localAgent.enabled"];
         vscodeStub.window.showWarningMessage = saved231.warn;
         delete vscodeStub.workspace.openTextDocument;

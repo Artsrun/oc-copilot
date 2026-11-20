@@ -78,6 +78,9 @@ export interface RunMetrics {
     /** `task` calls that ended in an error or were interrupted, with the child
      * session to resume (1.18.20: a failed subagent's task_id is resumable). */
     failedTasks?: Array<{ agent: string; description: string; sessionId?: string }>;
+    /** `task` calls that returned at once while the child worked on (2.3.0+, "working in the
+     * background"): OpenCode hands the parent their result on its next prompt. */
+    backgroundTasks?: Array<{ agent: string; description: string; sessionId?: string }>;
     /** The last step's finish reason (`stop`, `tool-calls`, `length` …): `length` means the answer was cut at the output limit. */
     finishReason?: string;
 }

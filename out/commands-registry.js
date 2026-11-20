@@ -98,7 +98,7 @@ function registerCommands(context) {
             : vscode.window.showErrorMessage(`git worktree remove failed: ${res.stderr.trim()}`));
     }), vscode.commands.registerCommand("opencodeCopilotBridge.retryLast", async (promptArg) => {
         const text = typeof promptArg === "string" ? promptArg.trim() : "";
-        const query = text ? `@opencode ${text}` : "@opencode ";
+        const query = text ? `@oc ${text}` : "@oc ";
         try {
             await vscode.commands.executeCommand("workbench.action.chat.open", text ? { query } : { query, isPartialQuery: true });
         }
@@ -113,7 +113,7 @@ function registerCommands(context) {
                 await vscode.commands.executeCommand(id);
                 try {
                     await vscode.commands.executeCommand("workbench.action.chat.open", {
-                        query: `@opencode ${word}`,
+                        query: `@oc ${word}`,
                         isPartialQuery: true
                     });
                 }
@@ -134,10 +134,10 @@ function registerCommands(context) {
         await vscode.commands.executeCommand("opencodeCopilotBridge.newChat");
     }), vscode.commands.registerCommand("opencodeCopilotBridge.sessions", async () => {
         try {
-            await vscode.commands.executeCommand("workbench.action.chat.open", { query: "@opencode /sessions" });
+            await vscode.commands.executeCommand("workbench.action.chat.open", { query: "@oc /sessions" });
         }
         catch {
-            void vscode.window.showInformationMessage("OpenCode: send `@opencode /sessions` in a chat.");
+            void vscode.window.showInformationMessage("OpenCode: send `@oc /sessions` in a chat.");
         }
     }), vscode.commands.registerCommand("opencodeCopilotBridge.composeParallel", async () => {
         const lanes = await (0, compose_1.composeParallel)();

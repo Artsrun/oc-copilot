@@ -46,7 +46,7 @@ answering health with a web page is the second way a 2.x is recognised.
 | Agent and model | In the message body | `POST` to the session before each prompt |
 | Effort | `--variant`, or `variant` in the body; an unknown level is ignored; a prompt without one resets | Inside the model `POST` only; with no model named, on the session's, the agent's (from 2.1.4) or the default (`unpinnedModel`). An unknown level fails the run, so the catalog is read first; the session keeps the level, so a turn without one puts the default back |
 | Rule format | `{permission, pattern, action}`, `agent.<n>.permission` | `{action, resource, effect}`, `agents.<n>.permissions` (`toV2Rules`, `toV1Rules`) |
-| Your own rules in `opencode.json` | Applied, and read back | Ignored without a word; `.opencode/agents/*.md` frontmatter is read. Named once per folder (`v1PermissionRules`) |
+| Your own rules in `opencode.json` | Applied, and read back | Applied (`bash` read as `shell`), and `.opencode/agents/*.md` frontmatter too; read back once the agent list settles (REFS 0.0.242) |
 | Unverified plan turn | Warned, no subagents | Refused: 2.x's own `plan` writes |
 | MCP on a read-only turn | `readOnlyTools`, as `<server>_<tool>` | 2.0, 2.1: none (Code Mode's `execute` holds them, denied). 2.2+: `readOnlyTools` by name, and no other |
 | Close in `/sessions` | Archive | 2.1+: `archived: true`, read back. 2.0.x ignores it: the bridge's own mark in `metadata` |
@@ -83,7 +83,7 @@ servers their start, so a first turn has them with or without prewarm. On Window
 Both majors default to `~/.local/share/opencode`. The first time 2.x opens a folder 1.x
 used, it imports the sessions: a chat bound to one goes on in it. 1.x still opens the
 folder and goes on in its own. From then on each sees only what it wrote
-(`scripts/probe-data-folder.js`, real 1.19.5 with 2.0.29 and 2.2.5; a large folder is not
+(`scripts/probe-data-folder.js`, real 1.19.5 with 2.0.29, 2.2.5 and 2.3.2; a large folder is not
 measured). The closed case: 1.x cannot open a folder 2.x *created* (1.19.3: "Database is
 not empty and has no session table") and exits on every spawn. `noteDataFolderClash` remembers it
 per executable file, `dataFolderRefusal` refuses before spawning, until `/ping` or a
@@ -91,7 +91,7 @@ new `dataHome`. `dataHome` is `XDG_DATA_HOME` for every process the bridge start
 (`dataHomeEnv`); changing it stops the managed server and forgets the clash
 (`forgetDataFolderClash`). See `docs/data-folder-design.md`.
 
-## (◕‿◕) Where `@opencode` can answer
+## (◕‿◕) Where `@oc` can answer
 
 VS Code 1.142 started moving new chats to the Copilot harness, which has no chat
 participants. The API is documented as deprecated, kept for Local sessions, and
@@ -106,7 +106,7 @@ flowchart TD
 
   A(["activate"]):::bridge
   T{{"(・ω・)? createChatParticipant throws?"}}:::bridge
-  W1["(°ロ°) one warning: @opencode cannot run; getParticipantProblem"]:::stop
+  W1["(°ロ°) one warning: @oc cannot run; getParticipantProblem"]:::stop
   L{{"(・ω・)? localSessionProblem: chat.editor.localAgent.enabled false?"}}:::bridge
   W2["(°ロ°) one warning outside chat, Open Settings, remembered per reason"]:::stop
   IN["inline participant, guarded: needs the proposal"]:::bridge
@@ -123,7 +123,7 @@ flowchart TD
   REG --> H
 ```
 
-- **Why outside chat:** with Local hidden, Send stays disabled for `@opencode` and
+- **Why outside chat:** with Local hidden, Send stays disabled for `@oc` and
   no turn of ours runs, so no reply could say it.
 - **Not read:** managed sandbox or permission settings also disable Local;
   `localSessionProblem` looks only at the one setting.

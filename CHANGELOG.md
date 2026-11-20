@@ -3,6 +3,66 @@
 Full release history, newest first; releases before the last one are condensed
 to their summary and headlines. The README ships the last five.
 
+### 0.0.243
+
+`@oc`, OpenCode 1 deprecated, and follow-ups for OpenCode 2.3's background subagents.
+
+- **`@oc`, not `@opencode`.** The participant's name; its ids and the
+  `opencodeCopilotBridge.*` settings stay, so existing chats keep their sessions.
+  Dated history (this file's older entries, REFS) keeps the name it had.
+- **OpenCode 1 is deprecated.** It runs as before; a window says so once, after a
+  finished turn whose `--version` named 1.x (`openCode1Deprecation`). The removal is
+  staged (AGENTS §1): the suite moves to the 2.x fake first. Check `OD` (mutant: 1 red).
+- **New chip, Collect `<agent>`:** on 2.3+, a subagent still working when the turn ends
+  reports to the parent session as a `<subagent>` message that the model reads with
+  the next prompt (2.3.2, measured); the chip is that prompt. The child id is now read
+  from 2.3's "(sessionID: …)" too, which it was not. Check `BT` (mutant: 2 red).
+- **Sharper either/or offers:** "Should I use a cookie or a header for the token?" was
+  one chip repeating the question; it is now *Use a cookie* | *Use a header for the
+  token*, and an "or" that cannot be split gives no chip. Check `NF` (red first: 3).
+- **MCP tools say what comes next:** a done `opencode_ask`/`opencode_dev` result lists
+  the answer's own next moves (chat's natural chips, with the tool to send each; editing
+  ones only with `--dev`) and how to collect a background subagent's result. The 2.x
+  fake can say a given answer (`[[say:…]]`). Check `MP`.
+- Stale: the `opencode2` setting's description named 2.2.7 as the tested top.
+- **Suite, first port to OpenCode 2:** `S`, `GA` (end to end) and `JA` run on the 2.x fake
+  (`oc2Use`; scripted turns, `[[script:…]]`). Each asserts what crossed 2.x's boundary (the
+  posted prompt, the session it went to); `S` and `JA` gained a boundary check, and a mutant
+  per group turned it red. No shipped code changed.
+- **Second port:** `J` (attachments, and `/parallel` lanes, each its own session), `T` (the
+  context block split across three streamed deltas, which the 1.x fake never sent),
+  `CA`/`CB`/`CC` (a run with no answer text, a failure with no output, a provider's error:
+  each asserts the words chat shows, where `CA` passed on any non-blank reply). Scripted
+  turns take text as an array of deltas and `fail: {type, message}`.
+
+### 0.0.242
+
+A false warning removed, two claims corrected, OpenCode 1.19.6 and 2.3.2 in the tested
+range. Measured on real binaries (REFS 0.0.242).
+
+- **Fixed: "OpenCode 2 ignores the 1.x permission rules in opencode.json" was wrong.**
+  OpenCode 2 applies `opencode.json`'s `permission` and `agent.<name>.permission`
+  (`bash` read as `shell`) on 2.0.29, 2.2.5, 2.2.7, 2.3.0 and 2.3.2: in the agent list
+  once it settles, and in a real turn. 0.0.223 read the list's stock stage. The notice
+  and `v1PermissionRules` are gone. Check `TW` (red first on 0.0.241).
+- **Measured for the reported config, nothing to change in the bridge:** a subagent's
+  own `bash: {"*": "allow"}` outranks the project's denies (last match wins), so it ran
+  `echo > f` past a project deny; with a deny-first allowlist, `git diff > f` still
+  wrote. `edit: deny` stops only the edit tools.
+- **OpenCode 2.3 runs a subagent in the background**: the tool returns at once, the
+  turn ends while the child works (2.2.7 waited). Recorded, a §7 trap and a probe row
+  keyed by version; how chat should show it is not decided.
+- **Corrected: OpenCode does not read `.github/copilot-instructions.md` by itself.** It
+  reads `AGENTS.md` (`CLAUDE.md` without one) and what `opencode.json` `instructions`
+  lists (1.19.6, 2.3.2). What the bridge sends is unchanged; its log reason says so now.
+- **Tested range 1.18.27–1.19.6 and 2.0.18–2.3.2.** `probe-opencode2.js` 30 of 30 on
+  2.2.7, 2.3.0, 2.3.2 (four new rows); `probe-readonly.js` 48 on 1.19.6 and 9 over ACP
+  on 2.3.2; `probe-mcp.js` 19 on both; `probe-data-folder.js` 11 with 2.3.2; wire frames
+  with no differences. The nightly pins both. Checks `VN`, `TW` (red first: 3).
+- **Test isolation:** the Git scan fixtures ignore inherited `GIT_CONFIG_*` overrides,
+  so their control hooks run the same on a developer's machine and in CI. Reproduced:
+  an inherited `core.fsmonitor=false` turned the `GS` fsmonitor control red.
+
 ### 0.0.241
 
 Route T, alpha: OpenCode as MCP tools for a client with no chat participants (the

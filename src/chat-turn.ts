@@ -9,10 +9,8 @@ import { mark, prompt as promptText } from "./followups";
 import { ChatKind, RunMetrics, RunOptions, StepRecord, finalizeStepStatuses, toolOutputBytes } from "./metrics";
 import { composeVisibleAnswer, createEchoGate, createLeakGate, isPromptEcho, metricsLogLine, scrubLeakedContext } from "./format";
 import { createFileLinker, emitAnswerParts, emitReferences, stepUris } from "./context";
-import { dataFolderRefusal, isDataFolderClash, isIdentityUnknown, isNotOpenCode1, openCode1Refusal, plainError, versionNotice, warmServer } from "./net";
+import { dataFolderRefusal, isDataFolderClash, isIdentityUnknown, isNotOpenCode1, openCode1Deprecation, openCode1Refusal, plainError, versionNotice, warmServer } from "./net";
 import { isTurnPermissionError } from "./server-session";
-import { serverMajor } from "./oc-api";
-import { v1PermissionRules } from "./env";
 import { planAgentNotice, planAgentSetting, resolvePlanAgent } from "./agents";
 import { enforcedReadOnlyNotice } from "./enforce";
 import { SessionState, notifyIfSlow, refreshStatus, rememberHandoffReturn, setActiveSession } from "./session";
@@ -152,26 +150,6 @@ async function openTurn(t: Turn): Promise<Live> {
     return { beat, linker, preRun, timed, attachUrl, opening };
 }
 
-// OpenCode 2 ignores 1.x's `agent.<name>.permission` in opencode.json without a
-// word (2.0.29: a project's plan rules were not applied) and reads
-// `.opencode/agents/*.md` frontmatter. Said once per folder; the bridge's own
-// plan is verified either way (assertReadOnly). Once per folder and finding.
-const v1RulesNoted = new Set<string>();
-function v1RulesNotice(base: string, cwd: string): string | undefined {
-    if (serverMajor(base) !== 2) {
-        return undefined;
-    }
-    const found = v1PermissionRules(cwd);
-    const key = `${cwd}\0${found.join("\0")}`;
-    if (!found.length || v1RulesNoted.has(key)) {
-        return undefined;
-    }
-    v1RulesNoted.add(key);
-    logChannel.appendLine(`[${stamp()}] OpenCode 2 ignores 1.x permission rules in ${found.join("; ")}`);
-    return `OpenCode 2 ignores the 1.x permission rules in ${found.map((f) => `\`${f}\``).join(", ")}: those agents run with OpenCode 2's own rules. ` +
-        "Move them to `.opencode/agents/<name>.md` frontmatter (`permission:`), which OpenCode 2 reads.";
-}
-
 // Before the first attempt: the session, the server, the agent, and a busy
 // session. Stop coming first ends the turn there.
 async function prepareRun(t: Turn, live: Live): Promise<Ready | Stopped> {
@@ -210,10 +188,6 @@ async function prepareRun(t: Turn, live: Live): Promise<Ready | Stopped> {
     const versionNote = guardBase ? versionNotice(guardBase) : undefined;
     if (versionNote) {
         response.markdown(`> ${mark("warn")} ${versionNote}\n\n`);
-    }
-    const rulesNote = guardBase ? v1RulesNotice(guardBase, cwd) : undefined;
-    if (rulesNote) {
-        response.markdown(`> ${mark("warn")} ${rulesNote}\n\n`);
     }
     // planAgent only once OpenCode lists it: the CLI runs an unknown name
     // as BUILD (REFS "Read-only turns"). Raced against Stop.
@@ -556,6 +530,10 @@ async function finishTurn(t: Turn, live: Live, outcome: Outcome): Promise<vscode
     if (enforcedNote) {
         response.markdown(`\n\n> ${mark("step")} ${enforcedNote}`);
     }
+    const legacyNote = metrics && !metrics.cancelled ? openCode1Deprecation(t.executable) : undefined;
+    if (legacyNote) {
+        response.markdown(`\n\n> ${mark("warn")} ${legacyNote}`);
+    }
 
     // Files the agent read or wrote: the "Used N references" list.
     if (metrics) {
@@ -632,6 +610,7 @@ async function finishTurn(t: Turn, live: Live, outcome: Outcome): Promise<vscode
                 : `${Math.round(contextTokens / 1000)}k`
             : undefined;
     const failedTask = metrics?.failedTasks?.[0];
+    const backgroundTask = metrics?.backgroundTasks?.[0];
     const sentVariant = variantFor(lastAttempt);
     if (sessionId && metrics && !metrics.error && !metrics.timedOut && !metrics.cancelled) {
         rememberFollowups(
@@ -664,6 +643,9 @@ async function finishTurn(t: Turn, live: Live, outcome: Outcome): Promise<vscode
             ...(compactOffer ? { compact: compactOffer } : {}),
             ...(failedTask
                 ? { failedTask: { agent: failedTask.agent, description: truncate(failedTask.description, 80), ...(failedTask.sessionId ? { taskId: safeSessionId(failedTask.sessionId) } : {}) } }
+                : {}),
+            ...(backgroundTask && !failedTask
+                ? { backgroundTask: { agent: backgroundTask.agent, description: truncate(backgroundTask.description, 80), ...(backgroundTask.sessionId ? { taskId: safeSessionId(backgroundTask.sessionId) } : {}) } }
                 : {}),
             ...(cutOff ? { truncated: true } : {}),
             ...(metrics?.timedOut && metrics.stuckTool && !metrics.cancelled ? { stuckTool: truncate(metrics.stuckTool, 40) } : {}),

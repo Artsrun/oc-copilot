@@ -152,6 +152,15 @@ export function noteTask(part: Record<string, unknown>, metrics: RunMetrics): vo
     }
     const description = typeof input?.description === "string" ? input.description : "";
     const sessionId = typeof meta?.sessionId === "string" ? meta.sessionId : undefined;
+    // 2.3.0+: the call came back while its child works on; the result arrives with the
+    // parent's next prompt, which a chip sends (REFS 0.0.242).
+    if (state?.status === "completed" && meta?.background === true) {
+        const waiting = (metrics.backgroundTasks ??= []);
+        if (!waiting.some((t) => (sessionId && t.sessionId === sessionId) || (t.agent === agent && t.description === description))) {
+            waiting.push({ agent, description, sessionId });
+        }
+        return;
+    }
     if (state?.status !== "error" && meta?.interrupted !== true) {
         // The model retried or resumed it and it finished: nothing is left to resume.
         if (state?.status === "completed" && metrics.failedTasks) {

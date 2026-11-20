@@ -1,6 +1,6 @@
 # opencode-copilot-bridge
 
-Run OpenCode as `@opencode` inside Copilot Chat. It works **cooperatively** in
+Run OpenCode as `@oc` inside Copilot Chat. It works **cooperatively** in
 the checkout you already have open; isolation into a Git worktree is opt-in.
 
 1. **The VS Code extension** — a chat participant that streams an ongoing
@@ -19,17 +19,18 @@ npm install && npm run compile
 code --extensionDevelopmentPath .
 ```
 
-Pick `@opencode` in Copilot Chat and describe a task. Every message continues
+Pick `@oc` in Copilot Chat and describe a task. Every message continues
 **one OpenCode session per chat thread** — or one per folder, if you set
 `sessionScope` to `workspace`.
 
 ```text
-@opencode Inspect the login flow and find the cause of the redirect bug.
-@opencode Now compare that with the signup flow.
-@opencode /dev Implement the fix we discussed and run the tests.
+@oc Inspect the login flow and find the cause of the redirect bug.
+@oc Now compare that with the signup flow.
+@oc /dev Implement the fix we discussed and run the tests.
 ```
 
-The default agent is the read-only **plan** agent — read-only by permission in
+It runs on **OpenCode 2** (`@opencode/cli`); OpenCode 1 still works but is deprecated
+(see [OpenCode 2](#opencode-2)). The default agent is the read-only **plan** agent — read-only by permission in
 every OpenCode process the bridge starts — or a stricter one of your own via
 `planAgent` (see [Read-only turns](#read-only-turns-enforced-planagent-and-look)).
 
@@ -37,36 +38,36 @@ every OpenCode process the bridge starts — or a stricter one of your own via
 
 VS Code 1.142 started making the **Copilot** harness the default for new chat
 sessions, and that harness has no chat participants: VS Code now lists the
-participant API as deprecated, kept for **Local** sessions. `@opencode`
+participant API as deprecated, kept for **Local** sessions. `@oc`
 answers in a Local session only. Start a new chat and pick **Local** as its
 session target; if Local is not offered, turn on `chat.editor.localAgent.enabled`,
 and set `chat.defaultToCopilotHarness` to `false` to keep new chats Local.
 An organization that manages Copilot's sandbox or permission settings moves
-sessions to the Copilot harness. There `@opencode` cannot run, and only an
+sessions to the Copilot harness. There `@oc` cannot run, and only an
 administrator can switch that off.
 
 **Local has an end date.** VS Code's documentation says the Local harness "will
-be removed in February 2027" (1.146 release notes, November 2026). `@opencode`
+be removed in February 2027" (1.146 release notes, November 2026). `@oc`
 is a chat participant, so after that it has nowhere to answer. What replaces it
 is in alpha: OpenCode as MCP tools the Copilot harness calls (next section).
 
-**OpenCode: Diagnose** shows whether `@opencode` is registered and what those
+**OpenCode: Diagnose** shows whether `@oc` is registered and what those
 two settings are, and the OpenCode log names them at activation. A VS Code
 without the participant API still gets the palette commands and gitScan, with
-one warning that `@opencode` cannot run. With `chat.editor.localAgent.enabled`
+one warning that `@oc` cannot run. With `chat.editor.localAgent.enabled`
 off, VS Code offers no Local session: the extension says so once, outside chat
-(Send stays disabled for `@opencode`, so no reply of ours could), with a button
+(Send stays disabled for `@oc`, so no reply of ours could), with a button
 to the setting.
 
 ### OpenCode in the Copilot harness: MCP tools (alpha)  <!-- claim:mcp-tools -->
 
-The Copilot harness has no `@opencode`, but it calls MCP (Model Context Protocol)
+The Copilot harness has no `@oc`, but it calls MCP (Model Context Protocol)
 tools. From 0.0.241 the bridge ships OpenCode as an MCP server of its own: Copilot's
 agent hands a task to OpenCode and gets its answer back. It is the same engine
-that runs `@opencode`, in a process outside VS Code.
+that runs `@oc`, in a process outside VS Code.
 
-**Status: alpha.** Measured against real OpenCode 1.19.5 and 2.3.0 with an MCP client
-of the bridge's own (`scripts/probe-mcp.js`, 19 rows each). **Not yet run inside a
+**Status: alpha.** Measured against real OpenCode 1.19.5, 1.19.6, 2.3.0 and 2.3.2 with an
+MCP client of the bridge's own (`scripts/probe-mcp.js`, 19 rows each). **Not yet run inside a
 Copilot-harness chat**: whether the harness offers the tools, asks before running
 `opencode_dev`, and how long it lets one call run is still to be measured.
 
@@ -79,7 +80,7 @@ the entry uses VS Code's own runtime.
 
 | Tool | What it does |
 | --- | --- |
-| `opencode_ask` | Research, review or plan, read-only: the plan agent (or `planAgent`) under the same enforced rules as an `@opencode` turn. A turn whose rules cannot be verified is not sent. |
+| `opencode_ask` | Research, review or plan, read-only: the plan agent (or `planAgent`) under the same enforced rules as an `@oc` turn. A turn whose rules cannot be verified is not sent. |
 | `opencode_dev` | Make a change with `devAgent`: edits files and runs commands. **Only with `"--dev"` added to the entry's `args`**; marked destructive, so a client can ask first. |
 | `opencode_wait` | The answer of a run that was still going when its call returned. |
 | `opencode_cancel` | Stop a run. |
@@ -108,7 +109,7 @@ client sent, with the protocol version it named.
 
 ### Inline chat (Ctrl+I)  <!-- claim:inline-participant -->
 
-Ctrl+I (Cmd+I) in an editor, then `@opencode`. The selection goes with the
+Ctrl+I (Cmd+I) in an editor, then `@oc`. The selection goes with the
 prompt — or the file and cursor line — so `fix` is enough. Each inline widget
 keeps its own session; `/plan` `/dev` `/stop` `/session` `/new` `/help` are
 offered there. `/dev` edits the file on disk; there is no inline diff.
@@ -120,7 +121,7 @@ Runtime Arguments**, add this to `argv.json`, restart:
 "enable-proposed-api": ["local.opencode-copilot-bridge"]
 ```
 
-Without it the panel `@opencode` works as before, and the Extension Host log
+Without it the panel `@oc` works as before, and the Extension Host log
 says `CANNOT USE these API proposals` — the inline entry left out, not a failure.
 
 ### Slash commands
@@ -198,7 +199,7 @@ Type `/parallel` and send it (or **OpenCode: Compose Parallel Lanes**). A picker
 opens per lane: type the task in its box, press Enter for the default model or
 pick one from the list, and the next lane's page follows. From two lanes on, a
 **Submit** button (and a last item) appears; it inserts the finished
-`@opencode /parallel …` command into the chat input — nothing runs until you
+`@oc /parallel …` command into the chat input — nothing runs until you
 press Enter; the reply's **Run lanes** chip sends it as composed. A task
 that `|` or `;;` would split is refused on its page; put code in backticks.
 Esc discards the lanes.
@@ -285,9 +286,11 @@ the chat body.
 
 OpenCode 2 (`@opencode/cli`, installed as `opencode` too) is a different program,
 with a new server API, permission format and `run` flags. The bridge drives it
-through its HTTP API. An `opencode` that says 1.x runs as it always has. Tested on
-2.0.18 to 2.2.7: every manual check on 2.0.29 and 2.0.32, the probe's rows on 2.0.18,
-2.1.4, 2.2.0, 2.2.5, 2.2.6 and 2.2.7; nightly on 2.0.29, 2.2.5, 2.2.7 and the latest.
+through its HTTP API. An `opencode` that says 1.x still runs as it always has, and
+says once per window that OpenCode 1 is deprecated: a later release drops it. Tested on
+2.0.18 to 2.3.2: every manual check on 2.0.29 and 2.0.32, the probe's rows on 2.0.18,
+2.1.4, 2.2.0, 2.2.5, 2.2.6, 2.2.7, 2.3.0 and 2.3.2; nightly on 2.0.29, 2.2.5, 2.2.7, 2.3.0,
+2.3.2 and the latest.
 
 - **One server, this window's own.** Every turn — plan, `/dev`, lanes,
   `/worktree`, `transport: cli` too — goes through the `opencode serve` the
@@ -309,11 +312,11 @@ through its HTTP API. An `opencode` that says 1.x runs as it always has. Tested 
 - **Not yet:** answering OpenCode's questions.
 - **Close** in `/sessions` archives the session in OpenCode itself from 2.1 on;
   2.0.x has no archive, so there the bridge hides it for itself.
-- **Your own permission rules.** OpenCode 2 reads `permission:` in
-  `.opencode/agents/<name>.md` frontmatter, but ignores 1.x's
-  `agent.<name>.permission` in `opencode.json` without a word (2.0.29,
-  measured): those agents run with OpenCode 2's own rules. The first turn on a
-  2.x server names any such file once.
+- **Your own permission rules.** OpenCode 2 applies `opencode.json`'s
+  `permission` and `agent.<name>.permission` as 1.x does (`bash` read as its
+  `shell`), and `.opencode/agents/<name>.md` frontmatter too (2.0.29 to 2.3.2,
+  measured). Earlier versions of the bridge said otherwise: that measurement
+  read a list OpenCode was still loading.
 - **A later major** (3.x) is tried the same way, with a note that it is outside
   the versions the bridge was tested with; read-only turns stay refused unless
   the server lists the bridge's rules.
@@ -324,7 +327,7 @@ bound to a 1.x session goes on in it, and `/sessions` lists it. 1.x still opens 
 folder and goes on in its own sessions, so going back works. From then on each sees
 only what it wrote: 1.x does not list a session 2.x made, and 2.x does not import
 one 1.x makes later. The import also clears the folder's `event` table; 1.x carried
-on without it. (`scripts/probe-data-folder.js`: 1.19.5 with 2.0.29 and with 2.2.5, a
+on without it. (`scripts/probe-data-folder.js`: 1.19.5 with 2.0.29, 2.2.5 and 2.3.2, a
 small folder; a large one's import time is not measured.)
 
 A folder that OpenCode 2 *created* is different: 1.x cannot open it at all (1.19.3:
@@ -333,7 +336,10 @@ folder with the `dataHome` setting, or by starting VS Code with `XDG_DATA_HOME` 
 (PowerShell: `$env:XDG_DATA_HOME = "$HOME\.opencode1\data"; code .`, with every VS Code
 window closed first).
 
-#### Staying on OpenCode 1  <!-- claim:opencode-1-only -->
+#### Staying on OpenCode 1 (deprecated)  <!-- claim:opencode-1-only -->
+
+OpenCode 1 is deprecated here: it runs, a window says so once after its first finished
+turn, and a later release removes the 1.x code (the CLI transport, the 1.x API).
 
 With `opencodeCopilotBridge.opencode2` set to `false`, a turn that meets 2.x says so at
 once and runs nothing: the server it started answers health with a web page, `run`
@@ -491,7 +497,7 @@ names the worktree and its session, and `/compact` compacts it.
 A follow-up in the same chat continues that worktree and its OpenCode session —
 Copilot keeps `/worktree` selected, and a worktree per message also meant
 OpenCode set up each new folder from scratch. A fresh worktree: **New worktree**
-(a new chat with `@opencode /worktree ` typed), any new chat, or `/new` first.
+(a new chat with `@oc /worktree ` typed), any new chat, or `/new` first.
 A removed worktree is not continued.
 
 ### `scripts/start-parallel-agents.(sh|ps1) "task"`  <!-- claim:worktrees -->
@@ -563,8 +569,8 @@ still decide whether it may call the tool (the sample `look` agent denies MCP).
 | --- | --- |
 | **OpenCode: Set Default Model** | `setModel` |
 | **OpenCode: Show Debug Log** | `showLog` |
-| **OpenCode: New Session** — a new chat with `@opencode ` typed; the chat you leave keeps its session | `newSession` |
-| **OpenCode: Sessions** — sends `@opencode /sessions` | `sessions` |
+| **OpenCode: New Session** — a new chat with `@oc ` typed; the chat you leave keeps its session | `newSession` |
+| **OpenCode: Sessions** — sends `@oc /sessions` | `sessions` |
 | **OpenCode: Compose Parallel Lanes** | `composeParallel` |
 | New Chat (hidden from the palette; New Session does it, and the **New worktree** button with `/worktree` typed) | `newChat` |
 | **OpenCode: Diagnose** | `diagnose` |
@@ -578,8 +584,8 @@ still decide whether it may call the tool (the sample `look` agent denies MCP).
 | **Open Worktree in New Window** (button) | `worktreeOpen` |
 | **Remove Worktree** (button — confirms, deletes the branch) | `worktreeRemove` |
 
-`Ctrl+Alt+O` / `Cmd+Alt+O` opens chat with `@opencode ` (the selection rides
-along); add `Shift` for `@opencode /dev `. On some Windows layouts `Ctrl+Alt`
+`Ctrl+Alt+O` / `Cmd+Alt+O` opens chat with `@oc ` (the selection rides
+along); add `Shift` for `@oc /dev `. On some Windows layouts `Ctrl+Alt`
 is AltGr — rebind in **Keyboard Shortcuts**.
 
 ## Settings
@@ -594,7 +600,7 @@ All under `opencodeCopilotBridge.`.
 | `devAgent` | `build` | Agent `/dev` runs, always passed as `--agent`. |
 | `planAgent` | `plan` | Agent for read-only turns and `/parallel` lanes, used once OpenCode lists it (see *Read-only turns*). |
 | `readOnlySubagents` | `["explore"]` | Literal subagent names a read-only turn may start via `task`; trimmed and deduplicated, `*` and `?` rejected. With `enforceReadOnly` only agents with verified shell-free permissions are available. |
-| `opencode2` | `true` | Drive OpenCode 2 through its HTTP API (tested on 2.0.18–2.3.0): every turn through this window's own server, read-only turns only when it lists the bridge's rules (see *OpenCode 2*). A 1.x runs the same either way. Off: an OpenCode 2 is refused. |
+| `opencode2` | `true` | Drive OpenCode 2 through its HTTP API (tested on 2.0.18–2.3.2): every turn through this window's own server, read-only turns only when it lists the bridge's rules (see *OpenCode 2*). A 1.x runs the same either way. Off: an OpenCode 2 is refused. |
 | `enforceReadOnly` | `true` | Read-only turns read-only by permission in every OpenCode process the bridge starts: no edits or shell, `readOnlyTools`, read-only subagents (see *Read-only turns*). `/dev` is unchanged. Off: 0.0.214, read-only by instruction. |
 | `readOnlyTools` | `["git-scan_gitScan"]` | With `enforceReadOnly`, the MCP tools a read-only turn may use, by OpenCode permission name (`<server>_<tool>`, wildcards allowed). A name that would allow a tool that writes, runs commands or starts subagents is left out. On OpenCode 2 from 2.2.0; 2.0 and 2.1 offer none. |
 | `attachDevToServer` | `true` | With transport `auto`, `/dev` attaches to the warm server instead of booting OpenCode per turn. |
@@ -637,6 +643,29 @@ All under `opencodeCopilotBridge.`.
 
 The last five releases; the full history is `CHANGELOG.md` in the repository.
 
+### 0.0.243
+
+- **`@oc` is the new name**; existing chats and settings carry on.
+- **OpenCode 1 is deprecated**: it still runs and says so once per window. Install
+  OpenCode 2 (see *OpenCode 2*).
+- **New chip on OpenCode 2.3: Collect `<agent>`** gets the result of a subagent that was
+  still working when the turn ended. Checks `BT`.
+- **Either/or questions** give one chip per option ("Use a cookie" | "Use a header"),
+  and the MCP tools end with the answer's next steps. Checks `NF`, `MP`.
+
+### 0.0.242
+
+- **Fixed: a false warning about your permission rules on OpenCode 2.** "OpenCode 2
+  ignores the 1.x permission rules in opencode.json" was wrong: OpenCode 2 applies
+  them (2.0.29 to 2.3.2, measured in a real turn). It is gone. Checks `TW`.
+- **OpenCode 1.19.6 and 2.3.2 are tested**, and no longer say they are outside the
+  tested versions. Checks `VN`, `TW`.
+- **Known: on OpenCode 2.3 a subagent runs in the background**, so a turn can answer
+  before the subagent it started has finished. Nothing changed for it yet.
+- **Corrected:** OpenCode reads `AGENTS.md` and what `opencode.json` `instructions`
+  lists, not `.github/copilot-instructions.md` by itself. To use that file with
+  `@oc`, list it in `instructions`.
+
 ### 0.0.241
 
 - **New, alpha: OpenCode as MCP tools for the Copilot harness.** `opencode_ask`
@@ -668,16 +697,3 @@ The last five releases; the full history is `CHANGELOG.md` in the repository.
   cannot find its database locked.
 - **VS Code removes the Local chat harness in February 2027**; the README and
   Diagnose say so. Checks `TW`, `SV`.
-
-### 0.0.238
-
-- **OpenCode 2 just works.** `opencode2` is on by default, so an `opencode` that is
-  2.x is driven through its API instead of refused; `false` is the way out. OpenCode 1
-  runs the same, with one `--version` check before its server starts. `/env` reads 2.x's
-  `mcp.servers`. Checks `TW`, `OC`, `DA`.
-
-### 0.0.237
-
-- **OpenCode 2: `effort:` works with no model pinned.** The level was dropped
-  without a word, and the turn ran at the model's default. It now reaches the run
-  and lasts that turn only. Checks `TW`.

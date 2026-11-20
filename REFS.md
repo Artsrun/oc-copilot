@@ -5,6 +5,119 @@ actually measured, so nobody re-derives it.
 
 ---
 
+## 0.0.243: where a 2.3 background subagent's result goes; chips on a corpus (2026-11-19)
+
+**Dated 2026-11-19.** Linux, Node 22.23.4, `@opencode/cli` 2.3.2, the bridge's `out/`,
+scripted model. A build turn `[[probe:task@general:slow]]` (a ~10 s child), then, 15 s
+later, a second prompt to the same session:
+
+- Turn 1 ended at 5.4 s. The tool's whole text: "The subagent is working in the background
+  (sessionID: ses_…). You will receive a `<subagent>` message when it goes idle, and again
+  after each later round of work. DO NOT sleep, poll, proactively check on its progress, or
+  duplicate this subagent's work. Work on non-overlapping tasks, or briefly tell the user
+  what you launched and end your response. …"
+- Turn 2's one model request held, before the new prompt, a **user** message
+  `<subagent sessionID="ses_…" state="completed" description="probe subagent">` with the
+  child's whole answer. Nothing ran between the turns (0.0.242: no parent turn in 30 s).
+
+So the result is collected by sending the next prompt: the Collect chip, and the MCP
+result's line. 2.3's tool text names the child only as "(sessionID: …)", which the
+translator did not read: no child id for the family's asks or a Resume chip before this.
+
+**Chips on a corpus.** Fifteen typical endings of coding-agent answers through
+`suggestFollowups` (`out/`, a host installed: without one, `config()` throws and the
+catch returns no chips). Offers, a numbered plan, findings by severity, failing tests,
+"hard to say" and an edited file each gave the expected chips; "any questions?", "hope this
+helps" and "no issues found" gave none. Wrong: "Should I use a cookie or a header for the
+token?" gave ONE chip, "Use a cookie or a header for the token": `OFFERS` matched before
+the either/or rule, and the noun alternative kept the sentence whole. Left as it is: a
+recommendation with no question ("I recommend Option A.") gives no chip, by design
+(`RECOMMENDS` needs a `?`; informational "I'd recommend …" lines would chip otherwise).
+
+---
+
+## 0.0.242: OpenCode 2 applies opencode.json's rules; 2.3 backgrounds subagents (2026-11-18)
+
+**Dated 2026-11-18.** Linux, Node 22.23.4, real binaries in scratch prefixes (`opencode-ai`
+1.19.5, 1.19.6; `@opencode/cli` 2.0.29, 2.2.5, 2.2.7, 2.3.0, 2.3.2), each in a temp git
+repo with an isolated HOME and XDG folders, no `OPENCODE_CONFIG_CONTENT`, the scripted model.
+
+**Reported:** on 2.3.0 (Windows), the first turn of a folder whose `opencode.json` has
+`agent.<name>.permission` said "OpenCode 2 ignores the 1.x permission rules". It does not.
+
+**The listing.** One config: top-level `permission` with a marker and `bash: {"*": allow,
+"git push*": deny}`, `agent.plan.permission` (0.0.223's block plus a marker),
+`agent.revv.permission` (a marker), and `.opencode/agents/revv2.md` frontmatter (a marker).
+`GET /api/agent` (2.x) or `/agent` (1.x) read every 100 ms until it held for 1.5 s:
+
+| Version | First non-empty read | Settled |
+| --- | --- | --- |
+| 1.19.5, 1.19.6, 2.2.5 | all four markers | all four |
+| 2.0.29, 2.2.7, 2.3.0, 2.3.2 | plan and build without theirs, revv and revv2 not listed | all four; `bash` listed as `shell` |
+
+0.0.223's config alone on 2.0.29, twice: `[]` at 121 ms, plan with 7 rules and no marker at
+371–379 ms, 11 rules with it at 557–566 ms; on 2.3.0, 7 rules from 108 ms, 12 with the marker
+at 753–790 ms. 0.0.223's "plan's 7 stock rules" was the stock stage (0.0.233 found the stages).
+
+**A real turn** (the bridge's `out/`, a `/dev` turn as build), 2.3.0 and 1.19.6 alike:
+
+| Row | Result |
+| --- | --- |
+| build · `echo blocked > f` under the project's `bash: {"echo blocked*": deny}` | absent |
+| control: build · `echo hi > f` | CREATED |
+| → a subagent with its own `bash: {"*": allow, "git diff*": allow}` (the reported shape) · `echo blocked > f` | **CREATED**: its `* allow` comes after the project's deny and outranks it |
+| that subagent · write, under its `edit: deny` | absent |
+| → a subagent with `bash: {"*": deny, "git diff*": allow, "git status*": allow, "* --output*": deny}` · `echo hi > f` | absent |
+| that subagent · `git diff > f` | **CREATED**: an allowed prefix with a redirect |
+| that subagent · `git diff --output=f` | absent |
+
+So a reviewer's shell allowlist is not read-only, and `edit: deny` stops only the edit
+tools. The notice and `v1PermissionRules` are gone (check `TW`, red first on 0.0.241);
+`probe-opencode2.js` gained the project rule, a project subagent with its shell denied, and
+its control.
+
+**From 2.3.0 a subagent runs in the background.** build → general, scripted model:
+
+| Version | Tool result | Turn |
+| --- | --- | --- |
+| 2.2.7 (params `agent, description, prompt, model, sessionID, background`; `background`: "Run the subagent in the background and return immediately…") | `<subagent sessionID=… state="completed">` and the child's text | waits: 9.2–10.6 s for a `slow` child |
+| 2.3.0, 2.3.2 (2.3.2 has no `background`; 2.3.0's params not read) | "The subagent is working in the background (sessionID: …). You will receive a `<subagent>` message when it goes idle, and again after …" | returns at 0.2–1.7 s; the child finishes after |
+
+30 s after a 2.3.2 turn whose child ran ~10 s, the parent had no new user message and
+started no new turn. **Not measured:** a real model; where the `<subagent>` message goes
+(the parent's next prompt is the guess); whether the child's spend and a Resume chip reach
+the turn that started it. Read-only rows are not racing it: plan → explore `echo > f` on
+2.2.7 and 2.3.2, the child had its outcome when the turn ended, and the file was absent then
+and 10 s later. The probe's subagent rows wait up to 10 s for their file anyway.
+
+**Which instruction files OpenCode reads itself** (markers in each; what the model was sent):
+
+| Files | 1.19.6 | 2.3.2 | 2.0.29 |
+| --- | --- | --- | --- |
+| `AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, `.github/instructions/x.instructions.md` | `AGENTS.md` | `AGENTS.md` | — |
+| the same without `AGENTS.md` | `CLAUDE.md` | `CLAUDE.md` | — |
+| without `AGENTS.md`, `instructions: [".github/copilot-instructions.md", ".github/instructions/*.instructions.md"]` | `CLAUDE.md`, both listed | the same | none of them |
+
+The bridge's reason for not resending what Copilot attaches, "OpenCode loads its own", held
+only for `AGENTS.md` (`CLAUDE.md` without one). It now names what OpenCode reads; what is
+sent is unchanged (`S`). A user with only `.github/copilot-instructions.md` gets it into
+OpenCode by listing it in `instructions`.
+
+**1.19.6 and 2.3.2 are tested** (npm's latest of each on this date): `probe-opencode2.js` 30
+of 30 on 2.2.7, 2.3.0 and 2.3.2; `probe-readonly.js` 48 of 48 on 1.19.6 and 9 of 9 over ACP
+on 2.3.2; `probe-mcp.js` 19 of 19 on both; `probe-data-folder.js` 11 of 11 with 2.3.2 and
+1.19.5. Wire frames recorded on both: event types and property keys as in the fixtures
+(1.19.0's 9, 2.3.0's 26), no differences. Checks `VN`, `TW` (red first: 3).
+
+**Inherited git config.** `GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.fsmonitor
+GIT_CONFIG_VALUE_0=false` in the suite's environment turned `GS fsmonitor fixture executes
+when the protection is removed` red: environment config outranks the fixture repo's own.
+The fixture's git now drops `GIT_CONFIG_COUNT`, `GIT_CONFIG_PARAMETERS` and each
+`KEY_n`/`VALUE_n`. This container's own `GIT_CONFIG_COUNT=3` (`url.*.insteadOf`,
+`credential.interactive`) left the suite green: 1369 of 1369.
+
+---
+
 ## 0.0.241: OpenCode as MCP tools, alpha (2026-11-16)
 
 **Dated 2026-11-16.** Linux, Node 22.23.4 (and 24.22.1 where named), the scripted model,
@@ -681,6 +794,11 @@ OpenCode: a text attachment" for it. Bridge overhead on a prewarmed 1.x server:
 ---
 
 ## 0.0.223: whose permission rules OpenCode 2 reads (2026-10-19)
+
+> **Wrong, corrected in 0.0.242.** The 2.0.29 column read the agent list before it
+> finished loading: 7 stock rules is the list's stock stage (t+379 ms), and the same
+> config read once the list holds has the marker (t+566 ms). OpenCode 2 applies
+> `opencode.json`'s rules. The staging itself was found later (0.0.233).
 
 Linux, `opencode-ai@1.19.0` and `@opencode/cli@2.0.29`, each in a temp git repo
 with an isolated HOME and no `OPENCODE_CONFIG_CONTENT`. The project's

@@ -144,6 +144,5 @@ OpenCode: `<repo>.worktrees/<slug>`, on command.
 
 `opencode.json(c)`, global config, instruction files such as `AGENTS.md`, and
 agent, plugin, MCP, command and skill listings, for `/env` and `/ping`; the config
-files' stamps for the cold rule cache (`configStamp`); on a 2.x server, the 1.x
-permission rules it would ignore (`v1PermissionRules`). Nothing is injected into
+files' stamps for the cold rule cache (`configStamp`). Nothing is injected into
 them.

@@ -91,11 +91,11 @@ export function registerCommands(context: vscode.ExtensionContext): void {
                 : vscode.window.showErrorMessage(`git worktree remove failed: ${res.stderr.trim()}`));
         }),
         vscode.commands.registerCommand("opencodeCopilotBridge.retryLast", async (promptArg?: string) => {
-            // With no prompt: open the chat with `@opencode ` typed. `chat.open`
+            // With no prompt: open the chat with `@oc ` typed. `chat.open`
             // without isPartialQuery SUBMITS (chatActions.ts); only an explicit
             // prompt is sent.
             const text = typeof promptArg === "string" ? promptArg.trim() : "";
-            const query = text ? `@opencode ${text}` : "@opencode ";
+            const query = text ? `@oc ${text}` : "@oc ";
             try {
                 await vscode.commands.executeCommand(
                     "workbench.action.chat.open",
@@ -124,7 +124,7 @@ export function registerCommands(context: vscode.ExtensionContext): void {
                     // from useful rather than one more thing to remember to type.
                     try {
                         await vscode.commands.executeCommand("workbench.action.chat.open", {
-                            query: `@opencode ${word}`,
+                            query: `@oc ${word}`,
                             isPartialQuery: true
                         });
                     } catch {
@@ -139,7 +139,7 @@ export function registerCommands(context: vscode.ExtensionContext): void {
                 "OpenCode: this VS Code build has no \"new chat\" command — use the + button in the Chat view."
             );
         }),
-        // New Session = a new chat with `@opencode ` typed. A new thread has no
+        // New Session = a new chat with `@oc ` typed. A new thread has no
         // history, so its first message starts a fresh OpenCode session; the
         // chat you left keeps its own. Under workspace scope the folder pointer
         // is reset too.
@@ -151,12 +151,12 @@ export function registerCommands(context: vscode.ExtensionContext): void {
             }
             await vscode.commands.executeCommand("opencodeCopilotBridge.newChat");
         }),
-        // `@opencode /sessions` in the chat: the list needs a chat to bind to.
+        // `@oc /sessions` in the chat: the list needs a chat to bind to.
         vscode.commands.registerCommand("opencodeCopilotBridge.sessions", async () => {
             try {
-                await vscode.commands.executeCommand("workbench.action.chat.open", { query: "@opencode /sessions" });
+                await vscode.commands.executeCommand("workbench.action.chat.open", { query: "@oc /sessions" });
             } catch {
-                void vscode.window.showInformationMessage("OpenCode: send `@opencode /sessions` in a chat.");
+                void vscode.window.showInformationMessage("OpenCode: send `@oc /sessions` in a chat.");
             }
         }),
         vscode.commands.registerCommand("opencodeCopilotBridge.composeParallel", async () => {

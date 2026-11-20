@@ -2,7 +2,7 @@
   "name": "opencode-copilot-bridge",
   "displayName": "OpenCode Copilot Bridge",
   "description": "Delegate research, planning, and development to OpenCode from GitHub Copilot Chat.",
-  "version": "0.0.241",
+  "version": "0.0.243",
   "publisher": "local",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -53,7 +53,7 @@
     "chatParticipants": [
       {
         "id": "opencodeCopilotBridge.chat",
-        "name": "opencode",
+        "name": "oc",
         "fullName": "OpenCode Copilot Bridge",
         "description": "One ongoing OpenCode session. Describe the task (plan, the default agent), or use /dev /parallel /worktree /sessions /compact /new /model /help, or dev:, model:id inline.",
         "isSticky": true,
@@ -114,7 +114,7 @@
       },
       {
         "id": "opencodeCopilotBridge.inline",
-        "name": "opencode",
+        "name": "oc",
         "fullName": "OpenCode Copilot Bridge",
         "description": "Ask OpenCode about this file — the selection (or cursor line) goes with the prompt.",
         "locations": [
@@ -221,7 +221,7 @@
         "key": "ctrl+alt+o",
         "mac": "cmd+alt+o",
         "args": {
-          "query": "@opencode ",
+          "query": "@oc ",
           "isPartialQuery": true
         }
       },
@@ -230,7 +230,7 @@
         "key": "ctrl+alt+shift+o",
         "mac": "cmd+alt+shift+o",
         "args": {
-          "query": "@opencode /dev ",
+          "query": "@oc /dev ",
           "isPartialQuery": true
         }
       }
@@ -314,7 +314,7 @@
           "opencodeCopilotBridge.opencode2": {
             "type": "boolean",
             "default": true,
-            "markdownDescription": "Drive OpenCode 2 (`@opencode/cli`, tested on 2.0.18–2.2.7) through its HTTP API. Every turn goes through the server this window starts (its password stays in memory); read-only turns are sent only when that server lists the bridge's read-only rules for `plan`. An `opencode` that is 1.x runs the same either way. Off: an OpenCode 2 `opencode` is refused."
+            "markdownDescription": "Drive OpenCode 2 (`@opencode/cli`, tested on 2.0.18–2.3.2) through its HTTP API. Every turn goes through the server this window starts (its password stays in memory); read-only turns are sent only when that server lists the bridge's read-only rules for `plan`. An `opencode` that is 1.x runs the same either way. Off: an OpenCode 2 `opencode` is refused."
           },
           "opencodeCopilotBridge.readOnlyTools": {
             "type": "array",
@@ -334,7 +334,7 @@
           "opencodeCopilotBridge.prewarmServer": {
             "type": "boolean",
             "default": true,
-            "description": "Start (or adopt) the managed OpenCode server a few seconds after VS Code starts, so the first @opencode message does not wait for its boot (config, plugins, MCP servers). Trusted workspaces only. Transport 'cli' starts no server: it runs one --version in the background instead, to recognise OpenCode 2."
+            "description": "Start (or adopt) the managed OpenCode server a few seconds after VS Code starts, so the first @oc message does not wait for its boot (config, plugins, MCP servers). Trusted workspaces only. Transport 'cli' starts no server: it runs one --version in the background instead, to recognise OpenCode 2."
           },
           "opencodeCopilotBridge.toolQuietMs": {
             "type": "number",
@@ -484,7 +484,7 @@
           "opencodeCopilotBridge.autoCompactEveryTurns": {
             "type": "number",
             "default": 8,
-            "description": "Number of @opencode turns between automatic compactions. Set to 0 to disable and rely only on OpenCode's native autocompaction."
+            "description": "Number of @oc turns between automatic compactions. Set to 0 to disable and rely only on OpenCode's native autocompaction."
           },
           "opencodeCopilotBridge.editorTitleButton": {
             "type": "boolean",

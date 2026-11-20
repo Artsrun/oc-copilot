@@ -148,7 +148,7 @@ async function runParallelLanes(opts) {
         (results.filter((r, i) => !specs[i].error && r.answer.trim()).length >= 2
             ? `conversation. ${sameTask ? "**Compare** or **Merge lanes**" : "**Merge lanes**"} below brings ` +
                 `${results.length > LANE_COUNT_CAP ? `the first ${LANE_COUNT_CAP} lanes' answers` : "their answers"} into it.`
-            : "conversation. Paste the parts you want to keep into a normal `@opencode` turn."));
+            : "conversation. Paste the parts you want to keep into a normal `@oc` turn."));
     return results.map((r, i) => ({
         task: specs[i].task,
         model: specs[i].model ?? opts.model,

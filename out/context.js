@@ -192,7 +192,7 @@ function buildChatContext(request, cwd, origin = {}) {
             continue;
         }
         if (AUTOMATIC_ID.test(id) || (uri && isInstructionFile(uri))) {
-            notes.push({ id, kind, label, kept: false, automatic: true, why: uri ? "instruction file, OpenCode loads its own" : "added by the host" });
+            notes.push({ id, kind, label, kept: false, automatic: true, why: uri ? "instruction file; OpenCode reads AGENTS.md and opencode.json instructions" : "added by the host" });
             continue;
         }
         if (!uri && kind === "diagnostics") {

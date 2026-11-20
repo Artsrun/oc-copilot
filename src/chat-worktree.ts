@@ -326,7 +326,7 @@ export async function handleWorktree(p: {
     response.button({ command: "opencodeCopilotBridge.worktreeOpen", title: "Open in new window", arguments: args });
     response.button({ command: "opencodeCopilotBridge.worktreeRemove", title: "Remove worktree", arguments: args });
     // Follow-ups here continue this worktree; a fresh one is a new chat, opened
-    // with `@opencode /worktree ` typed and nothing sent.
+    // with `@oc /worktree ` typed and nothing sent.
     response.button({ command: "opencodeCopilotBridge.newChat", title: "New worktree", arguments: ["/worktree "] });
     return {
         metadata: {

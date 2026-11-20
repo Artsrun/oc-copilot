@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Nightly tripwire (M3): the chat participant API @opencode is built on. VS Code's
+// Nightly tripwire (M3): the chat participant API @oc is built on. VS Code's
 // docs call it deprecated (the Copilot harness has no participants, 1.142+), yet
 // vscode.d.ts on main gave `createChatParticipant` no @deprecated tag (1.146 dev,
 // read 2026-11-02, REFS 0.0.235). This fails the day that changes: a declaration

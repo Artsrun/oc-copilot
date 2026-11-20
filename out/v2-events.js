@@ -6,7 +6,8 @@ const V1_TOOL = { shell: "bash", subagent: "task" };
 const v1ToolName = (name) => V1_TOOL[name] ?? name;
 exports.v1ToolName = v1ToolName;
 const textOf = (content) => Array.isArray(content) ? content.map((c) => (c && typeof c.text === "string" ? c.text : "")).join("") : "";
-const childOf = (output) => output.match(/<subagent sessionID="([^"]+)"/)?.[1];
+const BACKGROUND = /working in the background \(sessionID: (ses_[A-Za-z0-9_]+)\)/;
+const childOf = (output) => output.match(/<subagent sessionID="([^"]+)"/)?.[1] ?? output.match(BACKGROUND)?.[1];
 function v2Translator() {
     const tools = new Map();
     const models = new Map();
@@ -80,7 +81,7 @@ function v2Translator() {
                     input: known.input,
                     ...(output ? { output } : {}),
                     ...(type === "session.tool.failed" ? { error: typeof error === "string" ? error : typeof error?.message === "string" ? error.message : "tool failed" } : {}),
-                    metadata: { ...(d.metadata ?? {}), ...(child ? { sessionId: child } : {}) },
+                    metadata: { ...(d.metadata ?? {}), ...(child ? { sessionId: child } : {}), ...(BACKGROUND.test(output) ? { background: true } : {}) },
                     time: { start: known.start ?? created, end: created }
                 };
                 tools.delete(callID);

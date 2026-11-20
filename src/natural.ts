@@ -130,10 +130,24 @@ const ANY_OF = /^(.*?)\b(?:any|one|some|all|each|either|both)\s+of\s+(?:these|th
 
 // ", and" splits only a list of three or more: "run the tests, and fix any
 // failures" is one action in two steps.
+// "use a cookie or a header for the token" is one verb over two objects: the head's words
+// before its object (an article, a determiner, a code span) go to each alternative. An
+// "or" left unresolved is the user's pick unmade, and a chip of it decides nothing: none.
+const OBJECT = /^(?:(?:a|an|the|this|that|these|those|my|your|its|their|our)\b|`)/i;
+const sharedVerb = (parts: readonly string[]): string[] => {
+    const words = parts[0].split(/\s+/);
+    const at = words.findIndex((w, i) => i > 0 && OBJECT.test(w));
+    const verb = at > 0 && at <= 3 ? words.slice(0, at).join(" ") : "";
+    return verb && isVerb(firstWord(verb)) && parts.slice(1).every((p) => OBJECT.test(p)) ? [parts[0], ...parts.slice(1).map((p) => `${verb} ${p}`)] : [];
+};
+
 const splitAlternatives = (body: string): string[] => {
     const parts = body.split(/,\s*(?:or|and\/or|and)\s+|\s+or\s+|,\s+/).map((p) => p.trim()).filter(Boolean);
     const list = parts.length > 2 || !/,\s*and\s+/i.test(body);
-    return list && parts.length > 1 && parts.every((p) => isVerb(firstWord(p))) ? parts : [body];
+    if (list && parts.length > 1 && parts.every((p) => isVerb(firstWord(p)))) {
+        return parts;
+    }
+    return /\s+or\s+/i.test(body) && parts.length <= 3 && isVerb(firstWord(parts[0])) ? sharedVerb(parts) : [body];
 };
 
 const actionsFromOffer = (body: string): string[] => {

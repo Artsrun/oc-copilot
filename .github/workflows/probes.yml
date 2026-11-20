@@ -23,6 +23,10 @@ jobs:
             package: opencode-ai@1.19.5
             probe: scripts/probe-readonly.js
             optional: false
+          - cell: opencode 1.19.6 (pinned)
+            package: opencode-ai@1.19.6
+            probe: scripts/probe-readonly.js
+            optional: false
           - cell: opencode 2.0.29 (pinned)
             package: "@opencode/cli@2.0.29"
             probe: scripts/probe-opencode2.js
@@ -41,6 +45,15 @@ jobs:
             package: "@opencode/cli@2.3.0"
             probe: scripts/probe-opencode2.js
             optional: false
+          # 2.3.2 stages like 2.3.0 and runs a subagent in the background (REFS 0.0.242).
+          - cell: opencode 2.3.2 (pinned)
+            package: "@opencode/cli@2.3.2"
+            probe: scripts/probe-opencode2.js
+            optional: false
+          - cell: opencode 2.3.2 (pinned) · read-only over ACP
+            package: "@opencode/cli@2.3.2"
+            probe: scripts/probe-readonly.js
+            optional: false
           - cell: opencode 2.3.0 (pinned) · read-only over ACP
             package: "@opencode/cli@2.3.0"
             probe: scripts/probe-readonly.js
@@ -48,6 +61,14 @@ jobs:
           # The MCP server (out/oc-mcp-server.js) driven over stdio, on each major.
           - cell: opencode 1.19.5 (pinned) · MCP tools
             package: opencode-ai@1.19.5
+            probe: scripts/probe-mcp.js
+            optional: false
+          - cell: opencode 1.19.6 (pinned) · MCP tools
+            package: opencode-ai@1.19.6
+            probe: scripts/probe-mcp.js
+            optional: false
+          - cell: opencode 2.3.2 (pinned) · MCP tools
+            package: "@opencode/cli@2.3.2"
             probe: scripts/probe-mcp.js
             optional: false
           - cell: opencode 2.3.0 (pinned) · MCP tools
@@ -80,7 +101,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        two: ["2.0.29", "2.2.5", "2.3.0"]
+        two: ["2.0.29", "2.2.5", "2.3.0", "2.3.2"]
     name: data folder · 1.19.5 then ${{ matrix.two }}
     runs-on: ubuntu-latest
     timeout-minutes: 15

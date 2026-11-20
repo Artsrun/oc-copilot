@@ -3,7 +3,7 @@ import * as vscode from "vscode";
 import { logChannel, setLogChannel, stamp } from "./core";
 import { resolveFolder, setExtensionContext } from "./host";
 import { expandShimVar, readShimTarget, resolveExecutable, tokenizeCmdLine } from "./proc";
-import { PREWARM_DELAY_MS, httpGetJson, httpPostJson, knownServerBase, lastServeLine, setStartupDeadline, stopServer, withDirectory } from "./net";
+import { PREWARM_DELAY_MS, httpGetJson, httpPostJson, knownServerBase, lastServeLine, resetOpenCode1Deprecation, setStartupDeadline, stopServer, withDirectory } from "./net";
 import { api, serverMajor } from "./oc-api";
 import { toolFilePath } from "./metrics";
 import { discoverOpenCodeEnv, openCodeConfigModel, readJsonc, summariseEnv } from "./env";
@@ -49,7 +49,7 @@ export function activate(context: vscode.ExtensionContext): void {
     const channel = vscode.window.createOutputChannel("OpenCode");
     setLogChannel(channel);
     context.subscriptions.push(channel);
-    // A broken followups.json is logged, never thrown: @opencode must still activate.
+    // A broken followups.json is logged, never thrown: @oc must still activate.
     for (const problem of followupsProblems()) {
         logChannel.appendLine(`followups.json: ${problem}`);
     }
@@ -62,25 +62,25 @@ export function activate(context: vscode.ExtensionContext): void {
         setParticipantProblem(err instanceof Error ? err.message : String(err));
     }
     const problem = getParticipantProblem();
-    logChannel.appendLine(`[${stamp()}] chat harness: VS Code ${vscode.version ?? "?"} · ${harnessNote()}${problem ? ` · @opencode not registered: ${problem}` : ""}`);
+    logChannel.appendLine(`[${stamp()}] chat harness: VS Code ${vscode.version ?? "?"} · ${harnessNote()}${problem ? ` · @oc not registered: ${problem}` : ""}`);
     if (problem) {
         void vscode.window.showWarningMessage?.(
-            "OpenCode: this VS Code offers no chat participants, so @opencode cannot run. The palette commands and gitScan still work; OpenCode: Diagnose says why."
+            "OpenCode: this VS Code offers no chat participants, so @oc cannot run. The palette commands and gitScan still work; OpenCode: Diagnose says why."
         );
     } else {
         // Out-of-view news, said once per reason (HR): with Local hidden, Send stays
-        // disabled for @opencode and no chat turn of ours ever runs to say it.
+        // disabled for @oc and no chat turn of ours ever runs to say it.
         const local = localSessionProblem();
         if (local && context.globalState?.get<string>(LOCAL_NOTICE_KEY) !== local) {
             void context.globalState?.update(LOCAL_NOTICE_KEY, local);
             void vscode.window.showWarningMessage?.(
-                `OpenCode: ${local}, and @opencode answers only there. Turn the setting on, or see OpenCode: Diagnose.`,
+                `OpenCode: ${local}, and @oc answers only there. Turn the setting on, or see OpenCode: Diagnose.`,
                 "Open Settings"
             )?.then((pick) => pick && vscode.commands.executeCommand("workbench.action.openSettings", "chat.editor.localAgent.enabled"));
         } else if (!local && context.globalState?.get<string>(LOCAL_NOTICE_KEY)) {
             void context.globalState?.update(LOCAL_NOTICE_KEY, undefined);
         }
-        // claim:inline-participant — @opencode in inline chat (Ctrl+I). It needs the
+        // claim:inline-participant — @oc in inline chat (Ctrl+I). It needs the
         // chatParticipantAdditions proposal; registering it must never take the
         // panel participant down.
         try {
@@ -88,7 +88,7 @@ export function activate(context: vscode.ExtensionContext): void {
                 participant(context, INLINE_PARTICIPANT_ID, (r, c, s, t) => handleChat(r, c, s, t, { inline: true }))
             );
         } catch (err) {
-            logChannel.appendLine(`inline @opencode unavailable: ${err instanceof Error ? err.message : String(err)}`);
+            logChannel.appendLine(`inline @oc unavailable: ${err instanceof Error ? err.message : String(err)}`);
         }
     }
     registerCommands(context);
@@ -217,6 +217,7 @@ export const __test = {
     setStartupDeadline,
     setReplyConfirmWait,
     resetChipBackoff,
+    resetOpenCode1Deprecation,
     CHILD_MAX_ROWS,
     // What activation schedules: the server, then the folder's agent list.
     prewarmServer: prewarmFolder,
