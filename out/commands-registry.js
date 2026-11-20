@@ -154,6 +154,10 @@ function registerCommands(context) {
             (0, net_1.stopServer)();
             core_1.logChannel.appendLine("dataHome changed: the managed server stops; the next message starts one on the new folder");
         }
+        if (event.affectsConfiguration("opencodeCopilotBridge.otlpEndpoint")) {
+            (0, net_1.stopServer)();
+            core_1.logChannel.appendLine("otlpEndpoint changed: the managed server stops; the next message starts one with the new endpoint");
+        }
     }) ?? { dispose: () => undefined }, vscode.workspace.registerTextDocumentContentProvider?.(BASE_SCHEME, {
         provideTextDocumentContent: async (uri) => {
             try {

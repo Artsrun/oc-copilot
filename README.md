@@ -596,6 +596,7 @@ All under `opencodeCopilotBridge.`.
 | --- | --- | --- |
 | `executable` | `opencode` | OpenCode executable name or path; `~/` is your home folder. |
 | `dataHome` | `""` | OpenCode's data folder (`XDG_DATA_HOME`) for every process the bridge starts; `~/` is your home folder. Empty: VS Code's own environment. Gives a 1.x its own folder when OpenCode 2 created the default one (see *OpenCode 2*); changing it stops this window's server. |
+| `otlpEndpoint` | `""` | Where OpenCode 2 sends its OpenTelemetry traces and logs (OTLP over HTTP, JSON), e.g. `http://127.0.0.1:4318`. **OpenCode's logs include each prompt's text.** `off`: nothing, even if VS Code's environment sets `OTEL_EXPORTER_OTLP_ENDPOINT` (OpenCode exports whenever that variable is set). Empty: VS Code's own environment. Diagnose names where it goes; changing it stops this window's server. |
 | `pure` | `false` | Run with `--pure` (no external MCP plugins) for a faster cold start. |
 | `devAgent` | `build` | Agent `/dev` runs, always passed as `--agent`. |
 | `planAgent` | `plan` | Agent for read-only turns and `/parallel` lanes, used once OpenCode lists it (see *Read-only turns*). |
@@ -643,6 +644,15 @@ All under `opencodeCopilotBridge.`.
 
 The last five releases; the full history is `CHANGELOG.md` in the repository.
 
+### 0.0.244
+
+- **New setting `otlpEndpoint`: OpenCode 2's own OpenTelemetry traces, one setting
+  away.** OpenCode 2.3.2 exports traces (with `gen_ai.*` model, agent, token and cache
+  usage, cost and session id) and logs whenever `OTEL_EXPORTER_OTLP_ENDPOINT` is set,
+  and **its logs include each prompt's text**. The setting points it at a viewer, or
+  `off` removes an endpoint VS Code's environment set for another tool. Diagnose says
+  where it goes. Checks `OT`, `GC`.
+
 ### 0.0.243
 
 - **`@oc` is the new name**; existing chats and settings carry on.
@@ -685,15 +695,3 @@ The last five releases; the full history is `CHANGELOG.md` in the repository.
 - **The part that runs OpenCode no longer needs VS Code.** Nothing changes in
   chat. It is the groundwork for reaching OpenCode from Copilot's own agent once
   the Local harness is gone. Checks `EN`.
-
-### 0.0.239
-
-- **OpenCode 2.2.7: the first message after the server starts is sent again.**
-  2.2.7 went back to loading its agent list in steps, and the bridge read it
-  before the read-only rules were in, then refused the turn as unverified. It
-  now waits for the list to settle on every OpenCode 2 version (about a second,
-  once per server start). Tested range: 2.0.18–2.2.7.
-- **Restarting the server waits for the old one to exit**, so the new one
-  cannot find its database locked.
-- **VS Code removes the Local chat harness in February 2027**; the README and
-  Diagnose say so. Checks `TW`, `SV`.

@@ -232,6 +232,26 @@ export function dataHomeEnv(): { XDG_DATA_HOME?: string } {
     return { XDG_DATA_HOME: /^~(?=$|[\\/])/.test(raw) ? path.join(os.homedir(), raw.slice(1)) : raw };
 }
 
+// OpenCode 2 exports OTLP (traces and logs, JSON over HTTP) whenever
+// OTEL_EXPORTER_OTLP_ENDPOINT names an endpoint, and its logs carry each prompt's
+// text; OTEL_LOGS_EXPORTER, OTEL_TRACES_EXPORTER and OTEL_SDK_DISABLED change
+// nothing, and a traces-only endpoint exports nothing (2.3.2, REFS 0.0.244). So the
+// one variable is the switch: the setting's URL, "off" (the host's value removed),
+// or empty (the host's own, which a user may have set for another tool).
+export type OtlpEndpoint = { endpoint?: string; from: "setting" | "off" | "environment" | "none" };
+
+export function otlpEndpoint(): OtlpEndpoint {
+    const raw = config().get<string>("otlpEndpoint", "").trim();
+    if (raw.toLowerCase() === "off") {
+        return { from: "off" };
+    }
+    if (raw) {
+        return { endpoint: raw, from: "setting" };
+    }
+    const inherited = process.env.OTEL_EXPORTER_OTLP_ENDPOINT?.trim();
+    return inherited ? { endpoint: inherited, from: "environment" } : { from: "none" };
+}
+
 export function spawnOpenCode(
     executable: string,
     args: string[],
@@ -250,7 +270,13 @@ export function spawnOpenCode(
     // Read-only turns are read-only by permission in every process started here
     // (./enforce): one place, so serve, run, agent list and an ACP child agree.
     const enforced = enforcedConfigContent(process.env.OPENCODE_CONFIG_CONTENT, executableMajor(executable));
-    const env = { ...process.env, ...dataHomeEnv(), ...(cwd ? { PWD: cwd } : {}), ...(enforced ? { OPENCODE_CONFIG_CONTENT: enforced } : {}) };
+    const env: NodeJS.ProcessEnv = { ...process.env, ...dataHomeEnv(), ...(cwd ? { PWD: cwd } : {}), ...(enforced ? { OPENCODE_CONFIG_CONTENT: enforced } : {}) };
+    const otlp = otlpEndpoint();
+    if (otlp.from === "setting") {
+        env.OTEL_EXPORTER_OTLP_ENDPOINT = otlp.endpoint;
+    } else if (otlp.from === "off") {
+        delete env.OTEL_EXPORTER_OTLP_ENDPOINT;
+    }
     if (resolved.viaCmd) {
         // Node escapes quotes with backslashes, which cmd.exe does not understand,
         // so the command line is built by hand and passed verbatim. The extra outer

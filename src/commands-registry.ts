@@ -177,6 +177,11 @@ export function registerCommands(context: vscode.ExtensionContext): void {
                 stopServer();
                 logChannel.appendLine("dataHome changed: the managed server stops; the next message starts one on the new folder");
             }
+            // A server keeps the environment it started with (OTEL_EXPORTER_OTLP_ENDPOINT).
+            if (event.affectsConfiguration("opencodeCopilotBridge.otlpEndpoint")) {
+                stopServer();
+                logChannel.appendLine("otlpEndpoint changed: the managed server stops; the next message starts one with the new endpoint");
+            }
         }) ?? { dispose: () => undefined },
         // The left side of Show full diff: a file as the worktree's base commit has it.
         vscode.workspace.registerTextDocumentContentProvider?.(BASE_SCHEME, {
