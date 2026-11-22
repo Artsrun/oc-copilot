@@ -496,8 +496,10 @@ history belongs in `CHANGELOG.md`, not in the source.
 - **A server just stopped can still hold its data folder**: a real 2.2.5 started
   right after a stop exited "SQLiteError: database is locked" (nightly probe). A
   start waits for the stopped server's exit, at most `STOP_WAIT_MS` (`serveGone`,
-  `SV`). Two servers on one folder are otherwise fine (2.2.5, 2.2.7: together, or
-  one after the other, 0 of 12 each), except on a brand-new folder's first run:
+  `SV`). Stop invalidates a start still waiting for that exit; it must not spawn
+  afterward (`SB`). Two servers on one folder are otherwise fine (2.2.5, 2.2.7:
+  together, or one after the other, 0 of 12 each), except on a brand-new folder's
+  first run:
   started together, one exits "table `account_state` already exists" (9 of 12).
   The next start works; the bridge does nothing about it (REFS 0.0.239).
 - **A parent's `task` row runs as long as its subagent**: child events are the
@@ -534,6 +536,9 @@ history belongs in `CHANGELOG.md`, not in the source.
   came first, and the prompt went out after it: `sessionPrompt` handles the
   rejection and sends nothing after Stop, and `oc-mcp-server` logs both kinds and
   keeps serving (`MP`).
+- **An MCP job can be cancelled before OpenCode is sent a prompt.** Race server
+  startup and plan-agent lookup against the job token, but leave their shared
+  server boot/cache work alive for other calls; preserve lookup errors (`MP`).
 - **A stopped session is not ready when its abort returns.** The engine does not
   await a Stop's abort (a chat has one second); a prompt sent to that session
   within ~100 ms read the stopped run's last events as its own: "Step

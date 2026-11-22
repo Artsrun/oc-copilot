@@ -14,7 +14,7 @@ import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 
 import { resolvePlanAgent } from "./agents";
-import { Cancel, config, delay, logChannel, secs, setHost, setLogChannel, Settings, stamp, truncate, underRoot } from "./core";
+import { Cancel, config, delay, logChannel, secs, setHost, setLogChannel, Settings, stamp, truncate, underRoot, untilStop } from "./core";
 import { createEchoGate } from "./format";
 import { RunMetrics, StepRecord } from "./metrics";
 import { naturalFollowups } from "./natural";
@@ -25,7 +25,7 @@ import { runCapture } from "./proc";
 import { runOpenCodeServer } from "./run-server";
 import { abortServerRun } from "./server-session";
 
-const VERSION = "0.0.244";
+const VERSION = "0.0.246";
 const SERVER_INFO = { name: "opencode-bridge", version: VERSION };
 const MODERN = "2026-07-28";
 const LEGACY = ["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"];
@@ -261,6 +261,34 @@ export function cancelSource(): { token: Cancel; cancel(): void } {
     };
 }
 
+type JobWork<T> = { ok: true; value: T } | { ok: false; error: unknown };
+
+async function beforeSend<T>(work: () => Promise<T>, token: Cancel): Promise<T> {
+    const cancelled = (): Error => new Error("Cancelled before anything was sent to OpenCode.");
+    if (token.isCancellationRequested) {
+        throw cancelled();
+    }
+    const settled = Promise.resolve()
+        .then(() => {
+            if (token.isCancellationRequested) {
+                throw cancelled();
+            }
+            return work();
+        })
+        .then(
+            (value): JobWork<T> => ({ ok: true, value }),
+            (error): JobWork<T> => ({ ok: false, error })
+        );
+    const result = await untilStop(settled, token);
+    if (!result || token.isCancellationRequested) {
+        throw cancelled();
+    }
+    if (!result.ok) {
+        throw result.error;
+    }
+    return result.value;
+}
+
 function prune(): void {
     const now = Date.now();
     for (const [id, job] of jobs) {
@@ -304,14 +332,14 @@ function startJob(ask: RunAsk): Job {
         const settings = config();
         const executable = settings.get<string>("executable", "opencode");
         // The server first: it checks which OpenCode this is, and names it.
-        const base = await ensureServer(ask.folder);
+        const base = await beforeSend(() => ensureServer(ask.folder), source.token);
         const clashed = dataFolderRefusal(executable);
         if (clashed) {
             throw clashed;
         }
         const readOnly = ask.kind === "ask";
         if (readOnly) {
-            const choice = await resolvePlanAgent(ask.folder, base);
+            const choice = await beforeSend(() => resolvePlanAgent(ask.folder, base), source.token);
             job.agent = choice.agent;
             if (choice.fallback) {
                 job.notes.push(`planAgent "${choice.wanted}" is not usable here (${choice.fallback}); this ran as plan.`);

@@ -3,6 +3,17 @@
 Full release history, newest first; releases before the last one are condensed
 to their summary and headlines. The README ships the last five.
 
+### 0.0.246
+
+- **Fixed: cancelling an MCP job during server startup or plan-agent lookup now
+  finishes the job promptly.** A shared server boot or agent-list request can
+  still complete for other calls. Check `MP`.
+
+### 0.0.245
+
+- **Fixed: Stop while a server restart waits for the previous process no longer
+  starts a server afterward.** A stale start is rejected before spawn. Check `SB`.
+
 ### 0.0.244
 
 OpenCode 2's own OpenTelemetry, one setting away; and three measurements for the road

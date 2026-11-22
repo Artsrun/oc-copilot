@@ -563,6 +563,7 @@ export function ensureServer(cwd?: string, onSlowStart?: (text: string) => void)
 }
 
 async function ensureServerOnce(cwd?: string, onSlowStart?: (text: string) => void): Promise<string> {
+    const generation = serverGeneration;
     const settings = config();
     const executable = settings.get<string>("executable", "opencode");
     const host = settings.get<string>("serverHostname", "127.0.0.1");
@@ -678,6 +679,10 @@ async function ensureServerOnce(cwd?: string, onSlowStart?: (text: string) => vo
         if (serveGone) {
             await serveGone;
             serveGone = undefined;
+        }
+        // Stop can land during the identity check or exit wait; never spawn that stale start afterward.
+        if (generation !== serverGeneration) {
+            throw new Error("OpenCode server start was stopped before it began.");
         }
         const serveCwd = cwd ?? hostFolder();
         serveSpawnError = undefined;

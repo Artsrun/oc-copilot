@@ -644,6 +644,17 @@ All under `opencodeCopilotBridge.`.
 
 The last five releases; the full history is `CHANGELOG.md` in the repository.
 
+### 0.0.246
+
+- **Fixed: cancelling an MCP job during server startup or plan-agent lookup now
+  finishes the job promptly.** Shared startup remains available to other calls.
+  Check `MP`.
+
+### 0.0.245
+
+- **Fixed: Stop while waiting for the previous OpenCode server to exit no longer
+  starts a server afterward.** Check `SB`.
+
 ### 0.0.244
 
 - **New setting `otlpEndpoint`: OpenCode 2's own OpenTelemetry traces, one setting
@@ -675,23 +686,3 @@ The last five releases; the full history is `CHANGELOG.md` in the repository.
 - **Corrected:** OpenCode reads `AGENTS.md` and what `opencode.json` `instructions`
   lists, not `.github/copilot-instructions.md` by itself. To use that file with
   `@oc`, list it in `instructions`.
-
-### 0.0.241
-
-- **New, alpha: OpenCode as MCP tools for the Copilot harness.** `opencode_ask`
-  (read-only, the same enforced rules), `opencode_dev` (opt-in), `opencode_wait`
-  and `opencode_cancel`, from a server that runs outside VS Code. **OpenCode: Copy
-  MCP Config for Copilot** gives the entry for `~/.copilot/mcp-config.json`.
-  Measured on real OpenCode 1.19.5 and 2.3.0; not yet in a Copilot-harness chat.
-  Checks `MP`.
-- **Fixed, OpenCode 2: Stop in a turn's first second sent the prompt anyway**, then
-  interrupted it. Nothing is sent now.
-
-### 0.0.240
-
-- **OpenCode 2.3.0 is tested.** The newest release (2026-11-13) passes every
-  probe row, so it no longer says it is outside the tested versions. Tested
-  range: 2.0.18–2.3.0. Checks `TW`.
-- **The part that runs OpenCode no longer needs VS Code.** Nothing changes in
-  chat. It is the groundwork for reaching OpenCode from Copilot's own agent once
-  the Local harness is gone. Checks `EN`.

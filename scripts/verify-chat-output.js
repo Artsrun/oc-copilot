@@ -2069,7 +2069,22 @@ function collectConfigProperties(configuration) {
         workspaceEvents.configuration.forEach((cb) => cb({ affectsConfiguration: (key) => key === "opencodeCopilotBridge" || key === "opencodeCopilotBridge.otlpEndpoint" }));
         add("OT a changed otlpEndpoint stops this window's server", logLines.slice(otLog).some((l) => /otlpEndpoint changed: the managed server stops/.test(l)));
         // Diagnose says where OpenCode's spans and logs go, and that the logs hold prompts.
-        const otDoc = async () => { let doc = ""; Object.assign(vscodeStub.workspace, { openTextDocument: async (o) => ((doc = o.content), {}) }); vscodeStub.window.showTextDocument = async () => undefined; await registeredCommands.get("opencodeCopilotBridge.diagnose")(); return doc.split("\n").find((l) => l.startsWith("| opentelemetry |")) ?? ""; };
+        const previousOpenTextDocument = vscodeStub.workspace.openTextDocument;
+        const previousShowTextDocument = vscodeStub.window.showTextDocument;
+        const otDoc = async () => {
+            let doc = "";
+            Object.assign(vscodeStub.workspace, { openTextDocument: async (o) => ((doc = o.content), {}) });
+            vscodeStub.window.showTextDocument = async () => undefined;
+            try {
+                await registeredCommands.get("opencodeCopilotBridge.diagnose")();
+            } finally {
+                if (previousOpenTextDocument === undefined) delete vscodeStub.workspace.openTextDocument;
+                else vscodeStub.workspace.openTextDocument = previousOpenTextDocument;
+                if (previousShowTextDocument === undefined) delete vscodeStub.window.showTextDocument;
+                else vscodeStub.window.showTextDocument = previousShowTextDocument;
+            }
+            return doc.split("\n").find((l) => l.startsWith("| opentelemetry |")) ?? "";
+        };
         const otRowEnv = await otDoc();
         add(`OT Diagnose names the host's endpoint and that OpenCode's logs carry prompts (${otRowEnv})`, otRowEnv.includes("http://host-env.invalid:4318") && /environment/.test(otRowEnv) && /prompt/.test(otRowEnv));
         settings.otlpEndpoint = "off";
@@ -8272,10 +8287,13 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
                     probe.close(() => resolve(p));
                 });
             });
-        const sbServe = (name, readyMs) =>
+        const sbServe = (name, readyMs, identityMs = 0) =>
             writeFake(
                 name,
                 [],
+                "if (process.argv.includes('--version')) {\n" +
+                "  setTimeout(() => { process.stdout.write('1.19.0\\n'); process.exit(0); }, " + identityMs + ");\n" +
+                "} else {\n" +
                 "const i = process.argv.indexOf('--port');\n" +
                 "if (process.argv.includes('serve') && i > 0) {\n" +
                 "  const t0 = Date.now(); process.stdout.write('loading plugins\\n');\n" +
@@ -8284,6 +8302,7 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
                 "    s.setHeader('content-type', 'application/json');\n" +
                 "    s.end(q.url.startsWith('/global/health') ? JSON.stringify({ healthy: true }) : q.url.startsWith('/session') ? '[]' : '{}');\n" +
                 "  }).listen(Number(process.argv[i + 1]), '127.0.0.1');\n" +
+                "}\n" +
                 "}\n"
             );
         const sbSaved = { exe: settings.executable, port: settings.serverPort, poll: settings.serverStartupPollMs };
@@ -8310,13 +8329,20 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         ext.__test.setStartupDeadline();
         ext.deactivate();
 
-        Object.assign(settings, { executable: sbServe("fake-sb-stop.js", 600000), serverPort: await sbPort() });
+        Object.assign(settings, { executable: sbServe("fake-sb-stop.js", 600000, 1500), serverPort: await sbPort() });
         const sb3 = stream();
         const sb3T0 = Date.now();
+        const sb3Log = logLines.length;
         const sb3Run = global.__handler({ prompt: "", command: "sessions" }, { history: [] }, sb3.response, sb3.token);
         setTimeout(() => sb3.token.cancel(), 300);
         const sb3Res = await sb3Run;
-        add(`SB Stop during a server boot ends /sessions inside the second (${Date.now() - sb3T0}ms)`, Date.now() - sb3T0 < 1300 && sb3Res?.metadata?.cancelled === true);
+        add(`SB Stop during the server's identity check ends /sessions inside the second (${Date.now() - sb3T0}ms)`, Date.now() - sb3T0 < 1300 && sb3Res?.metadata?.cancelled === true);
+        ext.deactivate();
+        await new Promise((r) => setTimeout(r, 3200));
+        add(
+            "SB Stop during the server's identity check does not start a server afterward",
+            !logLines.slice(sb3Log).some((l) => /fake-sb-stop\.js serve\b/.test(l))
+        );
         ext.deactivate();
 
         // A /parallel turn warms the server before its heartbeat exists: it said nothing for the whole boot.
@@ -9800,6 +9826,26 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         add(`MP read-only that cannot be verified is not sent: an error result, no prompt${mpUnverified.isError ? "" : ` [${mpUnverified.text.slice(0, 160)}]`}`,
             mpUnverified.isError && /Nothing was sent/.test(mpUnverified.text) && mpUnverified.facts.status === "refused" && mpC.reqs().some((r) => r.boot) && mpC.posts("prompt").length === 0);
         await mpC.close();
+
+        // Stop while ensureServer is still waiting for its listener: the job must
+        // finish now, without cancelling a boot that another job can share.
+        const mpD = mpStart("d", ["--wait-ms", "5000"], { FAKE_OC2_BOOT_DELAY_MS: "2500" });
+        await mpD.initialize();
+        const mpBootCancel = mpD.call("opencode_ask", { prompt: "stopped during boot [[probe:text]]", folder: mpProject }, { timeoutMs: 1500 });
+        const mpSpawned = await mpUntil(() => mpD.reqs().some((r) => r.boot), 2000);
+        mpD.notify("notifications/cancelled", { requestId: mpBootCancel.id, reason: "check" });
+        const mpCancelledDuringBoot = await mpUntil(
+            () => /job job_[0-9a-f]+ not run: Cancelled before anything was sent to OpenCode\./.test(mpD.log()),
+            1000
+        );
+        const mpBootCancelReply = await mpBootCancel;
+        add("MP a client cancel during server boot finishes the job promptly and sends no prompt",
+            mpSpawned && mpCancelledDuringBoot && mpBootCancelReply.timedOut && mpD.posts("prompt").length === 0 && !mpD.frames.some((f) => f.id === mpBootCancel.id));
+        const mpDReady = await mpUntil(() => /serve on \S+ answered/.test(mpD.log()), 6000);
+        const mpAfterBootCancel = mpDReady ? await mpD.finished(await mpD.call("opencode_ask", { prompt: "after cancelled boot [[probe:text]]", folder: mpProject })) : undefined;
+        add("MP a cancelled boot remains shared and a later job can use its server",
+            mpDReady && Boolean(mpAfterBootCancel && mpHello(mpAfterBootCancel)) && mpD.posts("prompt").length === 1);
+        await mpD.close();
 
         // --- the extension's side: the copy, the settings, the entry ---
         let mpSnippet;

@@ -50,7 +50,7 @@ const prompt_1 = require("./prompt");
 const proc_1 = require("./proc");
 const run_server_1 = require("./run-server");
 const server_session_1 = require("./server-session");
-const VERSION = "0.0.244";
+const VERSION = "0.0.246";
 const SERVER_INFO = { name: "opencode-bridge", version: VERSION };
 const MODERN = "2026-07-28";
 const LEGACY = ["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"];
@@ -229,6 +229,28 @@ function cancelSource() {
         }
     };
 }
+async function beforeSend(work, token) {
+    const cancelled = () => new Error("Cancelled before anything was sent to OpenCode.");
+    if (token.isCancellationRequested) {
+        throw cancelled();
+    }
+    const settled = Promise.resolve()
+        .then(() => {
+        if (token.isCancellationRequested) {
+            throw cancelled();
+        }
+        return work();
+    })
+        .then((value) => ({ ok: true, value }), (error) => ({ ok: false, error }));
+    const result = await (0, core_1.untilStop)(settled, token);
+    if (!result || token.isCancellationRequested) {
+        throw cancelled();
+    }
+    if (!result.ok) {
+        throw result.error;
+    }
+    return result.value;
+}
 function prune() {
     const now = Date.now();
     for (const [id, job] of jobs) {
@@ -261,14 +283,14 @@ function startJob(ask) {
     job.done = (async () => {
         const settings = (0, core_1.config)();
         const executable = settings.get("executable", "opencode");
-        const base = await (0, net_1.ensureServer)(ask.folder);
+        const base = await beforeSend(() => (0, net_1.ensureServer)(ask.folder), source.token);
         const clashed = (0, net_1.dataFolderRefusal)(executable);
         if (clashed) {
             throw clashed;
         }
         const readOnly = ask.kind === "ask";
         if (readOnly) {
-            const choice = await (0, agents_1.resolvePlanAgent)(ask.folder, base);
+            const choice = await beforeSend(() => (0, agents_1.resolvePlanAgent)(ask.folder, base), source.token);
             job.agent = choice.agent;
             if (choice.fallback) {
                 job.notes.push(`planAgent "${choice.wanted}" is not usable here (${choice.fallback}); this ran as plan.`);

@@ -16,6 +16,7 @@
 //                        does not apply them: the bridge must refuse plan turns)
 //      FAKE_OC2_AGENT_MODEL  `provider/id`: the plan agent's own model
 //      FAKE_OC2_DEFAULT  "none" answers null at /model/default, "gone" 404s
+//      FAKE_OC2_BOOT_DELAY_MS  wait this long before listening
 "use strict";
 const fs = require("node:fs");
 const path = require("node:path");
@@ -259,8 +260,14 @@ module.exports = (argv) => {
             return send(404, { _tag: "NotFound", path: p });
         });
     });
-    server.listen(port, "127.0.0.1", () => {
+    const listen = () => server.listen(port, "127.0.0.1", () => {
         process.stdout.write(`server listening on http://127.0.0.1:${port}\n`);
         process.stdout.write(`server password ${PASSWORD}\n`);
     });
+    const bootDelay = Number(process.env.FAKE_OC2_BOOT_DELAY_MS);
+    if (Number.isFinite(bootDelay) && bootDelay > 0) {
+        setTimeout(listen, bootDelay);
+    } else {
+        listen();
+    }
 };

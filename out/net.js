@@ -436,6 +436,7 @@ function ensureServer(cwd, onSlowStart) {
     return start;
 }
 async function ensureServerOnce(cwd, onSlowStart) {
+    const generation = serverGeneration;
     const settings = (0, core_1.config)();
     const executable = settings.get("executable", "opencode");
     const host = settings.get("serverHostname", "127.0.0.1");
@@ -529,6 +530,9 @@ async function ensureServerOnce(cwd, onSlowStart) {
         if (serveGone) {
             await serveGone;
             serveGone = undefined;
+        }
+        if (generation !== serverGeneration) {
+            throw new Error("OpenCode server start was stopped before it began.");
         }
         const serveCwd = cwd ?? (0, core_1.hostFolder)();
         serveSpawnError = undefined;
