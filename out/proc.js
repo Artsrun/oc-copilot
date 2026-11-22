@@ -40,6 +40,7 @@ exports.readShimTarget = readShimTarget;
 exports.resolveExecutable = resolveExecutable;
 exports.executableStamp = executableStamp;
 exports.dataHomeEnv = dataHomeEnv;
+exports.otlpEndpoint = otlpEndpoint;
 exports.spawnOpenCode = spawnOpenCode;
 exports.runCapture = runCapture;
 exports.killTree = killTree;
@@ -229,12 +230,30 @@ function dataHomeEnv() {
     }
     return { XDG_DATA_HOME: /^~(?=$|[\\/])/.test(raw) ? path.join(os.homedir(), raw.slice(1)) : raw };
 }
+function otlpEndpoint() {
+    const raw = (0, core_1.config)().get("otlpEndpoint", "").trim();
+    if (raw.toLowerCase() === "off") {
+        return { from: "off" };
+    }
+    if (raw) {
+        return { endpoint: raw, from: "setting" };
+    }
+    const inherited = process.env.OTEL_EXPORTER_OTLP_ENDPOINT?.trim();
+    return inherited ? { endpoint: inherited, from: "environment" } : { from: "none" };
+}
 function spawnOpenCode(executable, args, cwd) {
     const resolved = resolveExecutable(executable);
     const full = resolved.prefixArgs.length ? [...resolved.prefixArgs, ...args] : args;
     core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] $ ${resolved.target} ${full.join(" ")}`);
     const enforced = (0, enforce_1.enforcedConfigContent)(process.env.OPENCODE_CONFIG_CONTENT, (0, enforce_1.executableMajor)(executable));
     const env = { ...process.env, ...dataHomeEnv(), ...(cwd ? { PWD: cwd } : {}), ...(enforced ? { OPENCODE_CONFIG_CONTENT: enforced } : {}) };
+    const otlp = otlpEndpoint();
+    if (otlp.from === "setting") {
+        env.OTEL_EXPORTER_OTLP_ENDPOINT = otlp.endpoint;
+    }
+    else if (otlp.from === "off") {
+        delete env.OTEL_EXPORTER_OTLP_ENDPOINT;
+    }
     if (resolved.viaCmd) {
         const line = `"${[resolved.target, ...full].map(quoteCmdArg).join(" ")}"`;
         return (0, node_child_process_1.spawn)(resolved.command, ["/d", "/s", "/c", line], {

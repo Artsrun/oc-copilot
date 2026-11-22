@@ -14,7 +14,7 @@ Read docs/local-agent.md and do task 2 (route measurements).
 
 Read `AGENTS.md` first. It outranks this page.
 
-## Rules for both tasks
+## Rules for every task
 
 - `npm run ship` is the only green light (AGENTS §2 rule 2). If a step goes
   red, stop: paste the failing lines as printed and say so. Never edit `src/`,
@@ -199,24 +199,47 @@ extension's global storage (the copied entry names the path).
 Leave the entry in place if the owner wants to keep using it; otherwise restore
 the backup.
 
-### Part B. Route H: a separate Agent Host that the Agents window connects to (about 15 minutes)
+### Part B. Route H: OpenCode in the Agents window through `opencode-ahp` (about 20 minutes)
 
-This runs third-party code (`ahp-acp-gateway`, MIT, needs Node 24 or newer).
-Ask the owner first, and skip part B on a no.
+Decided 2026-11-20: route H is `opencode-ahp` (MIT, a plugin that adds an AHP listener to
+`opencode serve`) run by the bridge's own server, not `ahp-acp-gateway`. The protocol side
+is measured (REFS 0.0.244, `scripts/probe-ahp.js`: 30 of 30 on 2.3.2, read-only only on the
+bridge's server). What is left needs the real Agents window. This runs third-party code:
+ask the owner first, and skip part B on a no.
 
-- **B1.** In a terminal outside the repo: `npx --yes ahp-acp-gateway`. It
-  should print `ws://127.0.0.1:8765/ahp`.
-- **B2.** Add to user settings:
-  `"chat.remoteAgentHosts": [{"name": "AHP-ACP Gateway", "address": "127.0.0.1:8765/ahp"}]`.
-- **B3.** The owner runs **Chat: Open Agents Window**, starts a new session,
-  and picks the gateway host and the OpenCode agent. Record: does the session
-  start; does text stream; is a confirmation shown before an edit; does Stop
-  end the run; does a window reload reconnect; is there a plan or build mode
-  control; which `opencode` version it started.
-- **B4.** In plan mode, if there is one, ask it to create a file. Record
-  whether the file exists afterwards: that is what read-only means there
-  without this extension's rules.
-- **B5.** Stop the gateway and remove the settings entry.
+- **B1.** In a temp folder outside the repo: `npm install opencode-ahp --prefix <tmp>`.
+  Note the version. Pick a token (`openssl rand -hex 16`).
+- **B2.** Optional, the protocol on this machine: `npm run compile`, then
+  `node scripts/probe-ahp.js opencode <tmp>/node_modules/opencode-ahp`. Paste its output.
+- **B3.** Start a server with the plugin from the environment (nothing in the workspace):
+  `OPENCODE_CONFIG_CONTENT='{"experimental":{"location_idle_timeout":false},"plugins":[{"package":"<tmp>/node_modules/opencode-ahp","options":{"token":"<token>","port":8765}}]}' opencode serve --port 4096`
+  (PowerShell: set `$env:OPENCODE_CONFIG_CONTENT` first). Boot the location once:
+  `curl -g -u opencode:<printed password> "http://127.0.0.1:4096/api/location?location[directory]=<repo folder>"`,
+  then `curl http://127.0.0.1:8765/healthz` must say `ok`.
+- **B4.** The owner runs **Agents: Add Remote Agent Host...** with
+  `ws://127.0.0.1:8765/ahp?token=<token>`, opens the Agents window and starts a session
+  on that host in this repository. Record: does it connect; the agent picker's entries;
+  the model picker; does text stream; is an approval shown before a tool that asks; does
+  Stop end the run; does a window reload reconnect and show the session again.
+- **B5.** The editor window: with `chat.workspaceRemoteAgentHosts` (user settings, the
+  same address), does the host appear in the Chat view of a trusted window? Record the
+  VS Code version and whether the setting exists there.
+- **B6.** A multi-root workspace (two folders): does the Agents window offer the host,
+  and which folder does a session run in?
+- **B7.** Stop the server, remove the host entry and any setting you added.
+
+### Part C. OpenCode's own traces in a viewer (about 10 minutes)
+
+From 0.0.244, `otlpEndpoint` sends OpenCode 2's OTLP export to an endpoint (JSON over
+HTTP; REFS 0.0.244). Its logs carry the prompts: use a viewer on this machine only.
+
+- **C1.** Start a local OTLP viewer the owner has or approves (the .NET Aspire dashboard,
+  or the Foundry Toolkit's tracing), and note its OTLP/HTTP address.
+- **C2.** Set `opencodeCopilotBridge.otlpEndpoint` to it, run **OpenCode: Diagnose**
+  (report the `opentelemetry` row), and send one `@oc` message in a Local session.
+- **C3.** Record: does the viewer accept the export (OpenCode sends `application/json`);
+  is there an `LLM.stream` span with `gen_ai.request.model` and `session.id`; how many
+  traces one turn makes. Set the setting back afterwards.
 
 ### Finish
 
@@ -224,3 +247,40 @@ Ask the owner first, and skip part B on a no.
 - Add one dated entry to `REFS.md`: a table of each step, what happened, and
   the VS Code and OpenCode versions. Show the diff and ask before committing.
 - End with a short table: question, answer, evidence.
+
+## Task 3: the agent plugin (decided 2026-11-20)
+
+Why: the Copilot harness loads custom agents and skills from plugins, `.github/agents`,
+`~/.copilot/agents` and the organization, not from an extension. The owner chose a Git
+agent plugin, installed by a click, to carry *OpenCode Plan* and *OpenCode Build* agents
+and the slash skills. Not built in the cloud: the authoring reference
+(code.visualstudio.com/docs/agents/reference/agent-plugin-reference) could not be read
+there, and the open questions need a signed-in VS Code. Do task 1 and part A of task 2
+first: the agents call the MCP tools that part A measures.
+
+Known from the docs (2026-11-20): an Agent Plugins 1.0 plugin is a folder with
+`plugin.json` (it declares the Agent Plugins 1.0 `$schema`), `skills/<name>/SKILL.md`
+and a root `mcp.json` (portable), and Copilot-only parts under `com.github.copilot/`
+(`agents/*.agent.md`). A skill's `name` must match its folder;
+`disable-model-invocation: true` makes it a `/` command only. In a Copilot custom agent,
+`tools` takes the built-in aliases and a client-provided tool by its qualified name, and
+`handoffs`, `agents`, `argument-hint` and `advancedOptions` are not accepted.
+`vscode://chat-plugin/install?source=<owner/repo>&plugin=<name>` registers a marketplace
+and installs a plugin from it; **Chat: Install Plugin from Source** takes a Git URL or a
+local folder.
+
+- **P1.** Read the authoring reference and the GitHub Copilot plugin and marketplace
+  reference; paste the manifest fields and the marketplace file's path and fields.
+- **P2.** In a temp folder, build the smallest plugin: `plugin.json`, one skill
+  (`skills/oc-ask/SKILL.md`, `disable-model-invocation: true`, telling the agent to call
+  `opencode_ask`), one agent (`com.github.copilot/agents/opencode-plan.agent.md` whose
+  `tools` names the MCP server's `opencode_ask`). Install it with **Chat: Install Plugin
+  from Source** (the folder). Record: is it listed; does `/oc-ask` appear in a Copilot
+  session; does the agent appear; which name for `opencode_ask` in `tools` makes the
+  tool available (try `opencode/opencode_ask`, then the name the Tools tab shows), and
+  does the call reach the MCP server (its log).
+- **P3.** Whether an extension's `chatSkills` reach a Copilot session: copy the skill into
+  a scratch extension's `contributes.chatSkills` (or ask the owner to try one), and
+  record whether it appears in `/`.
+- **P4.** Uninstall the plugin. Add a dated entry to `REFS.md` with each question,
+  the answer and the evidence; the plugin goes into the repo only after that.
