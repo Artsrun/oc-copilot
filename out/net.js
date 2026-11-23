@@ -55,6 +55,7 @@ exports.prewarmServer = prewarmServer;
 exports.lastServeLine = lastServeLine;
 exports.sessionIdFromEvent = sessionIdFromEvent;
 exports.connectSse = connectSse;
+const node_async_hooks_1 = require("node:async_hooks");
 const http = __importStar(require("node:http"));
 const net = __importStar(require("node:net"));
 const core_1 = require("./core");
@@ -803,7 +804,7 @@ function openSharedSse(base) {
     return shared;
 }
 function connectSse(base, onEvent, onStatus, sessionId) {
-    const subscriber = { sessionId, onEvent, onStatus };
+    const subscriber = { sessionId, onEvent: node_async_hooks_1.AsyncResource.bind(onEvent), onStatus: node_async_hooks_1.AsyncResource.bind(onStatus) };
     let shared = sseConnections.get(base);
     if (!shared) {
         shared = openSharedSse(base);

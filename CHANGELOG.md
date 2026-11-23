@@ -3,6 +3,28 @@
 Full release history, newest first; releases before the last one are condensed
 to their summary and headlines. The README ships the last five.
 
+### 0.0.247
+
+Bridge spans: one trace per OpenCode 2 run, from the bridge's own requests to OpenCode's.
+
+- **Every API request of a run carries a W3C `traceparent`**, one per run, so OpenCode
+  2's request spans join it (REFS 0.0.244). Two runs at once (`/parallel` lanes) never
+  share one: the context rides AsyncLocalStorage, and an ask answered from the shared
+  event stream carries its own run's trace. The event stream itself carries none. Check
+  `TP` (red first: 8 of 11; the other two passed on `undefined === undefined` and were
+  tightened).
+- **The trace id is kept beside the session id**: on the log's `→ server …` line, in
+  the turn's metadata (`traceId`), and on the MCP tools' `[opencode]` line. Checks `TP`,
+  `MP`.
+- **With `otlpEndpoint` (or VS Code's environment) naming an endpoint, the bridge
+  exports each run's own span** to `<endpoint>/v1/traces` (OTLP JSON): `invoke_agent
+  <agent>`, the requests' parent, with `session.id` (what OpenCode's model trace
+  carries), `gen_ai.agent.name`, the model, read-only and outcome. No prompt or answer
+  text. `off` exports nothing. A collector that is down costs one log line. Check `TP`.
+- Mutants: SSE subscriber callbacks unbound, so lane beta's ask carried lane alpha's
+  trace (2 red); no header (9 red); one module-wide run instead of AsyncLocalStorage
+  (1 red).
+
 ### 0.0.246
 
 - **Fixed: cancelling an MCP job during server startup or plan-agent lookup now

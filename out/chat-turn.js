@@ -427,6 +427,7 @@ async function finishTurn(t, live, outcome) {
             kind,
             agent: agentLabel,
             sessionId,
+            ...(metrics?.traceId ? { traceId: metrics.traceId } : {}),
             cwd,
             turns,
             tokensIn: baseline.tokensIn + (metrics?.tokens.input ?? 0),

@@ -46,6 +46,8 @@ export interface RunMetrics {
     cost: number;
     hadOutput: boolean;
     sessionId: string | undefined;
+    /** The W3C trace of a server run: every API request carried it (trace.ts). */
+    traceId?: string;
     toolOutputBytes?: number;
     /** Surfaced from `session.error` events and non-zero exits. */
     error?: string;

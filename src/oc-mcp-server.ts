@@ -25,7 +25,7 @@ import { runCapture } from "./proc";
 import { runOpenCodeServer } from "./run-server";
 import { abortServerRun } from "./server-session";
 
-const VERSION = "0.0.246";
+const VERSION = "0.0.247";
 const SERVER_INFO = { name: "opencode-bridge", version: VERSION };
 const MODERN = "2026-07-28";
 const LEGACY = ["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"];
@@ -465,6 +465,7 @@ function jobResult(job: Job): ToolResult {
     const facts = [
         `status=${status}`,
         ...(m?.sessionId ? [`sessionId=${m.sessionId}`] : []),
+        ...(m?.traceId ? [`traceId=${m.traceId}`] : []),
         `jobId=${job.id}`,
         `agent=${job.agent}`,
         ...(m?.model ? [`model=${m.model}`] : []),

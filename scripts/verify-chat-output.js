@@ -2095,6 +2095,107 @@ function collectConfigProperties(configuration) {
         const otRowNone = await otDoc();
         add(`OT Diagnose with nothing set: OpenCode exports nothing (${otRowNone})`, hostOtlp !== undefined || /\| opentelemetry \| not set/.test(otRowNone));
     }
+    // 0.0.247 TP: bridge spans. OpenCode 2's request spans join an incoming W3C
+    // `traceparent`, its model work runs in a trace of its own with `session.id`
+    // (REFS 0.0.244). So every API request of a run carries the run's traceparent, the
+    // shared event stream none; the trace id is logged beside the session id and kept
+    // in the turn's metadata; with an OTLP endpoint the bridge exports the run's own
+    // span, named by session and agent and never by prompt.
+    {
+        const http = require("node:http");
+        const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+        const truncate = (t, n) => (t.length > n ? `${t.slice(0, n)}…` : t);
+        const W3C = /^00-([0-9a-f]{32})-([0-9a-f]{16})-01$/;
+        const spans = [];
+        const collector = http.createServer((req, res) => {
+            let b = "";
+            req.on("data", (c) => (b += c));
+            req.on("end", () => {
+                spans.push({ method: req.method, path: req.url, type: req.headers["content-type"], body: b });
+                res.writeHead(200, { "content-type": "application/json" });
+                res.end("{}");
+            });
+        });
+        await new Promise((r) => collector.listen(0, "127.0.0.1", r));
+        const hostOtlp = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+        delete process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+        const savedOtlp = settings.otlpEndpoint;
+        // A trailing slash: the signal path is appended once.
+        settings.otlpEndpoint = `http://127.0.0.1:${collector.address().port}/`;
+        const spansAfter = async (n, ms = 3000) => {
+            for (const until = Date.now() + ms; spans.length < n && Date.now() < until;) await delay(25);
+            return spans.slice();
+        };
+        const tpTurn = async (prompt, command) => {
+            const st = stream();
+            const from = oc2Reqs().length;
+            const result = await global.__handler({ prompt, ...(command ? { command } : {}) }, {}, st.response, st.token);
+            return { st, result, reqs: oc2Reqs().slice(from) };
+        };
+        const sessionOf = (r) => r.path.match(/^\/api\/session\/([^/]+)/)?.[1];
+        const tp = await oc2Use(async () => {
+            memento.clear();
+            const one = await tpTurn("trace me once");
+            const two = await tpTurn("trace me twice");
+            const spanCount = (await spansAfter(2)).length;
+            // Both lanes ask: one socket serves both, so one lane's ask is answered from
+            // events the other lane's subscription opened.
+            const lanes = (memento.clear(), await tpTurn("lane alpha [[probe:bash]] | lane beta [[probe:bash]]", "parallel"));
+            const exported = await spansAfter(spanCount + 2);
+            settings.otlpEndpoint = "off";
+            memento.clear();
+            const quiet = await tpTurn("trace me with export off");
+            await delay(300);
+            return { one, two, lanes, quiet, exported, afterOff: spans.length };
+        });
+        collector.close();
+        settings.otlpEndpoint = savedOtlp;
+        if (hostOtlp === undefined) delete process.env.OTEL_EXPORTER_OTLP_ENDPOINT; else process.env.OTEL_EXPORTER_OTLP_ENDPOINT = hostOtlp;
+
+        // The run's requests: the chat's busy check (`/session/active`, chat-turn) comes
+        // before the run and is the chat's, outside the run's trace.
+        const apiOf = (t) => t.reqs.filter((r) => /^\/api\/session/.test(r.path ?? "") && r.path !== "/api/session/active");
+        const traceOf = (r) => r.traceparent?.match(W3C)?.[1];
+        const one = apiOf(tp.one);
+        const oneTraces = [...new Set(one.map((r) => r.traceparent))];
+        add(`TP every session request of a run carries one W3C traceparent (${one.length} requests, ${oneTraces.length} distinct: ${oneTraces.join(" ")})`,
+            one.length >= 3 && one.some((r) => /\/prompt$/.test(r.path)) && oneTraces.length === 1 && W3C.test(oneTraces[0] ?? ""));
+        const events = oc2Reqs().filter((r) => r.path === "/api/event");
+        add(`TP the shared event stream carries none (${events.length} streams)`, events.length > 0 && events.every((r) => r.traceparent === undefined));
+        const two = apiOf(tp.two);
+        const oneId = traceOf(one[0] ?? {});
+        const twoId = traceOf(two[0] ?? {});
+        add(`TP the next turn on the same session is a trace of its own (${oneId} → ${twoId})`,
+            Boolean(oneId && twoId) && oneId !== twoId && sessionOf(two.at(-1)) === sessionOf(one.at(-1)) && two.every((r) => traceOf(r) === twoId));
+        const oneMeta = tp.one.result?.metadata ?? {};
+        add(`TP the turn's metadata keeps the trace id beside the session id (${oneMeta.traceId}, ${oneMeta.sessionId})`,
+            Boolean(oneId) && oneMeta.traceId === oneId && oneMeta.sessionId === sessionOf(one.at(-1)));
+        const tpLog = logLines.find((l) => l.includes(`trace=${oneId}`)) ?? "";
+        add(`TP the log names the session and the trace on one line (${truncate(tpLog, 160)})`, Boolean(oneId) && tpLog.includes(String(oneMeta.sessionId)));
+        const laneReqs = apiOf(tp.lanes).filter((r) => sessionOf(r));
+        const laneSessions = [...new Set(laneReqs.filter((r) => /\/prompt$/.test(r.path)).map(sessionOf))];
+        const laneTraces = laneSessions.map((sid) => [...new Set(laneReqs.filter((r) => sessionOf(r) === sid).map(traceOf))]);
+        add(`TP two lanes at once: two traces, no request on one lane's session in the other's (${JSON.stringify(laneTraces)})`,
+            laneSessions.length === 2 && laneTraces.every((t) => t.length === 1 && t[0]) && laneTraces[0][0] !== laneTraces[1][0]);
+        const laneReplies = laneSessions.map((sid) => laneReqs.find((r) => sessionOf(r) === sid && /\/permission\/[^/]+\/reply$/.test(r.path)));
+        add(`TP each lane's ask, answered from the one shared event stream, carries its own lane's trace (${laneReplies.map((r) => traceOf(r ?? {})).join(" ")})`,
+            laneReplies.length === 2 && laneReplies.every((r, i) => r && traceOf(r) && traceOf(r) === laneTraces[i][0]));
+        const bodies = tp.exported.map((s) => { try { return JSON.parse(s.body); } catch { return {}; } });
+        const spanOf = (b) => b?.resourceSpans?.[0]?.scopeSpans?.[0]?.spans?.[0];
+        const attr = (span, key) => { const v = span?.attributes?.find((a) => a.key === key)?.value; return v?.stringValue ?? v?.boolValue ?? v?.intValue; };
+        const oneSpan = bodies.map(spanOf).find((sp) => sp?.traceId === oneId);
+        const oneParent = oneTraces[0]?.match(W3C)?.[2];
+        add(`TP with an endpoint, each run exports its own span to <endpoint>/v1/traces as OTLP JSON (${tp.exported.length} posts: ${[...new Set(tp.exported.map((s) => `${s.method} ${s.path}`))].join(", ")})`,
+            tp.exported.length >= 4 && tp.exported.every((s) => s.method === "POST" && s.path === "/v1/traces" && /application\/json/.test(s.type ?? "")) && bodies.every((b) => spanOf(b)));
+        add(`TP the span is the requests' parent, named by session and agent (${oneSpan?.name}, ${attr(oneSpan, "session.id")})`,
+            Boolean(oneSpan) && oneSpan.spanId === oneParent && attr(oneSpan, "session.id") === oneMeta.sessionId &&
+            attr(oneSpan, "gen_ai.operation.name") === "invoke_agent" && typeof attr(oneSpan, "gen_ai.agent.name") === "string" &&
+            Number(oneSpan.endTimeUnixNano) > Number(oneSpan.startTimeUnixNano) &&
+            bodies[0]?.resourceSpans?.[0]?.resource?.attributes?.some((a) => a.key === "service.name" && a.value?.stringValue === "opencode-copilot-bridge"));
+        add("TP no exported span carries the prompt's text", tp.exported.length > 0 && !tp.exported.some((s) => /trace me|lane alpha|lane beta|\[\[probe:/.test(s.body)));
+        add(`TP "off" exports nothing, and the requests still carry a traceparent (${tp.afterOff - tp.exported.length} posts after off)`,
+            tp.afterOff === tp.exported.length && apiOf(tp.quiet).length > 0 && apiOf(tp.quiet).every((r) => W3C.test(r.traceparent ?? "")));
+    }
     // 0.0.225: a running tool part before its input arrives is `{}` — the row read
     // `glob: {}` for 40 s (0.0.223 live). It names nothing yet, so no row.
     add("SE a tool call with no input yet has no detail (no `glob: {}` row); real input still shows",
@@ -9711,6 +9812,9 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         const mpSession = mpAnswer.facts.sessionId;
         add(`MP opencode_wait returns the answer, the session and the verified read-only rules${mpHello(mpAnswer) ? "" : ` [${mpAnswer.text.slice(0, 200)}]`}`,
             mpHello(mpAnswer) && Boolean(mpSession) && mpAnswer.facts.readOnly === "enforced" && mpAnswer.facts.folder === mpProject && mpAnswer.facts.jobId === mpFirst.facts.jobId);
+        // 0.0.247: the result's trace is the one its requests carried (TP).
+        const mpTrace = mpA.posts("prompt")[0]?.traceparent?.split("-")[1];
+        add(`MP the result names the run's trace, the one its prompt carried (${mpAnswer.facts.traceId} vs ${mpTrace})`, /^[0-9a-f]{32}$/.test(mpAnswer.facts.traceId ?? "") && mpAnswer.facts.traceId === mpTrace);
         const mpAgentPosts = mpA.posts("agent");
         add("MP the ask reached OpenCode as the plan agent, on a server this process started itself",
             mpAgentPosts.length === 1 && mpAgentPosts[0].body?.agent === "plan" && mpA.posts("prompt").length === 1 && /serve --port (?!4999)\d+/.test(mpA.log()) && mpA.reqs().some((r) => r.boot));

@@ -1,5 +1,6 @@
 // HTTP, SSE, and the managed `opencode serve` lifecycle. Every helper here is
 // bounded: a port that accepts and never answers must fail, not hang.
+import { AsyncResource } from "node:async_hooks";
 import { ChildProcess } from "node:child_process";
 import * as http from "node:http";
 import * as net from "node:net";
@@ -1050,7 +1051,10 @@ export function connectSse(
     onStatus: (text: string) => void,
     sessionId?: string
 ): { close: () => void } {
-    const subscriber: SseSubscriber = { sessionId, onEvent, onStatus };
+    // One socket serves every run, so its callbacks would run in the context of
+    // whichever run opened it: an ask answered from turn 2's events carried turn
+    // 1's traceparent. Each subscriber runs in its own registrant's (TP).
+    const subscriber: SseSubscriber = { sessionId, onEvent: AsyncResource.bind(onEvent), onStatus: AsyncResource.bind(onStatus) };
     let shared = sseConnections.get(base);
     if (!shared) {
         shared = openSharedSse(base);

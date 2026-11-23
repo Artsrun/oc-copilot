@@ -9,6 +9,7 @@ import { RunMetrics, RunOptions, StepRecord, TokenUsage, contextOf } from "./met
 import { watchFamily } from "./asks";
 import { EmitCursor, addSubagents, applyPartDelta, applyServerPart, blankMetrics, noteModel, notePartKind, partDeltaOf, providerRetryOf } from "./run-steps";
 import { abortChildren, applyTurnPermission, assertReadOnly, noteTurnPermission, serverEnforcement, sessionPath, sessionRules } from "./server-session";
+import { RunTrace, endRun, traced } from "./trace";
 
 interface ServerMessageResponse {
     info?: {
@@ -23,7 +24,22 @@ interface ServerMessageResponse {
 
 // Server transport: POST the prompt to the warm serve instance, but subscribe to
 // SSE first so tokens/tools stream instead of arriving only when the POST ends.
-export async function runOpenCodeServer(options: RunOptions): Promise<RunMetrics> {
+// Each run is a trace of its own (trace.ts): its requests carry it, its span ends here.
+export function runOpenCodeServer(options: RunOptions): Promise<RunMetrics> {
+    return traced(async (run) => {
+        try {
+            const metrics = await runServer(options, run);
+            const outcome = metrics.error ? "error" : metrics.timedOut ? "timeout" : metrics.cancelled || options.token?.isCancellationRequested ? "cancelled" : "done";
+            endRun(run, { agent: options.agent, model: metrics.model ?? options.model, readOnly: Boolean(options.readOnly), outcome, error: metrics.error });
+            return metrics;
+        } catch (error) {
+            endRun(run, { agent: options.agent, model: options.model, readOnly: Boolean(options.readOnly), outcome: "error", error: error instanceof Error ? error.message : String(error) });
+            throw error;
+        }
+    });
+}
+
+async function runServer(options: RunOptions, run: RunTrace): Promise<RunMetrics> {
     const started = Date.now();
     // Same silence detection as the CLI runner. `transport: auto` sends `plan`
     // here, and a tool call that blocks (a `python -c` waiting on stdin, a host
@@ -65,6 +81,8 @@ export async function runOpenCodeServer(options: RunOptions): Promise<RunMetrics
         await applyTurnPermission(base, options.cwd, sessionId, readOnly, options.agent);
     }
     metrics.sessionId = sessionId;
+    metrics.traceId = run.traceId;
+    run.sessionId = sessionId;
     const mine = sessionId;
 
     const body: Record<string, unknown> = { parts: [{ type: "text", text: options.task }] };
@@ -84,7 +102,7 @@ export async function runOpenCodeServer(options: RunOptions): Promise<RunMetrics
 
     logChannel.appendLine(
         `[${stamp()}] → server ${base}${sessionPath(sessionId, "message")} ` +
-        `(agent=${options.agent ?? "-"} model=${options.model ?? "-"}${options.variant ? ` variant=${options.variant}` : ""})`
+        `(agent=${options.agent ?? "-"} model=${options.model ?? "-"}${options.variant ? ` variant=${options.variant}` : ""}) trace=${run.traceId}`
     );
 
     // Subscribe before posting, or the first events are missed; the fixed delay

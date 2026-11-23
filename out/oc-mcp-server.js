@@ -50,7 +50,7 @@ const prompt_1 = require("./prompt");
 const proc_1 = require("./proc");
 const run_server_1 = require("./run-server");
 const server_session_1 = require("./server-session");
-const VERSION = "0.0.246";
+const VERSION = "0.0.247";
 const SERVER_INFO = { name: "opencode-bridge", version: VERSION };
 const MODERN = "2026-07-28";
 const LEGACY = ["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"];
@@ -401,6 +401,7 @@ function jobResult(job) {
     const facts = [
         `status=${status}`,
         ...(m?.sessionId ? [`sessionId=${m.sessionId}`] : []),
+        ...(m?.traceId ? [`traceId=${m.traceId}`] : []),
         `jobId=${job.id}`,
         `agent=${job.agent}`,
         ...(m?.model ? [`model=${m.model}`] : []),
