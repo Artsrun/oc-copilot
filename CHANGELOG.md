@@ -21,6 +21,12 @@ Bridge spans: one trace per OpenCode 2 run, from the bridge's own requests to Op
   <agent>`, the requests' parent, with `session.id` (what OpenCode's model trace
   carries), `gen_ai.agent.name`, the model, read-only and outcome. No prompt or answer
   text. `off` exports nothing. A collector that is down costs one log line. Check `TP`.
+- **Suite, third port to OpenCode 2:** `AL` (the agent posted for `/d`; `/n` and a
+  broken alias post nothing), `SN` (the model posted for `model:tundra`; refusals post no
+  prompt; the refetch is `GET /api/model`), `LB` (plus a boundary check), `FK`'s turn (the
+  path split across streamed deltas, the anchor's line), `IL` (each prompt's session). A
+  mutant per group turned it red. `PL` now sets its own catalog: it read `SN`'s, left in
+  the cache by a 1.x refetch that failed. No shipped code changed.
 - Mutants: SSE subscriber callbacks unbound, so lane beta's ask carried lane alpha's
   trace (2 red); no header (9 red); one module-wide run instead of AsyncLocalStorage
   (1 red).
