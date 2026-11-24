@@ -4373,25 +4373,17 @@ const lbProvider = (global.__participant || {}).followupProvider;
     // LB (v169): `response.anchor` renders an inline jump link for files the
     // agent touched, beside the bottom "used references" chips. Drive a fake whose
     // tool step carries a file_path and assert both surfaces.
-    settings.executable = writeFake("fake-lb.js", [
-        {
-            type: "tool_use",
-            sessionID: "ses_lb",
-            part: {
-                tool: "read",
-                state: {
-                    input: { file_path: path.join(work, "lane.ts") },
-                    output: "// lane",
-                    time: { start: 0, end: 10 }
-                }
-            }
-        },
-        { type: "text", sessionID: "ses_lb", part: { text: "Touched lane.ts." } }
-    ]);
+    // On OpenCode 2: a scripted read of that file, then the answer.
+    const lbFile = path.join(work, "lane.ts");
+    oc2Script("lb-read", { events: [{ tool: "read", input: { filePath: lbFile }, output: "// lane" }, { text: "Touched lane.ts." }] });
     memento.clear();
     const lb = stream();
-    await global.__handler({ prompt: "read the lane" }, {}, lb.response, lb.token);
-    const lbFile = path.join(work, "lane.ts");
+    const lbSent = await oc2Use(async () => {
+        await global.__handler({ prompt: "read the lane [[script:lb-read]]" }, {}, lb.response, lb.token);
+        return oc2Prompts();
+    });
+    // The boundary first: the absences below would pass on a turn that never reached OpenCode.
+    add(`LB the turn reached OpenCode 2 and its answer reached chat (${lbSent.length} prompt)`, lbSent.length === 1 && lbSent[0].text.startsWith("read the lane") && lb.chatMarkdown.join("").includes("Touched lane.ts."));
     add("LB a touched file is emitted as a reference chip", lb.refs.includes(lbFile));
     // v184: the inline anchors beside it are gone. They never rendered in VS
     // Code: the host's anchor() is `this.push(…)`, and it was called unbound —
