@@ -4441,17 +4441,21 @@ const lbProvider = (global.__participant || {}).followupProvider;
         add(`FK linking grows linearly: x4 input, x${(fkLarge / Math.max(fkSmall, 0.5)).toFixed(1)} time (${fkSmall.toFixed(0)}→${fkLarge.toFixed(0)}ms, < x10)`, fkLarge / Math.max(fkSmall, 0.5) < 10);
 
         // Through a real turn: the anchor reaches the chat, the text around it too.
+        // On OpenCode 2 the answer streams: the path arrives split across deltas.
         fs.writeFileSync(path.join(work, "fk-lane.ts"), "a\nb\nc\n");
-        settings.executable = writeFake("fake-fk.js", [
-            { type: "text", sessionID: "ses_fk", part: { text: "Fixed `fk-lane.ts:3`; `fk-gone.ts` is not there." } }
-        ]);
+        oc2Script("fk-text", { events: [{ text: ["Fixed `fk-la", "ne.ts:3`; `fk-gone", ".ts` is not there."] }] });
         memento.clear();
         const fk = stream();
-        await global.__handler({ prompt: "fix the lane for fk" }, {}, fk.response, fk.token);
+        const fkSent = await oc2Use(async () => {
+            await global.__handler({ prompt: "fix the lane for fk [[script:fk-text]]" }, {}, fk.response, fk.token);
+            return oc2Prompts();
+        });
         const fkChat = fk.chatMarkdown.join("");
         add(
-            "FK a turn sends a file it names as an inline anchor, the rest as text",
-            fk.anchors.length === 1 && fk.anchors[0].uri?.uri?.fsPath === path.join(work, "fk-lane.ts") && !fkChat.includes("`fk-lane.ts:3`") && fkChat.includes("`fk-gone.ts`")
+            `FK a turn sends a file it names as an inline anchor, the rest as text (${fkSent.length} prompt, ${fk.anchors.length} anchor)`,
+            fkSent.length === 1 && fkSent[0].text.startsWith("fix the lane for fk") &&
+            fk.anchors.length === 1 && fk.anchors[0].uri?.uri?.fsPath === path.join(work, "fk-lane.ts") && fk.anchors[0].uri?.range?.start?.line === 2 &&
+            !fkChat.includes("`fk-lane.ts:3`") && fkChat.includes("`fk-gone.ts`")
         );
 
         // Accordion rows: a read/edit row carries its file; a shell row stays text.
