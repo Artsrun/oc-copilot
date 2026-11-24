@@ -7434,45 +7434,46 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
 
     // Behaviour: the inline turn sends its selection even with
     // includeEditorSelection off; the panel turn, same editor, does not.
-    settings.executable = happy;
     settings.includeEditorSelection = false;
     settings.chatDensity = "full";
     vscodeStub.workspace.workspaceFolders = [{ uri: { fsPath: work }, name: path.basename(work), index: 0 }];
     const ilDoc = (text) => ({ uri: { fsPath: path.join(work, "src", "sel.ts"), scheme: "file" }, getText: () => text });
     const ilSel = (a, b, empty) => ({ isEmpty: empty, start: { line: a }, end: { line: b }, active: { line: b } });
     const ilInlineHandler = ilReg["opencodeCopilotBridge.inline"]?.handler;
-    const ilRun = async (handler, prompt, ctx = {}) => {
-        const s = stream();
-        const r = await handler({ prompt }, ctx, s.response, s.token);
-        return { r, argv: lastArgv("fake-ok.js"), s };
-    };
-    memento.clear();
-    vscodeStub.window.activeTextEditor = { document: ilDoc("const x = 1;\nreturn x;"), selection: ilSel(2, 3, false) };
-    const il1 = await ilRun(ilInlineHandler, "explain this block");
-    const il1Prompt = String(il1.argv[il1.argv.length - 1] || "");
-    add(
-        "IL an inline turn sends its selection with includeEditorSelection off",
-        il1Prompt.includes("Active selection — src/sel.ts:3-4") && il1Prompt.includes("return x;")
-    );
-    memento.clear();
-    const il2 = await ilRun(global.__handler, "explain this block");
-    add("IL a panel turn, same editor, sends no selection", !String(il2.argv[il2.argv.length - 1] || "").includes("Active selection"));
-
-    // Nothing selected: the file and cursor line go, and a bare `fix` is a task.
-    memento.clear();
-    vscodeStub.window.activeTextEditor = { document: ilDoc(""), selection: ilSel(6, 6, true) };
-    const il3 = await ilRun(ilInlineHandler, "fix");
-    const il3Prompt = String(il3.argv[il3.argv.length - 1] || "");
-    add("IL an empty inline selection sends the file and cursor line", il3Prompt.includes("Inline chat — src/sel.ts:7 (cursor, nothing selected)"));
-    add("IL a bare `fix` inline is run, not gated as vague", il3.r?.metadata?.kind !== "clarify" && il3Prompt.startsWith("fix"));
-
-    // The inline widget keeps its own session: its turns bind the thread.
-    const il4 = await ilRun(ilInlineHandler, "and the next line?", {
-        history: [{ participant: "opencodeCopilotBridge.inline", prompt: "fix", result: il3.r }]
+    // On OpenCode 2: each turn's posted prompt is what OpenCode got, and the session it went to.
+    const { il1, il2, il3, il4 } = await oc2Use(async () => {
+        const ilRun = async (handler, prompt, ctx = {}) => {
+            const s = stream();
+            const from = oc2Prompts().length;
+            const r = await handler({ prompt }, ctx, s.response, s.token);
+            const sent = oc2Prompts().slice(from);
+            return { r, sent, prompt: sent.at(-1)?.text ?? "", s };
+        };
+        memento.clear();
+        vscodeStub.window.activeTextEditor = { document: ilDoc("const x = 1;\nreturn x;"), selection: ilSel(2, 3, false) };
+        const one = await ilRun(ilInlineHandler, "explain this block");
+        memento.clear();
+        const two = await ilRun(global.__handler, "explain this block");
+        // Nothing selected: the file and cursor line go, and a bare `fix` is a task.
+        memento.clear();
+        vscodeStub.window.activeTextEditor = { document: ilDoc(""), selection: ilSel(6, 6, true) };
+        const three = await ilRun(ilInlineHandler, "fix");
+        // The inline widget keeps its own session: its turns bind the thread.
+        const four = await ilRun(ilInlineHandler, "and the next line?", {
+            history: [{ participant: "opencodeCopilotBridge.inline", prompt: "fix", result: three.r }]
+        });
+        return { il1: one, il2: two, il3: three, il4: four };
     });
     add(
-        "IL a second inline turn continues the widget's session",
-        Boolean(il3.r?.metadata?.sessionId) && il4.argv.includes("--session") && il4.argv[il4.argv.indexOf("--session") + 1] === il3.r.metadata.sessionId
+        `IL an inline turn sends its selection with includeEditorSelection off (${il1.sent.length} prompt)`,
+        il1.sent.length === 1 && il1.prompt.includes("Active selection — src/sel.ts:3-4") && il1.prompt.includes("return x;")
+    );
+    add("IL a panel turn, same editor, sends no selection", il2.sent.length === 1 && il2.prompt.startsWith("explain this block") && !il2.prompt.includes("Active selection"));
+    add("IL an empty inline selection sends the file and cursor line", il3.prompt.includes("Inline chat — src/sel.ts:7 (cursor, nothing selected)"));
+    add("IL a bare `fix` inline is run, not gated as vague", il3.r?.metadata?.kind !== "clarify" && il3.sent.length === 1 && il3.prompt.startsWith("fix"));
+    add(
+        `IL a second inline turn continues the widget's session (${il3.sent[0]?.session} → ${il4.sent[0]?.session})`,
+        Boolean(il3.r?.metadata?.sessionId) && il4.sent.length === 1 && il4.sent[0].session === il3.r.metadata.sessionId && il3.sent[0]?.session === il3.r.metadata.sessionId
     );
     add(
         "IL threadSession reads inline turns",
