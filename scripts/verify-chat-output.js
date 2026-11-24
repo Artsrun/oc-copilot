@@ -7885,21 +7885,33 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         const alNames = (alPkg.contributes.chatParticipants || []).flatMap((p) => (p.commands || []).map((c) => c.name));
         add("AL no alias is in the manifest (the / menu stays one entry per command)", Object.keys(ext.__test.commandAliases()).every((k) => !alNames.includes(k)));
 
-        settings.executable = happy;
-        memento.clear();
+        // On OpenCode 2: what reached the server is the agent posted to the session and
+        // the prompt; a turn that must send nothing leaves no POST in the record.
         const alD = stream();
-        await global.__handler({ prompt: "/d fix the redirect bug" }, {}, alD.response, alD.token);
-        const alArgv = lastArgv("fake-ok.js");
-        add("AL `/d <task>` runs the editing agent", alArgv[alArgv.indexOf("--agent") + 1] === "build" && alArgv[alArgv.length - 1].startsWith("fix the redirect bug"));
-        fs.rmSync(path.join(work, "fake-ok.js.argv"), { force: true });
         const alN = stream();
-        const alNr = await global.__handler({ prompt: "/n" }, {}, alN.response, alN.token);
-        add("AL /n starts a new session and spawns nothing", alNr?.metadata?.kind === "new" && !fs.existsSync(path.join(work, "fake-ok.js.argv")));
-        settings.commandAliases = { zz: "paralel" };
         const alZ = stream();
-        await global.__handler({ prompt: "/zz a | b" }, {}, alZ.response, alZ.token);
-        add("AL a broken user alias is explained, never sent as a task", /not a command/.test(alZ.chatMarkdown.join("")) && !fs.existsSync(path.join(work, "fake-ok.js.argv")));
-        settings.commandAliases = {};
+        const al = await oc2Use(async () => {
+            const turn = async (prompt, st) => {
+                const from = oc2Reqs().length;
+                const result = await global.__handler({ prompt }, {}, st.response, st.token);
+                return { result, reqs: oc2Reqs().slice(from) };
+            };
+            memento.clear();
+            const d = await turn("/d fix the redirect bug", alD);
+            const n = await turn("/n", alN);
+            settings.commandAliases = { zz: "paralel" };
+            try {
+                return { d, n, z: await turn("/zz a | b", alZ) };
+            } finally {
+                settings.commandAliases = {};
+            }
+        });
+        const alPosts = (reqs, tail) => reqs.filter((r) => r.method === "POST" && new RegExp(`^/api/session/[^/]+/${tail}$`).test(r.path ?? ""));
+        const alAgent = alPosts(al.d.reqs, "agent").map((r) => r.body?.agent);
+        const alSent = alPosts(al.d.reqs, "prompt").map((r) => String(r.body?.text ?? ""));
+        add(`AL \`/d <task>\` runs the editing agent (agent ${alAgent.join()}, ${alSent.length} prompt)`, alAgent.join() === "build" && alSent.length === 1 && alSent[0].startsWith("fix the redirect bug"));
+        add("AL /n starts a new session and sends nothing", al.n.result?.metadata?.kind === "new" && !al.n.reqs.some((r) => r.method === "POST"));
+        add("AL a broken user alias is explained, never sent as a task", /not a command/.test(alZ.chatMarkdown.join("")) && alPosts(al.z.reqs, "prompt").length === 0);
         const alH = stream();
         await global.__handler({ prompt: "/?" }, {}, alH.response, alH.token);
         add("AL /help lists the aliases", /Aliases: `\/p` parallel · `\/d` dev/.test(alH.chatMarkdown.join("")));
