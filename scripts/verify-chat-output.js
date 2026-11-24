@@ -4378,25 +4378,17 @@ const lbProvider = (global.__participant || {}).followupProvider;
     // LB (v169): `response.anchor` renders an inline jump link for files the
     // agent touched, beside the bottom "used references" chips. Drive a fake whose
     // tool step carries a file_path and assert both surfaces.
-    settings.executable = writeFake("fake-lb.js", [
-        {
-            type: "tool_use",
-            sessionID: "ses_lb",
-            part: {
-                tool: "read",
-                state: {
-                    input: { file_path: path.join(work, "lane.ts") },
-                    output: "// lane",
-                    time: { start: 0, end: 10 }
-                }
-            }
-        },
-        { type: "text", sessionID: "ses_lb", part: { text: "Touched lane.ts." } }
-    ]);
+    // On OpenCode 2: a scripted read of that file, then the answer.
+    const lbFile = path.join(work, "lane.ts");
+    oc2Script("lb-read", { events: [{ tool: "read", input: { filePath: lbFile }, output: "// lane" }, { text: "Touched lane.ts." }] });
     memento.clear();
     const lb = stream();
-    await global.__handler({ prompt: "read the lane" }, {}, lb.response, lb.token);
-    const lbFile = path.join(work, "lane.ts");
+    const lbSent = await oc2Use(async () => {
+        await global.__handler({ prompt: "read the lane [[script:lb-read]]" }, {}, lb.response, lb.token);
+        return oc2Prompts();
+    });
+    // The boundary first: the absences below would pass on a turn that never reached OpenCode.
+    add(`LB the turn reached OpenCode 2 and its answer reached chat (${lbSent.length} prompt)`, lbSent.length === 1 && lbSent[0].text.startsWith("read the lane") && lb.chatMarkdown.join("").includes("Touched lane.ts."));
     add("LB a touched file is emitted as a reference chip", lb.refs.includes(lbFile));
     // v184: the inline anchors beside it are gone. They never rendered in VS
     // Code: the host's anchor() is `this.push(…)`, and it was called unbound —
@@ -4454,17 +4446,21 @@ const lbProvider = (global.__participant || {}).followupProvider;
         add(`FK linking grows linearly: x4 input, x${(fkLarge / Math.max(fkSmall, 0.5)).toFixed(1)} time (${fkSmall.toFixed(0)}→${fkLarge.toFixed(0)}ms, < x10)`, fkLarge / Math.max(fkSmall, 0.5) < 10);
 
         // Through a real turn: the anchor reaches the chat, the text around it too.
+        // On OpenCode 2 the answer streams: the path arrives split across deltas.
         fs.writeFileSync(path.join(work, "fk-lane.ts"), "a\nb\nc\n");
-        settings.executable = writeFake("fake-fk.js", [
-            { type: "text", sessionID: "ses_fk", part: { text: "Fixed `fk-lane.ts:3`; `fk-gone.ts` is not there." } }
-        ]);
+        oc2Script("fk-text", { events: [{ text: ["Fixed `fk-la", "ne.ts:3`; `fk-gone", ".ts` is not there."] }] });
         memento.clear();
         const fk = stream();
-        await global.__handler({ prompt: "fix the lane for fk" }, {}, fk.response, fk.token);
+        const fkSent = await oc2Use(async () => {
+            await global.__handler({ prompt: "fix the lane for fk [[script:fk-text]]" }, {}, fk.response, fk.token);
+            return oc2Prompts();
+        });
         const fkChat = fk.chatMarkdown.join("");
         add(
-            "FK a turn sends a file it names as an inline anchor, the rest as text",
-            fk.anchors.length === 1 && fk.anchors[0].uri?.uri?.fsPath === path.join(work, "fk-lane.ts") && !fkChat.includes("`fk-lane.ts:3`") && fkChat.includes("`fk-gone.ts`")
+            `FK a turn sends a file it names as an inline anchor, the rest as text (${fkSent.length} prompt, ${fk.anchors.length} anchor)`,
+            fkSent.length === 1 && fkSent[0].text.startsWith("fix the lane for fk") &&
+            fk.anchors.length === 1 && fk.anchors[0].uri?.uri?.fsPath === path.join(work, "fk-lane.ts") && fk.anchors[0].uri?.range?.start?.line === 2 &&
+            !fkChat.includes("`fk-lane.ts:3`") && fkChat.includes("`fk-gone.ts`")
         );
 
         // Accordion rows: a read/edit row carries its file; a shell row stays text.
@@ -7443,45 +7439,46 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
 
     // Behaviour: the inline turn sends its selection even with
     // includeEditorSelection off; the panel turn, same editor, does not.
-    settings.executable = happy;
     settings.includeEditorSelection = false;
     settings.chatDensity = "full";
     vscodeStub.workspace.workspaceFolders = [{ uri: { fsPath: work }, name: path.basename(work), index: 0 }];
     const ilDoc = (text) => ({ uri: { fsPath: path.join(work, "src", "sel.ts"), scheme: "file" }, getText: () => text });
     const ilSel = (a, b, empty) => ({ isEmpty: empty, start: { line: a }, end: { line: b }, active: { line: b } });
     const ilInlineHandler = ilReg["opencodeCopilotBridge.inline"]?.handler;
-    const ilRun = async (handler, prompt, ctx = {}) => {
-        const s = stream();
-        const r = await handler({ prompt }, ctx, s.response, s.token);
-        return { r, argv: lastArgv("fake-ok.js"), s };
-    };
-    memento.clear();
-    vscodeStub.window.activeTextEditor = { document: ilDoc("const x = 1;\nreturn x;"), selection: ilSel(2, 3, false) };
-    const il1 = await ilRun(ilInlineHandler, "explain this block");
-    const il1Prompt = String(il1.argv[il1.argv.length - 1] || "");
-    add(
-        "IL an inline turn sends its selection with includeEditorSelection off",
-        il1Prompt.includes("Active selection — src/sel.ts:3-4") && il1Prompt.includes("return x;")
-    );
-    memento.clear();
-    const il2 = await ilRun(global.__handler, "explain this block");
-    add("IL a panel turn, same editor, sends no selection", !String(il2.argv[il2.argv.length - 1] || "").includes("Active selection"));
-
-    // Nothing selected: the file and cursor line go, and a bare `fix` is a task.
-    memento.clear();
-    vscodeStub.window.activeTextEditor = { document: ilDoc(""), selection: ilSel(6, 6, true) };
-    const il3 = await ilRun(ilInlineHandler, "fix");
-    const il3Prompt = String(il3.argv[il3.argv.length - 1] || "");
-    add("IL an empty inline selection sends the file and cursor line", il3Prompt.includes("Inline chat — src/sel.ts:7 (cursor, nothing selected)"));
-    add("IL a bare `fix` inline is run, not gated as vague", il3.r?.metadata?.kind !== "clarify" && il3Prompt.startsWith("fix"));
-
-    // The inline widget keeps its own session: its turns bind the thread.
-    const il4 = await ilRun(ilInlineHandler, "and the next line?", {
-        history: [{ participant: "opencodeCopilotBridge.inline", prompt: "fix", result: il3.r }]
+    // On OpenCode 2: each turn's posted prompt is what OpenCode got, and the session it went to.
+    const { il1, il2, il3, il4 } = await oc2Use(async () => {
+        const ilRun = async (handler, prompt, ctx = {}) => {
+            const s = stream();
+            const from = oc2Prompts().length;
+            const r = await handler({ prompt }, ctx, s.response, s.token);
+            const sent = oc2Prompts().slice(from);
+            return { r, sent, prompt: sent.at(-1)?.text ?? "", s };
+        };
+        memento.clear();
+        vscodeStub.window.activeTextEditor = { document: ilDoc("const x = 1;\nreturn x;"), selection: ilSel(2, 3, false) };
+        const one = await ilRun(ilInlineHandler, "explain this block");
+        memento.clear();
+        const two = await ilRun(global.__handler, "explain this block");
+        // Nothing selected: the file and cursor line go, and a bare `fix` is a task.
+        memento.clear();
+        vscodeStub.window.activeTextEditor = { document: ilDoc(""), selection: ilSel(6, 6, true) };
+        const three = await ilRun(ilInlineHandler, "fix");
+        // The inline widget keeps its own session: its turns bind the thread.
+        const four = await ilRun(ilInlineHandler, "and the next line?", {
+            history: [{ participant: "opencodeCopilotBridge.inline", prompt: "fix", result: three.r }]
+        });
+        return { il1: one, il2: two, il3: three, il4: four };
     });
     add(
-        "IL a second inline turn continues the widget's session",
-        Boolean(il3.r?.metadata?.sessionId) && il4.argv.includes("--session") && il4.argv[il4.argv.indexOf("--session") + 1] === il3.r.metadata.sessionId
+        `IL an inline turn sends its selection with includeEditorSelection off (${il1.sent.length} prompt)`,
+        il1.sent.length === 1 && il1.prompt.includes("Active selection — src/sel.ts:3-4") && il1.prompt.includes("return x;")
+    );
+    add("IL a panel turn, same editor, sends no selection", il2.sent.length === 1 && il2.prompt.startsWith("explain this block") && !il2.prompt.includes("Active selection"));
+    add("IL an empty inline selection sends the file and cursor line", il3.prompt.includes("Inline chat — src/sel.ts:7 (cursor, nothing selected)"));
+    add("IL a bare `fix` inline is run, not gated as vague", il3.r?.metadata?.kind !== "clarify" && il3.sent.length === 1 && il3.prompt.startsWith("fix"));
+    add(
+        `IL a second inline turn continues the widget's session (${il3.sent[0]?.session} → ${il4.sent[0]?.session})`,
+        Boolean(il3.r?.metadata?.sessionId) && il4.sent.length === 1 && il4.sent[0].session === il3.r.metadata.sessionId && il3.sent[0]?.session === il3.r.metadata.sessionId
     );
     add(
         "IL threadSession reads inline turns",
@@ -7706,26 +7703,31 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         add("SN a full id passes through as typed, even unlisted", R("x/y").id === "x/y" && R("x/y").unlisted === true && R("acme-gateway/tundra").id === "acme-gateway/Tundra");
         add("SN a label reads name then id", ext.__test.modelLabel("acme-gateway/Tundra", snCat.info) === "Tundra (Model-1, Code generation & refactors) · `acme-gateway/Tundra`" && ext.__test.modelLabel("x/y", {}) === "`x/y`");
 
-        globalMemento.set("opencode.models.v2", { models: snCat.models, info: snCat.info, fetchedAt: Date.now() });
-        settings.executable = happy;
-        memento.clear();
+        // On OpenCode 2: the model is what the session was sent (`POST …/model`), and a
+        // refusal leaves no prompt in the record.
         const snT = stream();
-        await global.__handler({ prompt: "model:tundra why is login slow" }, {}, snT.response, snT.token);
-        const snArgv = lastArgv("fake-ok.js");
-        add("SN `model:tundra` sends the full id", snArgv[snArgv.indexOf("--model") + 1] === "acme-gateway/Tundra" && snArgv[snArgv.length - 1].startsWith("why is login slow"));
-        fs.rmSync(path.join(work, "fake-ok.js.argv"), { force: true });
         const snA = stream();
-        await global.__handler({ prompt: "model:gemini why is login slow" }, {}, snA.response, snA.token);
+        const snU = stream();
+        const sn = await oc2Use(async () => {
+            const turn = async (prompt, st) => {
+                const from = oc2Reqs().length;
+                await global.__handler({ prompt }, {}, st.response, st.token);
+                return oc2Reqs().slice(from);
+            };
+            globalMemento.set("opencode.models.v2", { models: snCat.models, info: snCat.info, fetchedAt: Date.now() });
+            memento.clear();
+            return { t: await turn("model:tundra why is login slow", snT), a: await turn("model:gemini why is login slow", snA), u: await turn("model:nosuch why is login slow", snU) };
+        });
+        const snPosts = (reqs, tail) => reqs.filter((r) => r.method === "POST" && new RegExp(`^/api/session/[^/]+/${tail}$`).test(r.path ?? ""));
+        const snSentModel = snPosts(sn.t, "model").map((r) => `${r.body?.model?.providerID}/${r.body?.model?.id}`);
+        const snSent = snPosts(sn.t, "prompt").map((r) => String(r.body?.text ?? ""));
+        add(`SN \`model:tundra\` sends the full id (${snSentModel.join()})`, snSentModel.join() === "acme-gateway/Tundra" && snSent.length === 1 && snSent[0].startsWith("why is login slow"));
         add(
             "SN an ambiguous `model:` is refused before anything runs",
-            !fs.existsSync(path.join(work, "fake-ok.js.argv")) && /matches .*google\/gemini-flash.*google\/gemini-pro/.test(snA.chatMarkdown.join(""))
+            !sn.a.some((r) => r.method === "POST") && /matches .*google\/gemini-flash.*google\/gemini-pro/.test(snA.chatMarkdown.join(""))
         );
-        const snU = stream();
-        await global.__handler({ prompt: "model:nosuch why is login slow" }, {}, snU.response, snU.token);
-        const snUArgv = lastArgv("fake-ok.js");
-        add("SN an unknown short name is refused, not sent", !snUArgv.some((a) => a.includes("why is login slow")) && /not in OpenCode's model list/.test(snU.chatMarkdown.join("")));
-        add("SN an unknown short name refetches the catalog even when the cache is fresh", snUArgv.slice(-2).join(" ") === "models --verbose");
-        fs.rmSync(path.join(work, "fake-ok.js.argv"), { force: true });
+        add("SN an unknown short name is refused, not sent", snPosts(sn.u, "prompt").length === 0 && /not in OpenCode's model list/.test(snU.chatMarkdown.join("")));
+        add(`SN an unknown short name refetches the catalog even when the cache is fresh (${sn.u.map((r) => `${r.method} ${r.path}`).join(", ")})`, sn.u.some((r) => r.method === "GET" && r.path === "/api/model"));
 
         // Real `opencode models --verbose` shape, captured 2026-09-29 on a
         // company gateway, provider renamed acme-gateway (trimmed to the fields that matter; options/headers
@@ -7803,6 +7805,15 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         const plIsCatalog = (a) => a[a.length - 1] === "models" || a.slice(-2).join(" ") === "models --verbose";
         const plRuns = () => plAll().filter((a) => !plIsCatalog(a));
         const plModels = () => plRuns().map((a) => (a.includes("--model") ? a[a.indexOf("--model") + 1] : "")).sort();
+        // Its own catalog: PL and CL once read SN's, left by a 1.x refetch that failed.
+        globalMemento.set("opencode.models.v2", {
+            models: ["acme-gateway/Tundra", "acme-gateway/Oasis", "openai/gpt-5-flash", "google/gemini-flash", "google/gemini-pro"],
+            info: {
+                "acme-gateway/Tundra": { name: "Tundra (Model-1, Code generation & refactors)" },
+                "acme-gateway/Oasis": { name: "Oasis (Model-2, Investigation & log analysis)" }
+            },
+            fetchedAt: Date.now()
+        });
         settings.executable = plFake;
         const plTurn = async (prompt) => {
             fs.rmSync(plLog, { force: true });
@@ -7890,21 +7901,33 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         const alNames = (alPkg.contributes.chatParticipants || []).flatMap((p) => (p.commands || []).map((c) => c.name));
         add("AL no alias is in the manifest (the / menu stays one entry per command)", Object.keys(ext.__test.commandAliases()).every((k) => !alNames.includes(k)));
 
-        settings.executable = happy;
-        memento.clear();
+        // On OpenCode 2: what reached the server is the agent posted to the session and
+        // the prompt; a turn that must send nothing leaves no POST in the record.
         const alD = stream();
-        await global.__handler({ prompt: "/d fix the redirect bug" }, {}, alD.response, alD.token);
-        const alArgv = lastArgv("fake-ok.js");
-        add("AL `/d <task>` runs the editing agent", alArgv[alArgv.indexOf("--agent") + 1] === "build" && alArgv[alArgv.length - 1].startsWith("fix the redirect bug"));
-        fs.rmSync(path.join(work, "fake-ok.js.argv"), { force: true });
         const alN = stream();
-        const alNr = await global.__handler({ prompt: "/n" }, {}, alN.response, alN.token);
-        add("AL /n starts a new session and spawns nothing", alNr?.metadata?.kind === "new" && !fs.existsSync(path.join(work, "fake-ok.js.argv")));
-        settings.commandAliases = { zz: "paralel" };
         const alZ = stream();
-        await global.__handler({ prompt: "/zz a | b" }, {}, alZ.response, alZ.token);
-        add("AL a broken user alias is explained, never sent as a task", /not a command/.test(alZ.chatMarkdown.join("")) && !fs.existsSync(path.join(work, "fake-ok.js.argv")));
-        settings.commandAliases = {};
+        const al = await oc2Use(async () => {
+            const turn = async (prompt, st) => {
+                const from = oc2Reqs().length;
+                const result = await global.__handler({ prompt }, {}, st.response, st.token);
+                return { result, reqs: oc2Reqs().slice(from) };
+            };
+            memento.clear();
+            const d = await turn("/d fix the redirect bug", alD);
+            const n = await turn("/n", alN);
+            settings.commandAliases = { zz: "paralel" };
+            try {
+                return { d, n, z: await turn("/zz a | b", alZ) };
+            } finally {
+                settings.commandAliases = {};
+            }
+        });
+        const alPosts = (reqs, tail) => reqs.filter((r) => r.method === "POST" && new RegExp(`^/api/session/[^/]+/${tail}$`).test(r.path ?? ""));
+        const alAgent = alPosts(al.d.reqs, "agent").map((r) => r.body?.agent);
+        const alSent = alPosts(al.d.reqs, "prompt").map((r) => String(r.body?.text ?? ""));
+        add(`AL \`/d <task>\` runs the editing agent (agent ${alAgent.join()}, ${alSent.length} prompt)`, alAgent.join() === "build" && alSent.length === 1 && alSent[0].startsWith("fix the redirect bug"));
+        add("AL /n starts a new session and sends nothing", al.n.result?.metadata?.kind === "new" && !al.n.reqs.some((r) => r.method === "POST"));
+        add("AL a broken user alias is explained, never sent as a task", /not a command/.test(alZ.chatMarkdown.join("")) && alPosts(al.z.reqs, "prompt").length === 0);
         const alH = stream();
         await global.__handler({ prompt: "/?" }, {}, alH.response, alH.token);
         add("AL /help lists the aliases", /Aliases: `\/p` parallel · `\/d` dev/.test(alH.chatMarkdown.join("")));
