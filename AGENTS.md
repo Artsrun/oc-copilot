@@ -266,6 +266,12 @@ pick the next free one.
   the file `spawn` runs, and without its shebang `/bin/sh` reads it. Windows
   wraps every fake in a `.cmd` that calls `node`, so such a check is green there
   and red on Linux and macOS (0.0.213).
+- **Two lanes run one fake at once.** Its `.argv` and `.env` records are written beside
+  and renamed over (`put` in `writeFake`): rewritten in place, two writers tore the file
+  and `lastArgv` threw, which left the group's servers open and hung the run (PA, Windows,
+  PR #21; 1 in 150 rounds of four writers on Linux, 0 renamed). `lastArgv` is whichever
+  run wrote last: a check about one run of several (lanes, the server, `--version`)
+  records every run as JSON lines and picks (`SA`, `PL`).
 - **A file git checks out is CRLF on Windows** (`core.autocrlf`): compare its
   text without line endings (`WT8` read `v1\r\n` and went red).
 - **`writeFake` answers `--version` with `1.19.0` itself** unless the fake's

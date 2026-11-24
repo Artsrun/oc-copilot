@@ -93,17 +93,22 @@ function writeFake(name, events, extraJs) {
     const body =
         "#!/usr/bin/env node\n" +
         "const fs = require('fs');\n" +
+        // Two lanes run one fake at once, and an in-place rewrite tore its record: the
+        // shorter argv over the longer one's tail, which `lastArgv` could not parse (PA,
+        // Windows CI, PR #21). Written beside and renamed over, a reader sees one whole
+        // record (AR).
+        "const put = (f, s) => { const t = f + '.' + process.pid + '.tmp'; fs.writeFileSync(t, s); for (let i = 0; ; i += 1) { try { fs.renameSync(t, f); return; } catch (e) { if (i >= 20 || !['EPERM', 'EACCES', 'EBUSY'].includes(e.code)) throw e; const until = Date.now() + 10; while (Date.now() < until); } } };\n" +
         // 0.0.219: a cold read-only turn lists agents first (`opencode agent list`).
         // Answer as OpenCode does — defaults, then the injected config's rules in
         // key order, then the tool-output allow it appends (1.19.0 measured) —
         // before the argv record, so lastArgv stays the run. Fakes that script
         // their own listing (PA) keep it.
         ((extraJs || "").includes("'agent'") ? "" : FAKE_AGENT_LIST) +
-        "fs.writeFileSync(" +
+        "put(" +
         JSON.stringify(argvFile) +
         ", JSON.stringify(process.argv));\n" +
         // v183: what the real CLI resolves its directory from (PWD first).
-        "fs.writeFileSync(" +
+        "put(" +
         JSON.stringify(file + ".env") +
         ", JSON.stringify({ pwd: process.env.PWD ?? null, cwd: process.cwd(), occ: process.env.OPENCODE_CONFIG_CONTENT ?? null, xdg: process.env.XDG_DATA_HOME ?? null, otlp: process.env.OTEL_EXPORTER_OTLP_ENDPOINT ?? null }));\n" +
         ((extraJs || "").includes("--version") ? "" : "if (process.argv.includes('--version')) { process.stdout.write('1.19.0\\n'); process.exit(0); }\n") +
@@ -658,6 +663,16 @@ const suiteWatchdog = require(path.join(__dirname, "fixtures", "suite-watchdog.j
 (async () => {
     const checks = suiteChecks;
     const add = (name, ok) => checks.push([name, ok]);
+
+    // AR: a fake's records are renamed into place, never rewritten in place (see writeFake).
+    {
+        // The .js itself: on Windows writeFake returns the .cmd that runs it.
+        writeFake("fake-ar.js", []);
+        const arText = fs.readFileSync(path.join(work, "fake-ar.js"), "utf8");
+        add("AR a fake writes its argv and env records beside them and renames them over",
+            /put\(".*\.argv", JSON\.stringify\(process\.argv\)\)/.test(arText) && /put\(".*\.env", JSON\.stringify\(/.test(arText) &&
+            /fs\.renameSync\(t, f\)/.test(arText) && !/fs\.writeFileSync\("[^"]*\.(argv|env)"/.test(arText));
+    }
 
     // WD: the watchdog above, run in its own process. A hang printed nothing until CI's
     // 30-minute limit (PR #20, Windows, once in six runs): the checks print at the end,
@@ -9632,6 +9647,7 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         const saFake = writeFake(
             "fake-own-serve.js",
             [],
+            `fs.appendFileSync(${JSON.stringify(path.join(work, "fake-own-serve.jsonl"))}, JSON.stringify(process.argv) + '\\n');\n` +
             "const i = process.argv.indexOf('--port'); if (process.argv.includes('serve') && i > 0) require('http').createServer((q, s) => { s.setHeader('content-type', 'application/json'); s.end(JSON.stringify({ healthy: true })); }).listen(Number(process.argv[i + 1]), '127.0.0.1');\n"
         );
         const saSaved = { exe: settings.executable, transport: settings.transport, port: settings.serverPort };
@@ -9640,14 +9656,19 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         settings.serverPort = 0;
         const saStream = stream();
         await global.__handler({ prompt: "a | b", command: "parallel" }, {}, saStream.response, saStream.token);
-        const saArgv = JSON.parse(fs.readFileSync(path.join(work, "fake-own-serve.js.argv"), "utf8"));
-        const saPort = Number((saArgv[saArgv.indexOf("--attach") + 1] || "").split(":").pop());
+        // Every run of the fake, not the last one: two lanes, the server and `--version`
+        // all run it, and the last to write is not always a lane (Linux CI, PR #21).
+        const saRuns = fs.readFileSync(path.join(work, "fake-own-serve.jsonl"), "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l).slice(2));
+        const saLaneRuns = saRuns.filter((a) => a.includes("--attach"));
+        const saLanePorts = [...new Set(saLaneRuns.map((a) => Number((a[a.indexOf("--attach") + 1] || "").split(":").pop())))];
+        const saPort = saLanePorts.length === 1 && saLaneRuns.length === 2 ? saLanePorts[0] : NaN;
         settings.executable = saSaved.exe;
         settings.transport = saSaved.transport;
         settings.serverPort = saSaved.port;
         await new Promise((r) => saDecoy.close(r));
         ext.deactivate();
-        add("SA serverPort 0 starts serve on a free port the bridge chose", Number.isInteger(saPort) && saPort > 0 && saPort !== 4096 && saPort !== saDecoyPort);
+        add(`SA serverPort 0 starts serve on a free port the bridge chose, and both lanes attach to it${Number.isInteger(saPort) ? "" : ` [${saRuns.map((a) => a.filter((x) => !x.includes(path.sep)).join(" ")).join(" | ")}]`}`,
+            Number.isInteger(saPort) && saPort > 0 && saPort !== 4096 && saPort !== saDecoyPort);
         add("SA a listener the bridge did not start receives nothing at port 0", saSeen.length === 0);
 
         vscodeStub.commands.executeCommand = realExec;

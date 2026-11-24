@@ -32,6 +32,13 @@ Bridge spans: one trace per OpenCode 2 run, from the bridge's own requests to Op
   the gate stops the suite at 25 minutes. A Windows CI hang had printed nothing until the
   30-minute job limit. Check `WD` (mutants: no cap 1 red, no grace 1 red; the grace
   timer's unref is what lets a clean run exit at once, 32 ms against 5036 ms).
+- **Its first catch: the Windows hang was a crash.** Two `/parallel` lanes ran one fake
+  at once and tore its argv record; `lastArgv` threw in `PA`, the group's server and
+  sockets stayed open, and the run never exited. The fakes now write their records beside
+  and rename them over (`AR`; 1 torn in 150 rounds of four writers on Linux before, 0
+  after). `SA` read the last writer, which is not always a lane (Linux CI): it now records
+  every run and asserts both lanes attach to the one port. Mutants: in-place write, `AR`
+  red; port 4096 for `serverPort` 0, `SA` red.
 - Mutants: SSE subscriber callbacks unbound, so lane beta's ask carried lane alpha's
   trace (2 red); no header (9 red); one module-wide run instead of AsyncLocalStorage
   (1 red).
