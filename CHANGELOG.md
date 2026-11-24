@@ -27,6 +27,11 @@ Bridge spans: one trace per OpenCode 2 run, from the bridge's own requests to Op
   path split across streamed deltas, the anchor's line), `IL` (each prompt's session). A
   mutant per group turned it red. `PL` now sets its own catalog: it read `SN`'s, left in
   the cache by a 1.x refetch that failed. No shipped code changed.
+- **Suite watchdog:** a run past 15 minutes (`OCB_SUITE_CAP_MS`), or alive 20 s after
+  its banner, prints its last check, what is still open and the log's tail, and exits 1;
+  the gate stops the suite at 25 minutes. A Windows CI hang had printed nothing until the
+  30-minute job limit. Check `WD` (mutants: no cap 1 red, no grace 1 red; the grace
+  timer's unref is what lets a clean run exit at once, 32 ms against 5036 ms).
 - Mutants: SSE subscriber callbacks unbound, so lane beta's ask carried lane alpha's
   trace (2 red); no header (9 red); one module-wide run instead of AsyncLocalStorage
   (1 red).

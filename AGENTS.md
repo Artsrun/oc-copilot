@@ -185,6 +185,12 @@ and the chat participant API (`api-watch.yml`: `scripts/check-vscode-api.js` on
 `vscode.d.ts`'s main branch, and a typecheck against the newest `@types/vscode`).
 
 - The suite takes well over 30 s; do not judge it by a 30 s timeout.
+- **A hang names itself.** The suite prints its checks only at the end, and the gate
+  captures it whole, so a hang once showed nothing until CI's 30-minute limit (PR #20,
+  Windows). Its watchdog (`scripts/fixtures/suite-watchdog.js`) ends a run past
+  `OCB_SUITE_CAP_MS` (15 minutes), or one still alive 20 s after its banner, printing
+  the last check, what is open (children by argv, sockets, servers, timers) and the log's
+  tail, and exits 1 (`WD`). The gate stops the suite at 25 minutes and prints what it had.
 - It **aborts on the first exception**: fix crashes first, then red checks.
 - Package into `dist/` (`mkdir -p dist && npx vsce package --out dist/`): with no
   folder there, vsce fails and leaves an empty file named `dist`. A missing

@@ -644,9 +644,55 @@ function collectConfigProperties(configuration) {
     return out;
 }
 
+// The run's cap: about 5 minutes on CI's slowest runner (Windows), its job limit 30.
+// Past it, or 20 s after the banner with something still open, the watchdog says what
+// is open and exits 1 (WD).
+const suiteChecks = [];
+const suiteWatchdog = require(path.join(__dirname, "fixtures", "suite-watchdog.js"))({
+    capMs: Number(process.env.OCB_SUITE_CAP_MS) || 15 * 60 * 1000,
+    last: () => suiteChecks.at(-1)?.[0],
+    count: () => suiteChecks.length,
+    tail: () => logLines.slice(-12)
+});
+
 (async () => {
-    const checks = [];
+    const checks = suiteChecks;
     const add = (name, ok) => checks.push([name, ok]);
+
+    // WD: the watchdog above, run in its own process. A hang printed nothing until CI's
+    // 30-minute limit (PR #20, Windows, once in six runs): the checks print at the end,
+    // and the gate captures the suite whole.
+    {
+        const { spawnSync } = require("node:child_process");
+        const wdModule = JSON.stringify(path.join(__dirname, "fixtures", "suite-watchdog.js"));
+        const wdRun = (body) => {
+            const t0 = Date.now();
+            const r = spawnSync(process.execPath, ["-e", `const wd = require(${wdModule});\n${body}`], { encoding: "utf8", timeout: 20000 });
+            return { status: r.status, out: `${r.stdout}${r.stderr}`, ms: Date.now() - t0 };
+        };
+        const wdHung = wdRun([
+            `const held = require("node:child_process").spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)", "wd-held-child"], { stdio: "ignore" });`,
+            `process.on("exit", () => held.kill());`,
+            `require("node:http").createServer().listen(0, "127.0.0.1");`,
+            `wd({ capMs: 400, last: () => "XY the last check", count: () => 7, tail: () => ["[12:00:00] a last log line"] });`,
+            `setInterval(() => {}, 1000);`
+        ].join("\n"));
+        add(`WD a run past its cap exits 1 and names the last check, what is open and the log's tail (${wdHung.status}, ${wdHung.ms} ms)`,
+            wdHung.status === 1 && wdHung.ms < 10000 && /WATCHDOG: the suite is still running/.test(wdHung.out) &&
+            /checks so far: 7; the last: XY the last check/.test(wdHung.out) && /child \d+ .*wd-held-child/.test(wdHung.out) &&
+            /server 127\.0\.0\.1:\d+/.test(wdHung.out) && /a last log line/.test(wdHung.out));
+        const wdStuck = wdRun([
+            `const w = wd({ capMs: 60000, graceMs: 300 });`,
+            `require("node:net").createServer().listen(0, "127.0.0.1");`,
+            `console.log("ALL 1 CHECKS PASSED");`,
+            `w.finished();`
+        ].join("\n"));
+        add(`WD a finished run that does not exit is ended after the grace, naming what holds it (${wdStuck.status}, ${wdStuck.ms} ms)`,
+            wdStuck.status === 1 && wdStuck.ms < 10000 && /ALL 1 CHECKS PASSED/.test(wdStuck.out) && /has not exited/.test(wdStuck.out) && /server 127\.0\.0\.1:\d+/.test(wdStuck.out));
+        const wdClean = wdRun(`const w = wd({ capMs: 60000, graceMs: 60000 }); console.log("done"); w.finished();`);
+        add(`WD a run that ends on its own is not held by the watchdog (${wdClean.status}, ${wdClean.ms} ms)`,
+            wdClean.status === 0 && wdClean.ms < 10000 && !/WATCHDOG/.test(wdClean.out));
+    }
 
     const a = stream();
     await global.__handler({ prompt: "Why does login redirect loop?" }, {}, a.response, a.token);
@@ -10137,7 +10183,9 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
     // a run where all 305 checks passed. Setting exitCode lets the event loop
     // drain and exit on its own with the same status.
     process.exitCode = failed === 0 ? 0 : 1;
+    suiteWatchdog.finished();
 })().catch((err) => {
     console.error(err);
     process.exitCode = 1;
+    suiteWatchdog.finished();
 });
