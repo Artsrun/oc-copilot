@@ -240,6 +240,11 @@ HTTP; REFS 0.0.244). Its logs carry the prompts: use a viewer on this machine on
 - **C3.** Record: does the viewer accept the export (OpenCode sends `application/json`);
   is there an `LLM.stream` span with `gen_ai.request.model` and `session.id`; how many
   traces one turn makes. Set the setting back afterwards.
+- **C4 (0.0.247).** In the same turn's trace: is there an `invoke_agent <agent>` span
+  from service `opencode-copilot-bridge`, and do OpenCode's request spans sit under it?
+  Compare its trace id with the log's `→ server … trace=<id>` line. Search the viewer
+  for the turn's `session.id`: does it find the model trace too? Any "trace export …
+  failed" line in the log?
 
 ### Finish
 

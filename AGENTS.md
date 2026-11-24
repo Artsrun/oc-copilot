@@ -38,7 +38,8 @@ turned it red before its green was trusted.
 | `src/compose.ts` | **The /parallel composer**: one `createQuickPick` per lane, `laneProblem` (the real splitter), insert via `chat.open` + `isPartialQuery`. |
 | `src/runs.ts` | The one import the chat layer uses for running OpenCode (re-exports), and the stale-session retry that needs both runners. |
 | `src/run-cli.ts` | `opencode run --format json`, cold or `--attach`ed: kill on silence, bounded stderr (`STDERR_CAP`), the attached run's liveness from SSE. |
-| `src/run-server.ts` | The server transport: POST + shared SSE, idle watchdog, abort on Stop (the subagents too). |
+| `src/run-server.ts` | The server transport: POST + shared SSE, idle watchdog, abort on Stop (the subagents too). Each run is a trace of its own (`traced`). |
+| `src/trace.ts` | Bridge spans: a run's W3C context on AsyncLocalStorage (`traced`, `traceHeader`), and its span exported as OTLP JSON to `otlpEndpoint`'s `/v1/traces` (`endRun`). No prompt text, ever. |
 | `src/run-steps.ts` | Events → `StepRecord`, `stepDetail`, keyed text/reasoning deltas, the answering model, subagent spend. Pure. |
 | `src/asks.ts` | **Headless asks** for a session and its subagents (`watchFamily`), and what the subagents cost. |
 | `src/server-session.ts` | Session ids (`safeSessionId`, `sessionPath`), **permission rules** (`HEADLESS_PERMISSION`, `turnPermission`, `sessionRules`, `readOnlyReach`, `readOnlyEvidence`/`serverEnforcement` + `assertReadOnly`: effective rules judged per endpoint or cold folder, reopened refuses; a `/dev` turn re-applies the dev agent's own `task` rules after read-only ones), busy/abort (+ children), create, model, compaction. |
@@ -80,9 +81,10 @@ chat-parallel →  agents · chat-boot · compose · context · models · net ·
   chat-boot   →  heartbeat · lanes · chips (re-exported) · core · metrics
     lanes     →  enforce · runs · format · metrics · models · core      chips → lanes · natural
       runs    →  run-cli · run-server · run-steps · asks (re-exported) · server-session · session
- run-cli, run-server →  asks · run-steps · server-session · net · proc (cli) · metrics      run-cli → enforce · run-server (2.x)
+ run-cli, run-server →  asks · run-steps · server-session · net · proc (cli) · metrics      run-cli → enforce · run-server (2.x)      run-server → trace
       asks    →  oc-api · net · run-steps · metrics      server-session → agents · enforce · oc-api · net · metrics
-    oc-api    →  enforce · net · core   (every server request: agents, models, sessions, chat-commands, commands, run-server)
+    oc-api    →  enforce · net · trace · core   (every server request: agents, models, sessions, chat-commands, commands, run-server)
+     trace    →  proc · core   (a run's W3C context and span: run-server, oc-api)
      agents   →  enforce · oc-api · net · proc      net → enforce · proc · v2-events      proc → enforce · core      enforce → core
     models    →  context · env · net · oc-api · proc      commands → env · models · net · oc-api · proc · session · worktree
 commands-registry → commands · compose · models · net · session · worktree
@@ -95,7 +97,7 @@ oc-mcp-server →  agents · format · natural · net · prompt · proc · run-s
 **The engine** is the running layer and everything it imports: `run-cli`,
 `run-server`, `server-session`, `asks`, `agents`, `worktree`, `oc-mcp-server`
 and, through them, `net`, `oc-api`, `v2-events`, `enforce`, `proc`, `run-steps`,
-`metrics`, `format`, `context-markers`, `prompt`, `followups`, `core`. It imports
+`metrics`, `format`, `context-markers`, `prompt`, `followups`, `trace`, `core`. It imports
 no `vscode`, not even a type, and loads in a plain Node process (`EN`): the MCP
 server runs there, and an Agent Host would. What it needs from a window comes
 through `setHost`; a probe or a standalone server installs its own. A new import
@@ -565,6 +567,15 @@ history belongs in `CHANGELOG.md`, not in the source.
   environment, set for another tool, gets OpenCode's prompts: `otlpEndpoint` decides,
   and Diagnose says where they go (`OT`, REFS 0.0.244). A turn's requests join a
   `traceparent` it sends; its model work runs in a trace of its own, joined by `session.id`.
+- **A server run is a trace (0.0.247, `TP`).** Every 2.x API request made inside
+  `runOpenCodeServer` carries its `traceparent` (`oc-api` `auth()`); the shared event
+  stream carries none, and an SSE subscriber's callback runs in its registrant's context
+  (`AsyncResource.bind` in `connectSse`), or an ask answered from turn 2's events carried
+  turn 1's trace. With an endpoint, `endRun` exports one span per run (`invoke_agent
+  <agent>`, `session.id`, outcome), the requests' parent. Outside the trace: the chat's
+  busy check before the run, compaction after it, server boot, 1.x's requests (a 1.x
+  run's span is still exported, with nothing joined to it). A `fallbackModels`
+  attempt is a run, so a trace of its own. Never put prompt or answer text in a span.
 - **Through an AHP host, read-only is the bridge's rules or nothing.** `opencode-ahp` in
   a stock `opencode serve`: plan ran `echo > f`, and so did `explore` under it; in the
   bridge's own server (`ensureServer`, the overrides) plan was offered no writing tool.

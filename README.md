@@ -644,6 +644,14 @@ All under `opencodeCopilotBridge.`.
 
 The last five releases; the full history is `CHANGELOG.md` in the repository.
 
+### 0.0.247
+
+- **Bridge spans: each OpenCode 2 run is one trace.** Every request the bridge makes
+  of OpenCode in a run carries its W3C `traceparent`, so OpenCode's own request spans
+  join it; the trace id is logged beside the session id and kept in the turn's metadata.
+  With `otlpEndpoint` set, the bridge also exports the run's span (agent, session,
+  model, outcome; never prompt text). Checks `TP`, `MP`.
+
 ### 0.0.246
 
 - **Fixed: cancelling an MCP job during server startup or plan-agent lookup now
@@ -674,15 +682,3 @@ The last five releases; the full history is `CHANGELOG.md` in the repository.
 - **Either/or questions** give one chip per option ("Use a cookie" | "Use a header"),
   and the MCP tools end with the answer's next steps. Checks `NF`, `MP`.
 
-### 0.0.242
-
-- **Fixed: a false warning about your permission rules on OpenCode 2.** "OpenCode 2
-  ignores the 1.x permission rules in opencode.json" was wrong: OpenCode 2 applies
-  them (2.0.29 to 2.3.2, measured in a real turn). It is gone. Checks `TW`.
-- **OpenCode 1.19.6 and 2.3.2 are tested**, and no longer say they are outside the
-  tested versions. Checks `VN`, `TW`.
-- **Known: on OpenCode 2.3 a subagent runs in the background**, so a turn can answer
-  before the subagent it started has finished. Nothing changed for it yet.
-- **Corrected:** OpenCode reads `AGENTS.md` and what `opencode.json` `instructions`
-  lists, not `.github/copilot-instructions.md` by itself. To use that file with
-  `@oc`, list it in `instructions`.

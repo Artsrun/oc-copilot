@@ -8,6 +8,7 @@
 import { Cancel, delay, logChannel, stamp } from "./core";
 import { toV1Rules, toV2Rules } from "./enforce";
 import { connectSse, currentServerGeneration, httpGetJson, httpPostJson, httpRequestJson, serverAuth, serverVersion, withDirectory } from "./net";
+import { traceHeader } from "./trace";
 
 // A session id is untrusted (stdout, server, replayed metadata). In a URL path
 // `..` walks to another endpoint; in argv a leading `-` is a flag. Every site
@@ -178,7 +179,8 @@ const runsOnAgentModel = (base: string): boolean => {
 };
 
 const v2 = (base: string): ServerApi => {
-    const auth = (): Record<string, string> => serverAuth(base) ?? {};
+    // A request made inside a run carries its traceparent: 2.x joins its request spans to it (trace.ts).
+    const auth = (): Record<string, string> => ({ ...(serverAuth(base) ?? {}), ...traceHeader() });
     const url = (path: string, query: Record<string, string | number | undefined> = {}): string => {
         const q = Object.entries(query).filter(([, v]) => v !== undefined).map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`).join("&");
         return `${base}/api${path}${q ? `?${q}` : ""}`;

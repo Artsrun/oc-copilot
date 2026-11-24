@@ -630,6 +630,7 @@ async function finishTurn(t: Turn, live: Live, outcome: Outcome): Promise<vscode
             kind,
             agent: agentLabel,
             sessionId,
+            ...(metrics?.traceId ? { traceId: metrics.traceId } : {}),
             cwd,
             turns,
             // Running totals travel with the turn: a reopened chat resumes them.

@@ -163,7 +163,7 @@ module.exports = (argv) => {
         req.on("end", () => {
             const json = (() => { try { return body ? JSON.parse(body) : undefined; } catch { return undefined; } })();
             const authed = req.headers.authorization === "Basic " + Buffer.from(`opencode:${PASSWORD}`).toString("base64");
-            record({ method: req.method, path: u.pathname, query: u.search, authed, body: json });
+            record({ method: req.method, path: u.pathname, query: u.search, authed, body: json, traceparent: req.headers.traceparent });
             const send = (code, payload) => {
                 res.writeHead(code, { "content-type": "application/json" });
                 res.end(payload === undefined ? "" : JSON.stringify(payload));

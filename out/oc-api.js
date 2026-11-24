@@ -7,6 +7,7 @@ exports.api = api;
 const core_1 = require("./core");
 const enforce_1 = require("./enforce");
 const net_1 = require("./net");
+const trace_1 = require("./trace");
 const SAFE_ID = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$/;
 function safeSessionId(sessionId) {
     if (SAFE_ID.test(sessionId)) {
@@ -112,7 +113,7 @@ const runsOnAgentModel = (base) => {
     return major > 2 || (major === 2 && (minor > 1 || (minor === 1 && patch >= 4)));
 };
 const v2 = (base) => {
-    const auth = () => (0, net_1.serverAuth)(base) ?? {};
+    const auth = () => ({ ...((0, net_1.serverAuth)(base) ?? {}), ...(0, trace_1.traceHeader)() });
     const url = (path, query = {}) => {
         const q = Object.entries(query).filter(([, v]) => v !== undefined).map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`).join("&");
         return `${base}/api${path}${q ? `?${q}` : ""}`;

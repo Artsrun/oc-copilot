@@ -9,7 +9,22 @@ const metrics_1 = require("./metrics");
 const asks_1 = require("./asks");
 const run_steps_1 = require("./run-steps");
 const server_session_1 = require("./server-session");
-async function runOpenCodeServer(options) {
+const trace_1 = require("./trace");
+function runOpenCodeServer(options) {
+    return (0, trace_1.traced)(async (run) => {
+        try {
+            const metrics = await runServer(options, run);
+            const outcome = metrics.error ? "error" : metrics.timedOut ? "timeout" : metrics.cancelled || options.token?.isCancellationRequested ? "cancelled" : "done";
+            (0, trace_1.endRun)(run, { agent: options.agent, model: metrics.model ?? options.model, readOnly: Boolean(options.readOnly), outcome, error: metrics.error });
+            return metrics;
+        }
+        catch (error) {
+            (0, trace_1.endRun)(run, { agent: options.agent, model: options.model, readOnly: Boolean(options.readOnly), outcome: "error", error: error instanceof Error ? error.message : String(error) });
+            throw error;
+        }
+    });
+}
+async function runServer(options, run) {
     const started = Date.now();
     const idleMs = options.idleTimeoutMs ?? 0;
     let lastEventAt = Date.now();
@@ -41,6 +56,8 @@ async function runOpenCodeServer(options) {
         await (0, server_session_1.applyTurnPermission)(base, options.cwd, sessionId, readOnly, options.agent);
     }
     metrics.sessionId = sessionId;
+    metrics.traceId = run.traceId;
+    run.sessionId = sessionId;
     const mine = sessionId;
     const body = { parts: [{ type: "text", text: options.task }] };
     if (options.agent) {
@@ -56,7 +73,7 @@ async function runOpenCodeServer(options) {
         body.variant = options.variant;
     }
     core_1.logChannel.appendLine(`[${(0, core_1.stamp)()}] → server ${base}${(0, server_session_1.sessionPath)(sessionId, "message")} ` +
-        `(agent=${options.agent ?? "-"} model=${options.model ?? "-"}${options.variant ? ` variant=${options.variant}` : ""})`);
+        `(agent=${options.agent ?? "-"} model=${options.model ?? "-"}${options.variant ? ` variant=${options.variant}` : ""}) trace=${run.traceId}`);
     let attached = () => undefined;
     const subscribed = new Promise((resolve) => {
         attached = resolve;
