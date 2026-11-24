@@ -3623,7 +3623,12 @@ function collectConfigProperties(configuration) {
     add("JH per-delta text is kept out of the channel by default", !jhQuiet.includes(M.text));
     add("JH debugLog:true still yields the deltas when asked for", jhLoud.includes(M.thought) || jhLoud.includes(M.text));
     add("JH tool steps are logged either way", jhQuiet.includes("grep") && jhLoud.includes("grep"));
-    add("JH turning the deltas off makes the channel strictly smaller", jhQuiet.length < jhLoud.length);
+    // Red on Windows CI only, intermittently (2f46aa2, f6d6634): name what the quiet
+    // turn logged that the loud one did not, stamps and the prompt's last word aside.
+    const jhKey = (l) => l.replace(/^\[\d\d:\d\d:\d\d\] /, "").replace(/\d\d:\d\d:\d\d/, "").replace(/logging (off|on)/, "logging");
+    const jhLoudKeys = new Set(jhLoud.split("\n").map(jhKey));
+    const jhOnlyQuiet = jhQuiet.split("\n").filter((l) => !jhLoudKeys.has(jhKey(l)));
+    add(`JH turning the deltas off makes the channel strictly smaller${jhQuiet.length < jhLoud.length ? "" : ` (${jhQuiet.length} vs ${jhLoud.length} chars; only in the quiet turn: ${JSON.stringify(jhOnlyQuiet).slice(0, 1200)})`}`, jhQuiet.length < jhLoud.length);
 
     // KA: v167 — the wall clock no longer blocks a long task, and captured
     // output is no longer clipped.
