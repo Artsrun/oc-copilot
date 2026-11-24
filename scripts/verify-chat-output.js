@@ -7701,26 +7701,31 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         add("SN a full id passes through as typed, even unlisted", R("x/y").id === "x/y" && R("x/y").unlisted === true && R("acme-gateway/tundra").id === "acme-gateway/Tundra");
         add("SN a label reads name then id", ext.__test.modelLabel("acme-gateway/Tundra", snCat.info) === "Tundra (Model-1, Code generation & refactors) · `acme-gateway/Tundra`" && ext.__test.modelLabel("x/y", {}) === "`x/y`");
 
-        globalMemento.set("opencode.models.v2", { models: snCat.models, info: snCat.info, fetchedAt: Date.now() });
-        settings.executable = happy;
-        memento.clear();
+        // On OpenCode 2: the model is what the session was sent (`POST …/model`), and a
+        // refusal leaves no prompt in the record.
         const snT = stream();
-        await global.__handler({ prompt: "model:tundra why is login slow" }, {}, snT.response, snT.token);
-        const snArgv = lastArgv("fake-ok.js");
-        add("SN `model:tundra` sends the full id", snArgv[snArgv.indexOf("--model") + 1] === "acme-gateway/Tundra" && snArgv[snArgv.length - 1].startsWith("why is login slow"));
-        fs.rmSync(path.join(work, "fake-ok.js.argv"), { force: true });
         const snA = stream();
-        await global.__handler({ prompt: "model:gemini why is login slow" }, {}, snA.response, snA.token);
+        const snU = stream();
+        const sn = await oc2Use(async () => {
+            const turn = async (prompt, st) => {
+                const from = oc2Reqs().length;
+                await global.__handler({ prompt }, {}, st.response, st.token);
+                return oc2Reqs().slice(from);
+            };
+            globalMemento.set("opencode.models.v2", { models: snCat.models, info: snCat.info, fetchedAt: Date.now() });
+            memento.clear();
+            return { t: await turn("model:tundra why is login slow", snT), a: await turn("model:gemini why is login slow", snA), u: await turn("model:nosuch why is login slow", snU) };
+        });
+        const snPosts = (reqs, tail) => reqs.filter((r) => r.method === "POST" && new RegExp(`^/api/session/[^/]+/${tail}$`).test(r.path ?? ""));
+        const snSentModel = snPosts(sn.t, "model").map((r) => `${r.body?.model?.providerID}/${r.body?.model?.id}`);
+        const snSent = snPosts(sn.t, "prompt").map((r) => String(r.body?.text ?? ""));
+        add(`SN \`model:tundra\` sends the full id (${snSentModel.join()})`, snSentModel.join() === "acme-gateway/Tundra" && snSent.length === 1 && snSent[0].startsWith("why is login slow"));
         add(
             "SN an ambiguous `model:` is refused before anything runs",
-            !fs.existsSync(path.join(work, "fake-ok.js.argv")) && /matches .*google\/gemini-flash.*google\/gemini-pro/.test(snA.chatMarkdown.join(""))
+            !sn.a.some((r) => r.method === "POST") && /matches .*google\/gemini-flash.*google\/gemini-pro/.test(snA.chatMarkdown.join(""))
         );
-        const snU = stream();
-        await global.__handler({ prompt: "model:nosuch why is login slow" }, {}, snU.response, snU.token);
-        const snUArgv = lastArgv("fake-ok.js");
-        add("SN an unknown short name is refused, not sent", !snUArgv.some((a) => a.includes("why is login slow")) && /not in OpenCode's model list/.test(snU.chatMarkdown.join("")));
-        add("SN an unknown short name refetches the catalog even when the cache is fresh", snUArgv.slice(-2).join(" ") === "models --verbose");
-        fs.rmSync(path.join(work, "fake-ok.js.argv"), { force: true });
+        add("SN an unknown short name is refused, not sent", snPosts(sn.u, "prompt").length === 0 && /not in OpenCode's model list/.test(snU.chatMarkdown.join("")));
+        add(`SN an unknown short name refetches the catalog even when the cache is fresh (${sn.u.map((r) => `${r.method} ${r.path}`).join(", ")})`, sn.u.some((r) => r.method === "GET" && r.path === "/api/model"));
 
         // Real `opencode models --verbose` shape, captured 2026-09-29 on a
         // company gateway, provider renamed acme-gateway (trimmed to the fields that matter; options/headers
@@ -7798,6 +7803,15 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         const plIsCatalog = (a) => a[a.length - 1] === "models" || a.slice(-2).join(" ") === "models --verbose";
         const plRuns = () => plAll().filter((a) => !plIsCatalog(a));
         const plModels = () => plRuns().map((a) => (a.includes("--model") ? a[a.indexOf("--model") + 1] : "")).sort();
+        // Its own catalog: PL and CL once read SN's, left by a 1.x refetch that failed.
+        globalMemento.set("opencode.models.v2", {
+            models: ["acme-gateway/Tundra", "acme-gateway/Oasis", "openai/gpt-5-flash", "google/gemini-flash", "google/gemini-pro"],
+            info: {
+                "acme-gateway/Tundra": { name: "Tundra (Model-1, Code generation & refactors)" },
+                "acme-gateway/Oasis": { name: "Oasis (Model-2, Investigation & log analysis)" }
+            },
+            fetchedAt: Date.now()
+        });
         settings.executable = plFake;
         const plTurn = async (prompt) => {
             fs.rmSync(plLog, { force: true });
