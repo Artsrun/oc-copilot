@@ -85,7 +85,7 @@ function endRun(run, end) {
                                 startTimeUnixNano: ns(run.startedAt),
                                 endTimeUnixNano: ns(Math.max(Date.now(), run.startedAt + 1)),
                                 attributes,
-                                status: end.outcome === "error" ? { code: 2, message: (0, core_1.truncate)(end.error ?? "", 200) } : { code: end.outcome === "done" ? 1 : 0 }
+                                status: { code: end.outcome === "error" ? 2 : end.outcome === "done" ? 1 : 0 }
                             }]
                     }]
             }]
@@ -97,16 +97,24 @@ function endRun(run, end) {
     catch {
         return warnOnce(endpoint, "not a URL");
     }
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+        return warnOnce(endpoint, `unsupported protocol ${url.protocol}`);
+    }
     const send = url.protocol === "https:" ? https.request : http.request;
-    const req = send(url, { method: "POST", headers: { "content-type": "application/json", "content-length": Buffer.byteLength(body) } }, (res) => {
-        res.resume();
-        if ((res.statusCode ?? 0) >= 300) {
-            warnOnce(endpoint, `HTTP ${res.statusCode}`);
-        }
-    });
-    req.setTimeout(3000, () => req.destroy(new Error("timed out after 3 s")));
-    req.on("error", (error) => warnOnce(endpoint, error.message));
-    req.end(body);
+    try {
+        const req = send(url, { method: "POST", headers: { "content-type": "application/json", "content-length": Buffer.byteLength(body) } }, (res) => {
+            res.resume();
+            if ((res.statusCode ?? 0) >= 300) {
+                warnOnce(endpoint, `HTTP ${res.statusCode}`);
+            }
+        });
+        req.setTimeout(3000, () => req.destroy(new Error("timed out after 3 s")));
+        req.on("error", (error) => warnOnce(endpoint, error.message));
+        req.end(body);
+    }
+    catch (error) {
+        warnOnce(endpoint, error instanceof Error ? error.message : String(error));
+    }
 }
 function warnOnce(endpoint, why) {
     if (!warned.has(endpoint)) {

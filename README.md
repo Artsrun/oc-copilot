@@ -681,4 +681,3 @@ The last five releases; the full history is `CHANGELOG.md` in the repository.
   still working when the turn ended. Checks `BT`.
 - **Either/or questions** give one chip per option ("Use a cookie" | "Use a header"),
   and the MCP tools end with the answer's next steps. Checks `NF`, `MP`.
-
