@@ -245,6 +245,11 @@ HTTP; REFS 0.0.244). Its logs carry the prompts: use a viewer on this machine on
   Compare its trace id with the log's `→ server … trace=<id>` line. Search the viewer
   for the turn's `session.id`: does it find the model trace too? Any "trace export …
   failed" line in the log?
+- **C5 (0.0.248).** Set `otlpEndpoint` to `localhost:4318` (no scheme) and send one
+  `@oc` message: one answer, one `trace export to localhost:4318 failed: unsupported
+  protocol localhost:` line, and no `server failed, falling back to CLI` line. Then send
+  a turn the provider fails (a model whose key is unset): its span has status code 2 and no
+  message.
 
 ### Finish
 

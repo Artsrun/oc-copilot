@@ -589,7 +589,10 @@ history belongs in `CHANGELOG.md`, not in the source.
   <agent>`, `session.id`, outcome), the requests' parent. Outside the trace: the chat's
   busy check before the run, compaction after it, server boot, 1.x's requests (a 1.x
   run's span is still exported, with nothing joined to it). A `fallbackModels`
-  attempt is a run, so a trace of its own. Never put prompt or answer text in a span.
+  attempt is a run, so a trace of its own. Never put prompt or answer text in a span,
+  nor an error message (a provider's can quote the prompt). **`endRun` never throws**:
+  it runs after a finished run, and 0.0.247's throw on `localhost:4318` (the scheme
+  `localhost:`) read as a server failure, whose fallback posted the prompt again (0.0.248).
 - **Through an AHP host, read-only is the bridge's rules or nothing.** `opencode-ahp` in
   a stock `opencode serve`: plan ran `echo > f`, and so did `explore` under it; in the
   bridge's own server (`ensureServer`, the overrides) plan was offered no writing tool.

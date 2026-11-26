@@ -59,10 +59,18 @@ const warned = new Set();
 const tracesUrl = (endpoint) => `${endpoint.replace(/\/+$/, "")}/v1/traces`;
 exports.tracesUrl = tracesUrl;
 function endRun(run, end) {
-    const { endpoint } = (0, proc_1.otlpEndpoint)();
-    if (!endpoint) {
-        return;
+    let endpoint;
+    try {
+        endpoint = (0, proc_1.otlpEndpoint)().endpoint;
+        if (endpoint) {
+            exportSpan(endpoint, run, end);
+        }
     }
+    catch (error) {
+        warnOnce(endpoint ?? "otlpEndpoint", error instanceof Error ? error.message : String(error));
+    }
+}
+function exportSpan(endpoint, run, end) {
     const agent = end.agent ?? "build";
     const attributes = [
         str("gen_ai.operation.name", "invoke_agent"),
@@ -101,20 +109,15 @@ function endRun(run, end) {
         return warnOnce(endpoint, `unsupported protocol ${url.protocol}`);
     }
     const send = url.protocol === "https:" ? https.request : http.request;
-    try {
-        const req = send(url, { method: "POST", headers: { "content-type": "application/json", "content-length": Buffer.byteLength(body) } }, (res) => {
-            res.resume();
-            if ((res.statusCode ?? 0) >= 300) {
-                warnOnce(endpoint, `HTTP ${res.statusCode}`);
-            }
-        });
-        req.setTimeout(3000, () => req.destroy(new Error("timed out after 3 s")));
-        req.on("error", (error) => warnOnce(endpoint, error.message));
-        req.end(body);
-    }
-    catch (error) {
-        warnOnce(endpoint, error instanceof Error ? error.message : String(error));
-    }
+    const req = send(url, { method: "POST", headers: { "content-type": "application/json", "content-length": Buffer.byteLength(body) } }, (res) => {
+        res.resume();
+        if ((res.statusCode ?? 0) >= 300) {
+            warnOnce(endpoint, `HTTP ${res.statusCode}`);
+        }
+    });
+    req.setTimeout(3000, () => req.destroy(new Error("timed out after 3 s")));
+    req.on("error", (error) => warnOnce(endpoint, error.message));
+    req.end(body);
 }
 function warnOnce(endpoint, why) {
     if (!warned.has(endpoint)) {

@@ -644,6 +644,12 @@ All under `opencodeCopilotBridge.`.
 
 The last five releases; the full history is `CHANGELOG.md` in the repository.
 
+### 0.0.248
+
+- **Fixed: an `otlpEndpoint` the bridge cannot post to (`localhost:4318`, no scheme)
+  no longer fails a finished OpenCode 2 run and sends its prompt twice**; it costs one
+  log line. An error span carries no error text. Check `TP`.
+
 ### 0.0.247
 
 - **Bridge spans: each OpenCode 2 run is one trace.** Every request the bridge makes
@@ -671,13 +677,3 @@ The last five releases; the full history is `CHANGELOG.md` in the repository.
   and **its logs include each prompt's text**. The setting points it at a viewer, or
   `off` removes an endpoint VS Code's environment set for another tool. Diagnose says
   where it goes. Checks `OT`, `GC`.
-
-### 0.0.243
-
-- **`@oc` is the new name**; existing chats and settings carry on.
-- **OpenCode 1 is deprecated**: it still runs and says so once per window. Install
-  OpenCode 2 (see *OpenCode 2*).
-- **New chip on OpenCode 2.3: Collect `<agent>`** gets the result of a subagent that was
-  still working when the turn ended. Checks `BT`.
-- **Either/or questions** give one chip per option ("Use a cookie" | "Use a header"),
-  and the MCP tools end with the answer's next steps. Checks `NF`, `MP`.

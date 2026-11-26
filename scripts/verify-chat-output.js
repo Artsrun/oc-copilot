@@ -2204,16 +2204,21 @@ const suiteWatchdog = require(path.join(__dirname, "fixtures", "suite-watchdog.j
             // Both lanes ask: one socket serves both, so one lane's ask is answered from
             // events the other lane's subscription opened.
             const lanes = (memento.clear(), await tpTurn("lane alpha [[probe:bash]] | lane beta [[probe:bash]]", "parallel"));
-            const exported = await spansAfter(spanCount + 2);
-            settings.otlpEndpoint = endpoint;
+            await spansAfter(spanCount + 2);
             memento.clear();
             const errorTurn = await tpTurn("PROMPT_SENTINEL [[script:tp-error]]");
-            const withError = await spansAfter(spanCount + 3);
+            const exported = await spansAfter(spanCount + 3);
+            // An endpoint the bridge cannot post to: `localhost:4318` parses as the
+            // scheme `localhost:`, and http.request throws on it. 0.0.247 threw after the
+            // finished run, so the run read as failed and the fallback posted it again.
+            settings.otlpEndpoint = "localhost:4318";
+            memento.clear();
+            const unpostable = await tpTurn("trace me unpostable");
             settings.otlpEndpoint = "off";
             memento.clear();
             const quiet = await tpTurn("trace me with export off");
             await delay(300);
-            return { one, two, lanes, errorTurn, quiet, exported: withError, afterOff: spans.length };
+            return { one, two, lanes, errorTurn, unpostable, quiet, exported, afterOff: spans.length };
         });
         collector.close();
         settings.otlpEndpoint = savedOtlp;
@@ -2266,6 +2271,10 @@ const suiteWatchdog = require(path.join(__dirname, "fixtures", "suite-watchdog.j
             Boolean(errorSpan) && errorSpan.status?.code === 2 && !Object.hasOwn(errorSpan.status, "message"));
         add(`TP "off" exports nothing, and the requests still carry a traceparent (${tp.afterOff - tp.exported.length} posts after off)`,
             tp.afterOff === tp.exported.length && apiOf(tp.quiet).length > 0 && apiOf(tp.quiet).every((r) => W3C.test(r.traceparent ?? "")));
+        const unpostablePrompts = tp.unpostable.reqs.filter((r) => r.method === "POST" && /^\/api\/session\/[^/]+\/prompt$/.test(r.path ?? ""));
+        add(`TP an endpoint the bridge cannot post to (localhost:4318) costs one log line, not the run: one prompt, its answer in chat (${unpostablePrompts.length} prompts)`,
+            unpostablePrompts.length === 1 && tp.unpostable.st.chatMarkdown.join("").includes("Hello from the scripted model.") &&
+            logLines.some((l) => /trace export to localhost:4318 failed: unsupported protocol localhost:/.test(l)));
         const { endRun } = require(path.join(__dirname, "..", "out", "trace.js"));
         settings.otlpEndpoint = "ftp://127.0.0.1:4318";
         let invalidEndpointThrew = false;

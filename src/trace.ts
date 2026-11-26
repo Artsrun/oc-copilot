@@ -52,12 +52,22 @@ const warned = new Set<string>();
 export const tracesUrl = (endpoint: string): string => `${endpoint.replace(/\/+$/, "")}/v1/traces`;
 
 /** Exports the run's span when an endpoint is in force. Never awaited, never throws:
- * a collector that is down costs one log line per endpoint, not a turn. */
+ * it runs after a finished run, and a throw here reported that run failed, so the
+ * server-failed fallback posted its prompt again (0.0.247, `localhost:4318`). A
+ * collector that is down, or an endpoint it cannot post to, costs one log line. */
 export function endRun(run: RunTrace, end: RunEnd): void {
-    const { endpoint } = otlpEndpoint();
-    if (!endpoint) {
-        return;
+    let endpoint: string | undefined;
+    try {
+        endpoint = otlpEndpoint().endpoint;
+        if (endpoint) {
+            exportSpan(endpoint, run, end);
+        }
+    } catch (error) {
+        warnOnce(endpoint ?? "otlpEndpoint", error instanceof Error ? error.message : String(error));
     }
+}
+
+function exportSpan(endpoint: string, run: RunTrace, end: RunEnd): void {
     const agent = end.agent ?? "build";
     const attributes = [
         str("gen_ai.operation.name", "invoke_agent"),
@@ -91,23 +101,20 @@ export function endRun(run: RunTrace, end: RunEnd): void {
     } catch {
         return warnOnce(endpoint, "not a URL");
     }
+    // `localhost:4318` parses, as the scheme `localhost:`; http.request throws on it.
     if (url.protocol !== "http:" && url.protocol !== "https:") {
         return warnOnce(endpoint, `unsupported protocol ${url.protocol}`);
     }
     const send = url.protocol === "https:" ? https.request : http.request;
-    try {
-        const req = send(url, { method: "POST", headers: { "content-type": "application/json", "content-length": Buffer.byteLength(body) } }, (res) => {
-            res.resume();
-            if ((res.statusCode ?? 0) >= 300) {
-                warnOnce(endpoint, `HTTP ${res.statusCode}`);
-            }
-        });
-        req.setTimeout(3000, () => req.destroy(new Error("timed out after 3 s")));
-        req.on("error", (error) => warnOnce(endpoint, error.message));
-        req.end(body);
-    } catch (error) {
-        warnOnce(endpoint, error instanceof Error ? error.message : String(error));
-    }
+    const req = send(url, { method: "POST", headers: { "content-type": "application/json", "content-length": Buffer.byteLength(body) } }, (res) => {
+        res.resume();
+        if ((res.statusCode ?? 0) >= 300) {
+            warnOnce(endpoint, `HTTP ${res.statusCode}`);
+        }
+    });
+    req.setTimeout(3000, () => req.destroy(new Error("timed out after 3 s")));
+    req.on("error", (error) => warnOnce(endpoint, error.message));
+    req.end(body);
 }
 
 function warnOnce(endpoint: string, why: string): void {
