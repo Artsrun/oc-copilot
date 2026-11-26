@@ -148,9 +148,16 @@ if (stopIfRed("verify and package were not run")) {
 // shell:false is deliberate. process.execPath is "C:\Program Files\nodejs\node.exe"
 // on a default Windows install, and a shell splits it at the space, so this check
 // could never pass here. node.exe needs no shell to launch.
+// The suite's own watchdog ends a hung run at 15 minutes and says what is open; this
+// cap is for a hang it cannot see (CI's job limit is 30 and printed nothing, PR #20).
+const VERIFY_CAP_MS = 25 * 60 * 1000;
 const verified = run("3/4 verify", process.execPath, [path.join("scripts", "verify-chat-output.js")], {
-    shell: false
+    shell: false,
+    timeout: VERIFY_CAP_MS
 });
+if (verified.status === null) {
+    console.log(`\nverify was stopped after ${VERIFY_CAP_MS / 60000} minutes; the output above is all it printed.`);
+}
 if (verified.ok && !/ALL \d+ CHECKS PASSED/.test(verified.out)) {
     // Exit 0 without the banner means the suite bailed early.
     results.push(["3/4 verify printed the pass banner", false]);
