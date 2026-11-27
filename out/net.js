@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.PREWARM_DELAY_MS = exports.currentServerGeneration = exports.lastServeFailure = exports.forgetDataFolderClashes = exports.forgetDataFolderClash = exports.isDataFolderClash = exports.plainError = exports.isNotOpenCode1 = exports.openCode1Refusal = exports.isIdentityUnknown = exports.serverVersion = exports.TESTED_OPENCODE2 = exports.TESTED_OPENCODE = exports.openCode2Allowed = exports.serverAuth = void 0;
+exports.PREWARM_DELAY_MS = exports.currentServerGeneration = exports.lastServeFailure = exports.forgetDataFolderClashes = exports.forgetDataFolderClash = exports.isDataFolderClash = exports.plainError = exports.promptSentTo = exports.isNotOpenCode1 = exports.openCode1Refusal = exports.isIdentityUnknown = exports.serverVersion = exports.TESTED_OPENCODE2 = exports.TESTED_OPENCODE = exports.openCode2Allowed = exports.serverAuth = void 0;
 exports.withDirectory = withDirectory;
 exports.httpRequestJson = httpRequestJson;
 exports.httpGetJson = httpGetJson;
@@ -44,6 +44,7 @@ exports.openCode1Deprecation = openCode1Deprecation;
 exports.resetOpenCode1Deprecation = resetOpenCode1Deprecation;
 exports.ensureCliIdentity = ensureCliIdentity;
 exports.markNotOpenCode1 = markNotOpenCode1;
+exports.markPromptSent = markPromptSent;
 exports.noteDataFolderClash = noteDataFolderClash;
 exports.dataFolderRefusal = dataFolderRefusal;
 exports.majorVersionNote = majorVersionNote;
@@ -310,6 +311,20 @@ const openCode1Refusal = (executable) => notOpenCode1.get(executable);
 exports.openCode1Refusal = openCode1Refusal;
 const isNotOpenCode1 = (error) => error?.code === "ENOTOPENCODE1";
 exports.isNotOpenCode1 = isNotOpenCode1;
+const NOT_DELIVERED = /^HTTP 4\d\d\b/;
+function markPromptSent(error, sessionId) {
+    const code = error?.code;
+    if (code === "ECONNREFUSED" || NOT_DELIVERED.test(error instanceof Error ? error.message : "")) {
+        return error;
+    }
+    const marked = error instanceof Error ? error : new Error(String(error));
+    return Object.assign(marked, { promptSentTo: sessionId });
+}
+const promptSentTo = (error) => {
+    const to = error?.promptSentTo;
+    return typeof to === "string" && to ? to : undefined;
+};
+exports.promptSentTo = promptSentTo;
 const plainError = (text) => text.replace(/\x1b\[[0-9;]*m/g, "");
 exports.plainError = plainError;
 const DATA_CLASH = /Database is not empty and has no session table/i;

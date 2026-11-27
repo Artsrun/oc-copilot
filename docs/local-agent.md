@@ -41,8 +41,10 @@ git fetch origin
 git status
 ```
 
-The tree must be clean; if not, stop and show it. Check out `main`, or the
-branch of the pull request the owner names if it is not merged yet, and pull.
+The tree must be clean; if not, stop and show it. Uncommitted changes are not the
+release: do not review, build or package them (0.0.248: a dirty tree that reverted the
+release read as three blockers). Check out `main`, or the branch of the pull request
+the owner names if it is not merged yet, and pull.
 Then report:
 
 ```text

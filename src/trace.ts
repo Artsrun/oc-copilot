@@ -11,7 +11,7 @@ import * as http from "node:http";
 import * as https from "node:https";
 
 import { logChannel, stamp, truncate } from "./core";
-import { otlpEndpoint } from "./proc";
+import { otlpEndpoint, otlpUnpostable } from "./proc";
 
 export interface RunTrace {
     traceId: string;
@@ -95,16 +95,11 @@ function exportSpan(endpoint: string, run: RunTrace, end: RunEnd): void {
             }]
         }]
     });
-    let url: URL;
-    try {
-        url = new URL(tracesUrl(endpoint));
-    } catch {
-        return warnOnce(endpoint, "not a URL");
+    const unpostable = otlpUnpostable(endpoint);
+    if (unpostable) {
+        return warnOnce(endpoint, unpostable);
     }
-    // `localhost:4318` parses, as the scheme `localhost:`; http.request throws on it.
-    if (url.protocol !== "http:" && url.protocol !== "https:") {
-        return warnOnce(endpoint, `unsupported protocol ${url.protocol}`);
-    }
+    const url = new URL(tracesUrl(endpoint));
     const send = url.protocol === "https:" ? https.request : http.request;
     const req = send(url, { method: "POST", headers: { "content-type": "application/json", "content-length": Buffer.byteLength(body) } }, (res) => {
         res.resume();

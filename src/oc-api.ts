@@ -7,7 +7,7 @@
 // `opencode2` is on (the default) and only on the server this window started (net.ts).
 import { Cancel, delay, logChannel, stamp } from "./core";
 import { toV1Rules, toV2Rules } from "./enforce";
-import { connectSse, currentServerGeneration, httpGetJson, httpPostJson, httpRequestJson, serverAuth, serverVersion, withDirectory } from "./net";
+import { connectSse, currentServerGeneration, httpGetJson, httpPostJson, httpRequestJson, markPromptSent, serverAuth, serverVersion, withDirectory } from "./net";
 import { traceHeader } from "./trace";
 
 // A session id is untrusted (stdout, server, replayed metadata). In a URL path
@@ -80,7 +80,11 @@ const v1 = (base: string): ServerApi => {
         sessionChildren: (cwd, id, timeoutMs) => httpGetJson(at(sessionPath(id, "children"), cwd), timeoutMs),
         sessionMessages: (cwd, id, limit, timeoutMs) => httpGetJson(at(`${sessionPath(id, "message")}?limit=${limit}`, cwd), timeoutMs),
         sessionAbort: (cwd, id, timeoutMs) => httpRequestJson("POST", at(sessionPath(id, "abort"), cwd), undefined, timeoutMs),
-        sessionPrompt: (cwd, id, body, timeoutMs, token) => httpRequestJson("POST", at(sessionPath(id, "message"), cwd), body, timeoutMs, token),
+        // The request is the prompt: once written, a failure may follow its delivery.
+        sessionPrompt: <T>(cwd: string, id: string, body: unknown, timeoutMs: number | undefined, token?: Cancel) =>
+            httpRequestJson<T>("POST", at(sessionPath(id, "message"), cwd), body, timeoutMs, token).catch((error: unknown) => {
+                throw markPromptSent(error, id);
+            }),
         sessionSummarize: (cwd, id, body, timeoutMs) => httpPostJson(at(sessionPath(id, "summarize"), cwd), body, timeoutMs),
         permissionReply: (cwd, sessionId, askId, legacy, body, timeoutMs) =>
             httpRequestJson("POST", at(legacy ? sessionPath(sessionId, `permissions/${safeSessionId(askId)}`) : `/permission/${safeSessionId(askId)}/reply`, cwd), body, timeoutMs),
@@ -386,9 +390,12 @@ const v2 = (base: string): ServerApi => {
                 inbox = typeof queued?.id === "string" ? queued.id : undefined;
             } catch (error) {
                 w.abandon();
-                throw error;
+                throw markPromptSent(error, id);
             }
-            return w.result;
+            // Queued: whatever the wait throws now, the prompt was delivered.
+            return w.result.catch((error: unknown) => {
+                throw markPromptSent(error, id);
+            });
         },
         sessionSummarize: async (cwd, id, _body, timeoutMs) => {
             const w = watch(base, id, timeoutMs, undefined, (ev) => (ev.type === "v2.compaction" && propsOf(ev).sessionID === id ? (propsOf(ev).ok === true ? 200 : 500) : undefined));

@@ -4,7 +4,7 @@ import { platform } from "node:process";
 import { config, truncate } from "./core";
 import { activeCwd, resolveFolder } from "./host";
 import { mark } from "./followups";
-import { otlpEndpoint, resolveExecutable, runCapture } from "./proc";
+import { otlpEndpoint, otlpUnpostable, resolveExecutable, runCapture } from "./proc";
 import { dataFolderRefusal, knownServerBase, lastServeFailure, majorVersionNote } from "./net";
 import { api } from "./oc-api";
 import { copilotConfigNote } from "./oc-mcp";
@@ -262,5 +262,8 @@ function otlpNote(): string {
         return "not set: OpenCode exports nothing (`otlpEndpoint`)";
     }
     const source = otlp.from === "setting" ? "the otlpEndpoint setting" : "VS Code's environment (OTEL_EXPORTER_OTLP_ENDPOINT)";
-    return `\`${truncate(otlp.endpoint ?? "", 80)}\` from ${source}: OpenCode 2 sends its traces and logs there, and its logs include each prompt's text`;
+    // Said only for the bridge's own spans: what OpenCode does with such a value is not measured.
+    const unpostable = otlpUnpostable(otlp.endpoint ?? "");
+    const bridge = unpostable ? `; the bridge cannot post its own spans there: it needs http:// or https:// (${unpostable})` : "";
+    return `\`${truncate(otlp.endpoint ?? "", 80)}\` from ${source}: OpenCode 2 sends its traces and logs there, and its logs include each prompt's text${bridge}`;
 }

@@ -41,6 +41,7 @@ exports.resolveExecutable = resolveExecutable;
 exports.executableStamp = executableStamp;
 exports.dataHomeEnv = dataHomeEnv;
 exports.otlpEndpoint = otlpEndpoint;
+exports.otlpUnpostable = otlpUnpostable;
 exports.spawnOpenCode = spawnOpenCode;
 exports.runCapture = runCapture;
 exports.killTree = killTree;
@@ -240,6 +241,16 @@ function otlpEndpoint() {
     }
     const inherited = process.env.OTEL_EXPORTER_OTLP_ENDPOINT?.trim();
     return inherited ? { endpoint: inherited, from: "environment" } : { from: "none" };
+}
+function otlpUnpostable(endpoint) {
+    let url;
+    try {
+        url = new URL(endpoint);
+    }
+    catch {
+        return "not a URL";
+    }
+    return url.protocol === "http:" || url.protocol === "https:" ? undefined : `unsupported protocol ${url.protocol}`;
 }
 function spawnOpenCode(executable, args, cwd) {
     const resolved = resolveExecutable(executable);

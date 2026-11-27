@@ -498,6 +498,15 @@ history belongs in `CHANGELOG.md`, not in the source.
   set, a data folder this 1.x cannot open: nothing reached OpenCode, and
   Continue would send "continue" to a session that never got the task. `failTurn` marks them `notSent`: Retry (the
   user's words) with New session or Ping (`PM`, `OC`).
+- **A prompt that may have reached OpenCode is never sent again** (0.0.249, `PS`). Once
+  the prompt request is written (1.x's `/message`, 2.x's `/prompt` and the wait after
+  it), `oc-api` marks a failure with its session (`markPromptSent`); only a connection
+  that never opened (`ECONNREFUSED`) or a 4xx answer proves it was not delivered.
+  `runAttempts` does not fall back on a marked error (a second paid run, a `/dev` task
+  done twice: 0.0.247 posted one turn twice), and `failTurn` binds the chat to that
+  session (`sessionId`, numeric `turns`), so Continue goes where the work is. An MCP
+  job that fails so is `failed` with its `sessionId`, never `refused`: "refused" says
+  nothing was sent, and a client's model sends it again.
 - **A fixed `serverPort` can be held by a listener that never answers**: the
   window's own server cannot bind and exits 1 after its boot. `ensureServer`
   starts one on a free port instead and never sends that listener a request

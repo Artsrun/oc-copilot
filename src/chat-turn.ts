@@ -9,7 +9,7 @@ import { mark, prompt as promptText } from "./followups";
 import { ChatKind, RunMetrics, RunOptions, StepRecord, finalizeStepStatuses, toolOutputBytes } from "./metrics";
 import { composeVisibleAnswer, createEchoGate, createLeakGate, isPromptEcho, metricsLogLine, scrubLeakedContext } from "./format";
 import { createFileLinker, emitAnswerParts, emitReferences, stepUris } from "./context";
-import { dataFolderRefusal, isDataFolderClash, isIdentityUnknown, isNotOpenCode1, openCode1Deprecation, openCode1Refusal, plainError, versionNotice, warmServer } from "./net";
+import { dataFolderRefusal, isDataFolderClash, isIdentityUnknown, isNotOpenCode1, openCode1Deprecation, openCode1Refusal, plainError, promptSentTo, versionNotice, warmServer } from "./net";
 import { isTurnPermissionError } from "./server-session";
 import { planAgentNotice, planAgentSetting, resolvePlanAgent } from "./agents";
 import { enforcedReadOnlyNotice } from "./enforce";
@@ -402,9 +402,11 @@ async function runAttempts(t: Turn, live: Live, ready: Ready): Promise<Outcome> 
                 );
                 sessionRestarted = true;
                 rerun(true);
-            } else if (!serverTransport || token.isCancellationRequested || isNotOpenCode1(error) || isDataFolderClash(error)) {
+            } else if (!serverTransport || token.isCancellationRequested || isNotOpenCode1(error) || isDataFolderClash(error) || promptSentTo(error)) {
                 // Not OpenCode 1: no CLI fallback without the bridge's rules. A
-                // data folder 2.x created: the CLI opens the same one.
+                // data folder 2.x created: the CLI opens the same one. A prompt that
+                // may have reached OpenCode is not sent again: a second paid run, a
+                // /dev task done twice (failTurn binds the chat to its session).
                 throw error;
             } else {
                 // The managed server failed: the CLI takes this and later attempts.
@@ -676,6 +678,13 @@ async function failTurn(t: Turn, live: Live, error: unknown): Promise<vscode.Cha
     }
     setStatus("$(warning) OpenCode", "The last OpenCode run failed", true);
     const err = error as NodeJS.ErrnoException;
+    // The session that may hold this turn: the chat binds to it, so Continue goes
+    // where the work is (threadSession reads `sessionId` + numeric `turns`).
+    const sentTo = promptSentTo(error);
+    const bound: SessionState | undefined = sentTo ? (sentTo === state.id ? { ...state, turns: state.turns + 1 } : { id: sentTo, turns: 1 }) : undefined;
+    if (bound) {
+        await setActiveSession(cwd, bound);
+    }
     if (err.code === "ENOENT") {
         response.markdown(
             `\n\nCouldn't launch OpenCode (\`${executable}\`). Install the OpenCode CLI, ` +
@@ -686,6 +695,9 @@ async function failTurn(t: Turn, live: Live, error: unknown): Promise<vscode.Cha
         // Each says what happened and what to do: nothing reached OpenCode.
         response.markdown(`\n\n> ${mark("fail")} ${err.message}`);
         response.button({ command: "opencodeCopilotBridge.showLog", title: "Show debug log" });
+    } else if (bound) {
+        response.markdown(`\n\n> ${mark("fail")} OpenCode failed after the message was sent, so it was not sent again: ${plainError(err instanceof Error ? err.message : String(error))}`);
+        response.button({ command: "opencodeCopilotBridge.showLog", title: "Show debug log" });
     } else {
         const message = err instanceof Error ? err.message : String(error);
         response.markdown(`\n\nOpenCode failed to start: ${message}`);
@@ -693,5 +705,16 @@ async function failTurn(t: Turn, live: Live, error: unknown): Promise<vscode.Cha
     }
     // Nothing was sent: Continue would send "continue" to a session that never
     // got the task — Retry resends the words (chips outcomeOf).
-    return { metadata: { kind, agent: agentLabel, error: String(err?.message ?? error), prompt: replay, ...(notSent(error) ? { notSent: true } : {}) } };
+    return {
+        metadata: {
+            kind,
+            agent: agentLabel,
+            error: String(err?.message ?? error),
+            prompt: replay,
+            ...(notSent(error) ? { notSent: true } : {}),
+            ...(bound
+                ? { sessionId: bound.id, cwd, turns: bound.turns, tokensIn: bound.tokensIn, tokensOut: bound.tokensOut, cost: bound.cost, toolOutputBytes: bound.toolOutputBytes }
+                : {})
+        }
+    };
 }

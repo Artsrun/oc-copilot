@@ -98,16 +98,11 @@ function exportSpan(endpoint, run, end) {
                     }]
             }]
     });
-    let url;
-    try {
-        url = new URL((0, exports.tracesUrl)(endpoint));
+    const unpostable = (0, proc_1.otlpUnpostable)(endpoint);
+    if (unpostable) {
+        return warnOnce(endpoint, unpostable);
     }
-    catch {
-        return warnOnce(endpoint, "not a URL");
-    }
-    if (url.protocol !== "http:" && url.protocol !== "https:") {
-        return warnOnce(endpoint, `unsupported protocol ${url.protocol}`);
-    }
+    const url = new URL((0, exports.tracesUrl)(endpoint));
     const send = url.protocol === "https:" ? https.request : http.request;
     const req = send(url, { method: "POST", headers: { "content-type": "application/json", "content-length": Buffer.byteLength(body) } }, (res) => {
         res.resume();
