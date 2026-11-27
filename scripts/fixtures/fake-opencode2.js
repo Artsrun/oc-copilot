@@ -7,6 +7,8 @@
 // Env: FAKE_OC2_RECORD   file that gets one JSON line per request
 //      FAKE_OC2_VERSION  the version it names (default: the recording's)
 //      a prompt's `[[say:<text>]]` makes the text turn answer <text>
+//      a prompt's `[[probe:dropafter]]` queues its run, then drops the connection
+//                        before answering: delivered, and the POST failed (0.0.249)
 //      FAKE_OC2_SCRIPT_DIR  a prompt's `[[script:<name>]]` plays <dir>/<name>.json, read per
 //                        prompt: `{ paceMs, hold, fail, events: [{reasoning}|{tool, input, output}|{text}] }`
 //                        inside the recorded text turn's envelope; `text` may be an array of
@@ -243,6 +245,7 @@ module.exports = (argv) => {
                 const inbox = JSON.parse(frames.find((f) => f.includes('"type":"session.inbox.enqueued"'))).data.inboxID;
                 turns.set(sid, { frames, at: 0, kind: turn.hold ? "interrupt" : kind, pace: turn.pace ?? 0 });
                 setTimeout(() => pump(sid), 10);
+                if (/\[\[probe:dropafter\]\]/.test(String(json?.text ?? ""))) return req.socket.destroy();
                 return send(200, { data: { id: inbox, sessionID: sid, type: "user", payload: { text: json?.text }, delivery: "steer" } });
             }
             const reply = tail.match(/^\/permission\/([^/]+)\/reply$/);

@@ -42,7 +42,9 @@ const v1 = (base) => {
         sessionChildren: (cwd, id, timeoutMs) => (0, net_1.httpGetJson)(at((0, exports.sessionPath)(id, "children"), cwd), timeoutMs),
         sessionMessages: (cwd, id, limit, timeoutMs) => (0, net_1.httpGetJson)(at(`${(0, exports.sessionPath)(id, "message")}?limit=${limit}`, cwd), timeoutMs),
         sessionAbort: (cwd, id, timeoutMs) => (0, net_1.httpRequestJson)("POST", at((0, exports.sessionPath)(id, "abort"), cwd), undefined, timeoutMs),
-        sessionPrompt: (cwd, id, body, timeoutMs, token) => (0, net_1.httpRequestJson)("POST", at((0, exports.sessionPath)(id, "message"), cwd), body, timeoutMs, token),
+        sessionPrompt: (cwd, id, body, timeoutMs, token) => (0, net_1.httpRequestJson)("POST", at((0, exports.sessionPath)(id, "message"), cwd), body, timeoutMs, token).catch((error) => {
+            throw (0, net_1.markPromptSent)(error, id);
+        }),
         sessionSummarize: (cwd, id, body, timeoutMs) => (0, net_1.httpPostJson)(at((0, exports.sessionPath)(id, "summarize"), cwd), body, timeoutMs),
         permissionReply: (cwd, sessionId, askId, legacy, body, timeoutMs) => (0, net_1.httpRequestJson)("POST", at(legacy ? (0, exports.sessionPath)(sessionId, `permissions/${safeSessionId(askId)}`) : `/permission/${safeSessionId(askId)}/reply`, cwd), body, timeoutMs),
         questionReply: (cwd, askId, body, timeoutMs) => (0, net_1.httpRequestJson)("POST", at(`/question/${safeSessionId(askId)}/reply`, cwd), body, timeoutMs)
@@ -302,9 +304,11 @@ const v2 = (base) => {
             }
             catch (error) {
                 w.abandon();
-                throw error;
+                throw (0, net_1.markPromptSent)(error, id);
             }
-            return w.result;
+            return w.result.catch((error) => {
+                throw (0, net_1.markPromptSent)(error, id);
+            });
         },
         sessionSummarize: async (cwd, id, _body, timeoutMs) => {
             const w = watch(base, id, timeoutMs, undefined, (ev) => (ev.type === "v2.compaction" && propsOf(ev).sessionID === id ? (propsOf(ev).ok === true ? 200 : 500) : undefined));

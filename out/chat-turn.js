@@ -252,7 +252,7 @@ async function runAttempts(t, live, ready) {
                 sessionRestarted = true;
                 rerun(true);
             }
-            else if (!serverTransport || token.isCancellationRequested || (0, net_1.isNotOpenCode1)(error) || (0, net_1.isDataFolderClash)(error)) {
+            else if (!serverTransport || token.isCancellationRequested || (0, net_1.isNotOpenCode1)(error) || (0, net_1.isDataFolderClash)(error) || (0, net_1.promptSentTo)(error)) {
                 throw error;
             }
             else {
@@ -465,6 +465,11 @@ async function failTurn(t, live, error) {
     }
     (0, host_1.setStatus)("$(warning) OpenCode", "The last OpenCode run failed", true);
     const err = error;
+    const sentTo = (0, net_1.promptSentTo)(error);
+    const bound = sentTo ? (sentTo === state.id ? { ...state, turns: state.turns + 1 } : { id: sentTo, turns: 1 }) : undefined;
+    if (bound) {
+        await (0, session_1.setActiveSession)(cwd, bound);
+    }
     if (err.code === "ENOENT") {
         response.markdown(`\n\nCouldn't launch OpenCode (\`${executable}\`). Install the OpenCode CLI, ` +
             "or set an absolute path in the `opencodeCopilotBridge.executable` setting.");
@@ -474,11 +479,26 @@ async function failTurn(t, live, error) {
         response.markdown(`\n\n> ${(0, followups_1.mark)("fail")} ${err.message}`);
         response.button({ command: "opencodeCopilotBridge.showLog", title: "Show debug log" });
     }
+    else if (bound) {
+        response.markdown(`\n\n> ${(0, followups_1.mark)("fail")} OpenCode failed after the message was sent, so it was not sent again: ${(0, net_1.plainError)(err instanceof Error ? err.message : String(error))}`);
+        response.button({ command: "opencodeCopilotBridge.showLog", title: "Show debug log" });
+    }
     else {
         const message = err instanceof Error ? err.message : String(error);
         response.markdown(`\n\nOpenCode failed to start: ${message}`);
         response.button({ command: "opencodeCopilotBridge.showLog", title: "Show debug log" });
     }
-    return { metadata: { kind, agent: agentLabel, error: String(err?.message ?? error), prompt: replay, ...(notSent(error) ? { notSent: true } : {}) } };
+    return {
+        metadata: {
+            kind,
+            agent: agentLabel,
+            error: String(err?.message ?? error),
+            prompt: replay,
+            ...(notSent(error) ? { notSent: true } : {}),
+            ...(bound
+                ? { sessionId: bound.id, cwd, turns: bound.turns, tokensIn: bound.tokensIn, tokensOut: bound.tokensOut, cost: bound.cost, toolOutputBytes: bound.toolOutputBytes }
+                : {})
+        }
+    };
 }
 //# sourceMappingURL=chat-turn.js.map

@@ -19,13 +19,13 @@ import { createEchoGate } from "./format";
 import { RunMetrics, StepRecord } from "./metrics";
 import { naturalFollowups } from "./natural";
 import { NATURAL_KAO } from "./followups";
-import { connectSse, dataFolderRefusal, ensureServer, stopServer } from "./net";
+import { connectSse, dataFolderRefusal, ensureServer, promptSentTo, stopServer } from "./net";
 import { planTimeout } from "./prompt";
 import { runCapture } from "./proc";
 import { runOpenCodeServer } from "./run-server";
 import { abortServerRun } from "./server-session";
 
-const VERSION = "0.0.248";
+const VERSION = "0.0.249";
 const SERVER_INFO = { name: "opencode-bridge", version: VERSION };
 const MODERN = "2026-07-28";
 const LEGACY = ["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"];
@@ -216,6 +216,8 @@ interface Job {
     steps: StepRecord[];
     metrics?: RunMetrics;
     failure?: string;
+    /** The session a failed prompt may have reached: the job failed there, it was not refused. */
+    sentTo?: string;
     notes: string[];
     watchers: Set<(step: StepRecord) => void>;
     done: Promise<void>;
@@ -403,10 +405,12 @@ function startJob(ask: RunAsk): Job {
     })()
         .catch((error: unknown) => {
             job.failure = error instanceof Error ? error.message : String(error);
+            job.sentTo = promptSentTo(error);
         })
         .finally(() => {
             job.finishedAt = Date.now();
-            note(`job ${job.id} ${job.failure ? `not run: ${truncate(job.failure, 160)}` : statusOf(job)} after ${secs(job.finishedAt - job.startedAt)}`);
+            const failed = job.sentTo ? "failed after its prompt was sent" : "not run";
+            note(`job ${job.id} ${job.failure ? `${failed}: ${truncate(job.failure, 160)}` : statusOf(job)} after ${secs(job.finishedAt - job.startedAt)}`);
         });
     jobs.set(job.id, job);
     prune();
@@ -418,7 +422,8 @@ function statusOf(job: Job): "running" | "refused" | "cancelled" | "failed" | "d
         return "running";
     }
     if (job.failure) {
-        return job.stopped ? "cancelled" : "refused";
+        // "Refused" tells a client nothing was sent, and its model sends it again.
+        return job.stopped ? "cancelled" : job.sentTo ? "failed" : "refused";
     }
     if (job.stopped || job.metrics?.cancelled) {
         return "cancelled";
@@ -462,9 +467,10 @@ const plainLabel = (label: string, kind: string): string => {
 function jobResult(job: Job): ToolResult {
     const status = statusOf(job);
     const m = job.metrics;
+    const sessionId = m?.sessionId ?? job.sentTo;
     const facts = [
         `status=${status}`,
-        ...(m?.sessionId ? [`sessionId=${m.sessionId}`] : []),
+        ...(sessionId ? [`sessionId=${sessionId}`] : []),
         ...(m?.traceId ? [`traceId=${m.traceId}`] : []),
         `jobId=${job.id}`,
         `agent=${job.agent}`,
@@ -491,6 +497,8 @@ function jobResult(job: Job): ToolResult {
     const parts: string[] = [];
     if (status === "cancelled") {
         parts.push("Cancelled before OpenCode finished.");
+    } else if (status === "failed" && job.sentTo) {
+        parts.push(`OpenCode failed after the prompt was sent, so it was not sent again: ${job.failure}`);
     } else if (status === "failed") {
         parts.push(m?.timedOut ? `OpenCode was stopped after ${secs(m.totalMs)} without finishing.` : `OpenCode reported an error: ${m?.error}`);
     }
@@ -507,10 +515,10 @@ function jobResult(job: Job): ToolResult {
         );
     }
     parts.push(...job.notes);
-    if (m?.sessionId && status !== "cancelled") {
-        parts.push(`To continue this conversation, pass sessionId "${m.sessionId}".`);
+    if (sessionId && status !== "cancelled") {
+        parts.push(`To continue this conversation, pass sessionId "${sessionId}".`);
         if (status === "done") {
-            parts.push(...nextSteps(job, m.sessionId, answer));
+            parts.push(...nextSteps(job, sessionId, answer));
         }
     }
     parts.push(line);

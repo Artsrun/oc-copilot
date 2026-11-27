@@ -3,7 +3,7 @@
 // subagents, abort on silence or Stop.
 import { delay, logChannel, stamp, truncate } from "./core";
 import { mark } from "./followups";
-import { connectSse, ensureServer, sessionIdFromEvent } from "./net";
+import { connectSse, ensureServer, markPromptSent, sessionIdFromEvent } from "./net";
 import { api } from "./oc-api";
 import { RunMetrics, RunOptions, StepRecord, TokenUsage, contextOf } from "./metrics";
 import { watchFamily } from "./asks";
@@ -279,6 +279,9 @@ async function runServer(options: RunOptions, run: RunTrace): Promise<RunMetrics
 
         metrics.totalMs = Date.now() - started;
         return metrics;
+    } catch (error) {
+        // The answer came back: whatever broke here, the prompt was delivered.
+        throw markPromptSent(error, sessionId);
     } finally {
         // Reached on the happy path and on any throw from the response walk
         // above; a leaked subscriber keeps the shared socket open for the

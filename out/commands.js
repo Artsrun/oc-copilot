@@ -243,6 +243,8 @@ function otlpNote() {
         return "not set: OpenCode exports nothing (`otlpEndpoint`)";
     }
     const source = otlp.from === "setting" ? "the otlpEndpoint setting" : "VS Code's environment (OTEL_EXPORTER_OTLP_ENDPOINT)";
-    return `\`${(0, core_1.truncate)(otlp.endpoint ?? "", 80)}\` from ${source}: OpenCode 2 sends its traces and logs there, and its logs include each prompt's text`;
+    const unpostable = (0, proc_1.otlpUnpostable)(otlp.endpoint ?? "");
+    const bridge = unpostable ? `; the bridge cannot post its own spans there: it needs http:// or https:// (${unpostable})` : "";
+    return `\`${(0, core_1.truncate)(otlp.endpoint ?? "", 80)}\` from ${source}: OpenCode 2 sends its traces and logs there, and its logs include each prompt's text${bridge}`;
 }
 //# sourceMappingURL=commands.js.map

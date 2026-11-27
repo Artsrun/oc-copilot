@@ -210,6 +210,9 @@ async function runServer(options, run) {
         metrics.totalMs = Date.now() - started;
         return metrics;
     }
+    catch (error) {
+        throw (0, net_1.markPromptSent)(error, sessionId);
+    }
     finally {
         closeStreams();
     }

@@ -252,6 +252,18 @@ export function otlpEndpoint(): OtlpEndpoint {
     return inherited ? { endpoint: inherited, from: "environment" } : { from: "none" };
 }
 
+/** Why the bridge cannot POST its own spans to `endpoint`, or undefined when it can.
+ * `localhost:4318` parses, as the scheme `localhost:`; http.request throws on it. */
+export function otlpUnpostable(endpoint: string): string | undefined {
+    let url: URL;
+    try {
+        url = new URL(endpoint);
+    } catch {
+        return "not a URL";
+    }
+    return url.protocol === "http:" || url.protocol === "https:" ? undefined : `unsupported protocol ${url.protocol}`;
+}
+
 export function spawnOpenCode(
     executable: string,
     args: string[],

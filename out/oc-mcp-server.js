@@ -50,7 +50,7 @@ const prompt_1 = require("./prompt");
 const proc_1 = require("./proc");
 const run_server_1 = require("./run-server");
 const server_session_1 = require("./server-session");
-const VERSION = "0.0.248";
+const VERSION = "0.0.249";
 const SERVER_INFO = { name: "opencode-bridge", version: VERSION };
 const MODERN = "2026-07-28";
 const LEGACY = ["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"];
@@ -353,10 +353,12 @@ function startJob(ask) {
     })()
         .catch((error) => {
         job.failure = error instanceof Error ? error.message : String(error);
+        job.sentTo = (0, net_1.promptSentTo)(error);
     })
         .finally(() => {
         job.finishedAt = Date.now();
-        note(`job ${job.id} ${job.failure ? `not run: ${(0, core_1.truncate)(job.failure, 160)}` : statusOf(job)} after ${(0, core_1.secs)(job.finishedAt - job.startedAt)}`);
+        const failed = job.sentTo ? "failed after its prompt was sent" : "not run";
+        note(`job ${job.id} ${job.failure ? `${failed}: ${(0, core_1.truncate)(job.failure, 160)}` : statusOf(job)} after ${(0, core_1.secs)(job.finishedAt - job.startedAt)}`);
     });
     jobs.set(job.id, job);
     prune();
@@ -367,7 +369,7 @@ function statusOf(job) {
         return "running";
     }
     if (job.failure) {
-        return job.stopped ? "cancelled" : "refused";
+        return job.stopped ? "cancelled" : job.sentTo ? "failed" : "refused";
     }
     if (job.stopped || job.metrics?.cancelled) {
         return "cancelled";
@@ -398,9 +400,10 @@ const plainLabel = (label, kind) => {
 function jobResult(job) {
     const status = statusOf(job);
     const m = job.metrics;
+    const sessionId = m?.sessionId ?? job.sentTo;
     const facts = [
         `status=${status}`,
-        ...(m?.sessionId ? [`sessionId=${m.sessionId}`] : []),
+        ...(sessionId ? [`sessionId=${sessionId}`] : []),
         ...(m?.traceId ? [`traceId=${m.traceId}`] : []),
         `jobId=${job.id}`,
         `agent=${job.agent}`,
@@ -425,6 +428,9 @@ function jobResult(job) {
     if (status === "cancelled") {
         parts.push("Cancelled before OpenCode finished.");
     }
+    else if (status === "failed" && job.sentTo) {
+        parts.push(`OpenCode failed after the prompt was sent, so it was not sent again: ${job.failure}`);
+    }
     else if (status === "failed") {
         parts.push(m?.timedOut ? `OpenCode was stopped after ${(0, core_1.secs)(m.totalMs)} without finishing.` : `OpenCode reported an error: ${m?.error}`);
     }
@@ -440,10 +446,10 @@ function jobResult(job) {
             : `Note: read-only rules could not be verified for \`${job.agent}\`; its own permissions applied to this run.`);
     }
     parts.push(...job.notes);
-    if (m?.sessionId && status !== "cancelled") {
-        parts.push(`To continue this conversation, pass sessionId "${m.sessionId}".`);
+    if (sessionId && status !== "cancelled") {
+        parts.push(`To continue this conversation, pass sessionId "${sessionId}".`);
         if (status === "done") {
-            parts.push(...nextSteps(job, m.sessionId, answer));
+            parts.push(...nextSteps(job, sessionId, answer));
         }
     }
     parts.push(line);

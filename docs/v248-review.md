@@ -128,6 +128,10 @@ throws", no error text), `docs/local-agent.md` C5.
 
 ### D1 · say it before the first turn: an endpoint the bridge cannot post to
 
+**Done in 0.0.249, (a):** Diagnose's row adds "the bridge cannot post its own spans
+there: it needs http:// or https:// (unsupported protocol localhost:)"; one check,
+`otlpUnpostable` (`src/proc.ts`), serves the row and the export. `OT`, red on 0.0.248.
+
 - **(a) recommended:** Diagnose's `opentelemetry` row adds "the bridge cannot post spans
   to `localhost:4318`: it needs `http://` or `https://`". Today the only sign is one log
   line per window.
@@ -139,6 +143,15 @@ What OpenCode 2 itself does with `OTEL_EXPORTER_OTLP_ENDPOINT=localhost:4318` is
 measured; (a) and (b) should say only what the bridge does.
 
 ### D2 · rerun a 2.x turn whose prompt already went out?
+
+**Done in 0.0.249, (a), on both majors:** `oc-api` marks a failure once the prompt
+request is written (`markPromptSent`: 1.x `/message`, 2.x `/prompt` and its wait); only
+`ECONNREFUSED` or a 4xx answer stays unmarked. `runAttempts` does not rerun a marked
+error, and `failTurn` binds the chat to its session. On 0.0.248, a server that queues the
+run and drops the connection: 2 prompts, "OpenCode failed to start: socket hang up", and
+Continue went to a third, new session. `PS`, red on 0.0.248: 6 of 6. `PA`'s
+fallback check now fails the POST with a 400, since a 500 on 1.x (whose POST answers
+when the turn ends) is no longer rerun.
 
 `runAttempts`' server-failed fallback reruns the turn. On 2.x the "CLI" is the same
 server, so it is a retry, and after the prompt was posted it is a second paid run. F1 was
@@ -157,6 +170,16 @@ enumerated).
 `npm run ship -- --record` appends it to `docs/released.txt`; from then on any change to
 `src/` or `package.json` needs a bump. The VSIX is built (`dist/`), not recorded: the
 owner's call, after a real window (C5).
+
+## The local agent's report (2026-11-27)
+
+It reviewed "the current uncommitted changes" of its checkout and found: `trace.ts`
+throws on `localhost:4318`, the span carries error text, the README has no 0.0.248
+heading, and the regression checks are gone (1415 checks). Measured on `main` after
+#22 merged (`7d11c55`): `endRun` threw for none of the five endpoints, the error span was
+`{"code":2}`, the README had `### 0.0.248`, and the suite had the turn-level `TP` check
+(1416 checks, green). Those uncommitted changes put 0.0.247-era files back over 0.0.248.
+`docs/local-agent.md` already said the tree must be clean; it now says why.
 
 ## Order
 

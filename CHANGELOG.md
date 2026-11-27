@@ -3,6 +3,37 @@
 Full release history, newest first; releases before the last one are condensed
 to their summary and headlines. The README ships the last five.
 
+### 0.0.249
+
+A prompt that may have reached OpenCode is never sent again; Diagnose says when the
+bridge cannot post its own spans.
+
+- **Fixed: a turn whose prompt went out, and whose answer did not come back, ran
+  again.** Any failure once the prompt request was written (a dropped connection, a 5xx,
+  the 2.x wait after `/prompt`) read as a server failure, and the fallback reran the
+  turn: on 2.x through the same server, so the prompt went out twice (0.0.248, measured
+  with a server that queues the run and drops the connection: 2 prompts, "OpenCode failed
+  to start: socket hang up", and Continue went to a third, new session). Now `oc-api`
+  marks such a failure with its session (`markPromptSent`); only a connection that never
+  opened or a 4xx answer proves it was not delivered. The turn is not rerun, says "OpenCode
+  failed after the message was sent, so it was not sent again", and binds the chat to
+  that session, so Continue goes where the work is. Checks `PS` (red on 0.0.248: 6 of 6),
+  on 2.x a dropped answer, on 1.x a `/message` POST answered 500 (the 1.x POST answers
+  when the turn ends, so a 500 can follow a run). `PA`'s "the server confirmed planAgent,
+  then failed" now fails with a refusal (400): a CLI that takes over still runs as `plan`.
+- **Fixed, MCP tools: such a job was `status=refused`, "not run"**, which tells a client
+  nothing was sent, and its model sends it again. It is now `failed`, says the prompt was
+  not sent again, and names the `sessionId` to continue. Check `MP` (red on 0.0.248).
+- Mutants, each red: `runAttempts` reruns a marked error, 4 (2 prompts, the chat bound
+  to the rerun's session, 1.x); 2.x `/prompt` unmarked, 4; 1.x `/message` unmarked, 1; a
+  4xx counted as delivered, 2 (`PA` among them); `ECONNREFUSED` marked, 1 (the unit row
+  only: no turn reaches a refused connection after session create); `failTurn` binding
+  nothing, 2; no Diagnose clause, 1; an MCP job `refused`, 1.
+- **Diagnose's `opentelemetry` row says when the bridge cannot post its own spans** to
+  the endpoint (`localhost:4318`: "it needs http:// or https://"). What OpenCode 2 does
+  with such a value is not measured, so the row says only what the bridge does. One
+  check (`otlpUnpostable`) serves the span export and the row. Check `OT` (red on 0.0.248).
+
 ### 0.0.248
 
 Bridge spans, fixed: an export that cannot happen no longer fails the run, and a span

@@ -2148,6 +2148,12 @@ const suiteWatchdog = require(path.join(__dirname, "fixtures", "suite-watchdog.j
         };
         const otRowEnv = await otDoc();
         add(`OT Diagnose names the host's endpoint and that OpenCode's logs carry prompts (${otRowEnv})`, otRowEnv.includes("http://host-env.invalid:4318") && /environment/.test(otRowEnv) && /prompt/.test(otRowEnv));
+        // 0.0.249: `localhost:4318` is the scheme `localhost:`; the bridge's own spans cannot go there.
+        settings.otlpEndpoint = "localhost:4318";
+        const otRowBad = await otDoc();
+        add(`OT Diagnose says the bridge cannot post its own spans to an endpoint with no http(s) scheme, and only then (${otRowBad})`,
+            otRowBad.includes("`localhost:4318` from the otlpEndpoint setting") &&
+            /the bridge cannot post its own spans there: it needs http:\/\/ or https:\/\/ \(unsupported protocol localhost:\)/.test(otRowBad) && !/cannot post/.test(otRowEnv));
         settings.otlpEndpoint = "off";
         const otRowOff = await otDoc();
         add(`OT Diagnose: off (${otRowOff})`, /\| opentelemetry \| off/.test(otRowOff) && !otRowOff.includes("host-env.invalid"));
@@ -2286,6 +2292,39 @@ const suiteWatchdog = require(path.join(__dirname, "fixtures", "suite-watchdog.j
         settings.otlpEndpoint = savedOtlp;
         add("TP an unsupported OTLP protocol warns without throwing from a completed run",
             !invalidEndpointThrew && logLines.some((l) => /trace export to ftp:\/\/127\.0\.0\.1:4318 failed: unsupported protocol ftp:/.test(l)));
+    }
+    // 0.0.249 PS: a prompt that may have reached OpenCode is never sent again. A failure
+    // once the prompt request was written read as a server failure, and the fallback ran
+    // the turn again: a second paid run (0.0.247's span throw was one way in). The fake's
+    // `[[probe:dropafter]]` queues the run and drops the connection before answering.
+    {
+        const net = require(path.join(__dirname, "..", "out", "net.js"));
+        const truncate = (t, n) => (t.length > n ? `${t.slice(0, n)}…` : t);
+        const refused = Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:1"), { code: "ECONNREFUSED" });
+        // Optional calls: on a build without them the check is red, not a crash (§3).
+        const markedTo = (e) => net.promptSentTo?.(net.markPromptSent?.(e, "ses_psA"));
+        add("PS a failure after a prompt request was written is marked with its session; a connection never opened, or a 4xx answer, is not",
+            markedTo(new Error("socket hang up")) === "ses_psA" && markedTo(new Error("HTTP 500: boom")) === "ses_psA" && markedTo(refused) === undefined &&
+            markedTo(new Error("HTTP 404: Session not found")) === undefined && markedTo(new Error("HTTP 400: bad")) === undefined);
+        const ps = await oc2Use(async () => {
+            memento.clear();
+            const from = oc2Prompts().length;
+            const st = stream();
+            const result = await global.__handler({ prompt: "drop the answer [[probe:dropafter]]" }, { history: [] }, st.response, st.token);
+            const sent = oc2Prompts().slice(from);
+            // The chat's next message, as the Continue chip sends it.
+            const st2 = stream();
+            await global.__handler({ prompt: "Continue from where you stopped, and finish." }, { history: [{ participant: "opencodeCopilotBridge.chat", result }] }, st2.response, st2.token);
+            return { result, chat: st.chatMarkdown.join(""), sent, next: oc2Prompts().slice(from + sent.length) };
+        });
+        const psMeta = ps.result?.metadata ?? {};
+        add(`PS a prompt whose answer was lost in transit is posted once (${ps.sent.length} prompts)`, ps.sent.length === 1);
+        add(`PS the turn says the message was sent and is not sent again (${truncate(ps.chat.replace(/\s+/g, " "), 160)})`,
+            /failed after the message was sent, so it was not sent again/.test(ps.chat) && !/failed to start/.test(ps.chat));
+        add(`PS the failed turn binds the chat to the session that got the prompt (${psMeta.sessionId}, turns ${psMeta.turns})`,
+            Boolean(ps.sent[0]) && psMeta.sessionId === ps.sent[0].session && psMeta.turns === 1 && typeof psMeta.error === "string");
+        add(`PS the next message goes to that session (${ps.next.map((p) => p.session).join(" ")})`,
+            ps.next.length === 1 && ps.next[0].session === ps.sent[0]?.session && /Continue from where you stopped/.test(ps.next[0].text));
     }
     // 0.0.225: a running tool part before its input arrives is `{}` — the row read
     // `glob: {}` for 40 s (0.0.223 live). It names nothing yet, so no row.
@@ -5803,6 +5842,8 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
                         });
                     }
                     if (v5.mode === "fail-post") return send(500, { name: "UnknownError", data: { message: "Unexpected server error" } });
+                    // A 4xx: the server refused the message, so it was not delivered (0.0.249).
+                    if (v5.mode === "refuse-post") return send(400, { name: "BadRequestError", data: { message: "Bad request" } });
                     if (v5.mode === "tool-silent") {
                         // A tool the server reports as running, then only heartbeats.
                         v5Emit({ type: "message.part.updated", properties: { sessionID: sid, part: { id: "prt_ts", sessionID: sid, type: "tool", tool: "bash", state: { status: "running", input: { command: "npm test" }, time: { start: Date.now() } } } } });
@@ -6043,12 +6084,13 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
             paLFArgv[paLFArgv.indexOf("--agent") + 1] === "plan" && paLFArgv.includes("--auto") && /Couldn't list OpenCode's agents to confirm `look`/.test(paLF.md)
         );
         v5.agentFail = false;
-        // The server confirmed `look`, then failed mid-turn: the CLI that takes
-        // over never confirmed it, so it runs the turn as plan and says so.
+        // The server confirmed `look`, then refused the message: the CLI that takes
+        // over never confirmed it, so it runs the turn as plan and says so. A refusal
+        // (4xx), since a failure that may follow delivery is not rerun at all (PS).
         Object.assign(settings, { transport: "server", executable: agentsFake, planAgent: "look" });
         fs.rmSync(argvOf("fake-agents.js"), { force: true });
         const paModeSaved = v5.mode;
-        v5.mode = "fail-post";
+        v5.mode = "refuse-post";
         const paSF = await v5Turn("explain the cart for pa server down");
         v5.mode = paModeSaved;
         const paSFArgv = lastArgv("fake-agents.js");
@@ -6056,6 +6098,16 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
             "PA a server that confirmed planAgent, then failed: the CLI runs the turn as plan",
             lastMsg().body.agent === "look" && paSFArgv[paSFArgv.indexOf("--agent") + 1] === "plan" && /cli answer/.test(paSF.md) && /the CLI ran this turn as the built-in `plan`/.test(paSF.md)
         );
+        // 0.0.249 PS on 1.x: the message POST answers when the turn ends, so a 500 may
+        // follow a run the model already did. Not delivered is unproven: no CLI rerun.
+        fs.rmSync(argvOf("fake-agents.js"), { force: true });
+        const psPosts = v5.messages.length;
+        const psLog = logLines.length;
+        v5.mode = "fail-post";
+        const ps1 = await v5Turn("explain the cart for ps on one-x");
+        v5.mode = paModeSaved;
+        add(`PS on 1.x a message POST answered 500 is not run again by the CLI (${v5.messages.length - psPosts} posts)`,
+            v5.messages.length - psPosts === 1 && !logLines.slice(psLog).some((l) => /fake-agents\.js run\b|falling back to CLI/.test(l)) && /failed after the message was sent/.test(ps1.md));
         fs.rmSync(paFailDir, { recursive: true, force: true });
         Object.assign(settings, { transport: "server", executable: happy, planAgent: "plan", enforceReadOnly: true });
 
@@ -9990,6 +10042,14 @@ add("NF a bare Apply offer still suppresses the duplicate Fix all chip", nfFixAl
         const mpBg = await mpA.finished(await mpA.call("opencode_ask", { prompt: "delegate the review [[probe:task@explore:text]]", sessionId: mpSession }));
         add(`MP a subagent left working in the background says how to collect its result${/in the background/.test(mpBg.text) ? "" : ` [${mpBg.text.slice(-240)}]`}`,
             mpBg.facts.status === "done" && /The explore subagent \(probe subagent\) is still working in the background/.test(mpBg.text) && mpBg.text.includes(`call opencode_ask with sessionId "${mpSession}"`));
+        // 0.0.249 PS: a prompt delivered whose answer was lost: "failed" with its session,
+        // never "refused" (nothing sent), which a client's model would send again.
+        const mpDropFrom = mpA.posts("prompt").length;
+        const mpDrop = await mpA.finished(await mpA.call("opencode_ask", { prompt: "drop the answer [[probe:dropafter]]", folder: mpProject }));
+        const mpDropPosts = mpA.posts("prompt").slice(mpDropFrom);
+        add(`MP a prompt that went out and failed is "failed", names its session and was posted once (${mpDrop.facts.status}, ${mpDropPosts.length} posts)`,
+            mpDrop.isError && mpDrop.facts.status === "failed" && mpDropPosts.length === 1 && Boolean(mpDrop.facts.sessionId) && mpDropPosts[0].path.includes(mpDrop.facts.sessionId) &&
+            /not sent again/.test(mpDrop.text) && mpDrop.text.includes(`pass sessionId "${mpDrop.facts.sessionId}"`));
         const mpPort = Number((mpA.log().match(/serve --port (\d+)/) || [])[1]);
         const mpAnswers = async () => {
             try {

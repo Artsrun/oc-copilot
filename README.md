@@ -644,6 +644,15 @@ All under `opencodeCopilotBridge.`.
 
 The last five releases; the full history is `CHANGELOG.md` in the repository.
 
+### 0.0.249
+
+- **Fixed: a prompt that may have reached OpenCode is never sent again.** A turn whose
+  answer was lost in transit (a dropped connection, a server error) is not rerun; it
+  says so, and Continue goes to the session that got the prompt; an MCP job says
+  `failed` with its `sessionId`, not `refused`. Checks `PS`, `MP`.
+- **Diagnose says when the bridge cannot post its own spans** to `otlpEndpoint`
+  (`localhost:4318` needs `http://`). Check `OT`.
+
 ### 0.0.248
 
 - **Fixed: an `otlpEndpoint` the bridge cannot post to (`localhost:4318`, no scheme)
@@ -668,12 +677,3 @@ The last five releases; the full history is `CHANGELOG.md` in the repository.
 
 - **Fixed: Stop while waiting for the previous OpenCode server to exit no longer
   starts a server afterward.** Check `SB`.
-
-### 0.0.244
-
-- **New setting `otlpEndpoint`: OpenCode 2's own OpenTelemetry traces, one setting
-  away.** OpenCode 2.3.2 exports traces (with `gen_ai.*` model, agent, token and cache
-  usage, cost and session id) and logs whenever `OTEL_EXPORTER_OTLP_ENDPOINT` is set,
-  and **its logs include each prompt's text**. The setting points it at a viewer, or
-  `off` removes an endpoint VS Code's environment set for another tool. Diagnose says
-  where it goes. Checks `OT`, `GC`.

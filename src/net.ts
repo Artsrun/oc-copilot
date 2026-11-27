@@ -396,6 +396,29 @@ export const openCode1Refusal = (executable: string): Error | undefined => notOp
 
 export const isNotOpenCode1 = (error: unknown): boolean => (error as { code?: unknown } | undefined)?.code === "ENOTOPENCODE1";
 
+// A prompt request that failed once it was written may have reached OpenCode: a
+// rerun is a second paid run (0.0.247 posted one turn twice). Only a connection that
+// never opened, or a server's 4xx answer (it refused, e.g. a missing session's 404),
+// proves it did not. The mark carries the session it went to.
+const NOT_DELIVERED = /^HTTP 4\d\d\b/;
+type PromptSent = { promptSentTo?: string };
+
+/** `error`, marked as thrown after a prompt to `sessionId` may have been delivered. */
+export function markPromptSent(error: unknown, sessionId: string): unknown {
+    const code = (error as { code?: unknown } | undefined)?.code;
+    if (code === "ECONNREFUSED" || NOT_DELIVERED.test(error instanceof Error ? error.message : "")) {
+        return error;
+    }
+    const marked = error instanceof Error ? error : new Error(String(error));
+    return Object.assign(marked, { promptSentTo: sessionId } satisfies PromptSent);
+}
+
+/** The session a failed prompt may have reached, if it may have. */
+export const promptSentTo = (error: unknown): string | undefined => {
+    const to = (error as PromptSent | undefined)?.promptSentTo;
+    return typeof to === "string" && to ? to : undefined;
+};
+
 /** OpenCode's error text as words: 1.19.3 colours stderr even on a pipe (`\x1b[91m`, measured). */
 export const plainError = (text: string): string => text.replace(/\x1b\[[0-9;]*m/g, "");
 
