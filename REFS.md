@@ -5,6 +5,24 @@ actually measured, so nobody re-derives it.
 
 ---
 
+## 0.0.248: an OTLP endpoint the bridge cannot post to failed the finished run (2026-11-26)
+
+**Dated 2026-11-26.** Linux, Node 22.23.5, the suite's 2.x fake, through `out/`.
+0.0.247's `endRun` ran after a finished server run, inside `runOpenCodeServer`'s `try`.
+`new URL("localhost:4318/v1/traces")` parses (scheme `localhost:`), and `http.request`
+throws synchronously on any scheme but `http:` ("Protocol "localhost:" not supported.
+Expected "http:""); so do `ftp:`, `grpc:` and `file:`. `127.0.0.1:4318` does not parse
+and was already a log line. The throw reached `runAttempts` as a server failure, whose
+fallback ran the turn again: on 2.x `runOpenCode` goes back through `runOpenCodeServer`,
+so one turn posted its prompt twice, on two new sessions: chat showed the answer twice,
+then "OpenCode failed to start: Protocol "localhost:" not supported …" (`TP`, 0.0.247 code). On
+1.x server transport the fallback is a CLI run, so the second paid run answers (same
+wrapper; not measured). Also: the error span's status carried `metrics.error`, up to 200
+characters, and a provider's error can quote the prompt. 0.0.248: the whole export sits in
+one `try`, a non-`http(s)` scheme is a log line, and an error span has no message.
+
+---
+
 ## 0.0.244: an AHP host inside the bridge's server; OpenCode 2's OTLP export; worktrees over the API (2026-11-20)
 
 **Dated 2026-11-20.** Linux, Node 22.23.5, `@opencode/cli` 2.3.2 (npm `latest` today;

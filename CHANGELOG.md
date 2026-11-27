@@ -3,6 +3,29 @@
 Full release history, newest first; releases before the last one are condensed
 to their summary and headlines. The README ships the last five.
 
+### 0.0.248
+
+Bridge spans, fixed: an export that cannot happen no longer fails the run, and a span
+carries no error text.
+
+- **Fixed: an `otlpEndpoint` the bridge cannot post to failed every finished OpenCode 2
+  run, and the prompt went out twice.** `localhost:4318` (no scheme) parses as the scheme
+  `localhost:`, and `http.request` throws on any scheme but its own. 0.0.247 threw that
+  out of the finished run's span export, so the run read as failed: the server-failed
+  fallback posted the prompt again, on 2.x through the same server, which failed the same
+  way (measured: 2 prompts on 2 sessions, the answer twice in chat, then "OpenCode failed
+  to start: Protocol "localhost:" not supported"). The same for `ftp:`, `grpc:`, `file:`,
+  from the setting or VS Code's `OTEL_EXPORTER_OTLP_ENDPOINT`. The export now never
+  throws: a scheme other than `http:`/`https:` costs one log line per endpoint. Check `TP`
+  (red on 0.0.247: 4 of 15).
+- **Fixed: an error span carried the run's error message** (up to 200 characters), and a
+  provider's error can quote the prompt; 0.0.247 said no prompt text reaches a span. An
+  error span now keeps status code 2 and no message. Check `TP`.
+- Mutants: no scheme guard, 2 red (the two warning rows; the run stayed whole, 1 prompt,
+  the outer catch held it); a status message back, 2 red; neither guard nor catch
+  (0.0.247's code), 4 red, 2 prompts. The outer catch alone survives: 18 odd `http(s)`
+  endpoints, none throws past the guard, so it is the contract, not a reachable path.
+
 ### 0.0.247
 
 Bridge spans: one trace per OpenCode 2 run, from the bridge's own requests to OpenCode's.

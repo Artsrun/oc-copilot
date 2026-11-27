@@ -41,7 +41,6 @@ export interface RunEnd {
     model?: string;
     readOnly: boolean;
     outcome: "done" | "timeout" | "cancelled" | "error";
-    error?: string;
 }
 
 // OTLP/HTTP JSON: ids are hex, times are nanosecond strings, attributes typed.
@@ -53,12 +52,22 @@ const warned = new Set<string>();
 export const tracesUrl = (endpoint: string): string => `${endpoint.replace(/\/+$/, "")}/v1/traces`;
 
 /** Exports the run's span when an endpoint is in force. Never awaited, never throws:
- * a collector that is down costs one log line per endpoint, not a turn. */
+ * it runs after a finished run, and a throw here reported that run failed, so the
+ * server-failed fallback posted its prompt again (0.0.247, `localhost:4318`). A
+ * collector that is down, or an endpoint it cannot post to, costs one log line. */
 export function endRun(run: RunTrace, end: RunEnd): void {
-    const { endpoint } = otlpEndpoint();
-    if (!endpoint) {
-        return;
+    let endpoint: string | undefined;
+    try {
+        endpoint = otlpEndpoint().endpoint;
+        if (endpoint) {
+            exportSpan(endpoint, run, end);
+        }
+    } catch (error) {
+        warnOnce(endpoint ?? "otlpEndpoint", error instanceof Error ? error.message : String(error));
     }
+}
+
+function exportSpan(endpoint: string, run: RunTrace, end: RunEnd): void {
     const agent = end.agent ?? "build";
     const attributes = [
         str("gen_ai.operation.name", "invoke_agent"),
@@ -81,7 +90,7 @@ export function endRun(run: RunTrace, end: RunEnd): void {
                     startTimeUnixNano: ns(run.startedAt),
                     endTimeUnixNano: ns(Math.max(Date.now(), run.startedAt + 1)),
                     attributes,
-                    status: end.outcome === "error" ? { code: 2, message: truncate(end.error ?? "", 200) } : { code: end.outcome === "done" ? 1 : 0 }
+                    status: { code: end.outcome === "error" ? 2 : end.outcome === "done" ? 1 : 0 }
                 }]
             }]
         }]
@@ -91,6 +100,10 @@ export function endRun(run: RunTrace, end: RunEnd): void {
         url = new URL(tracesUrl(endpoint));
     } catch {
         return warnOnce(endpoint, "not a URL");
+    }
+    // `localhost:4318` parses, as the scheme `localhost:`; http.request throws on it.
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+        return warnOnce(endpoint, `unsupported protocol ${url.protocol}`);
     }
     const send = url.protocol === "https:" ? https.request : http.request;
     const req = send(url, { method: "POST", headers: { "content-type": "application/json", "content-length": Buffer.byteLength(body) } }, (res) => {

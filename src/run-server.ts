@@ -30,10 +30,10 @@ export function runOpenCodeServer(options: RunOptions): Promise<RunMetrics> {
         try {
             const metrics = await runServer(options, run);
             const outcome = metrics.error ? "error" : metrics.timedOut ? "timeout" : metrics.cancelled || options.token?.isCancellationRequested ? "cancelled" : "done";
-            endRun(run, { agent: options.agent, model: metrics.model ?? options.model, readOnly: Boolean(options.readOnly), outcome, error: metrics.error });
+            endRun(run, { agent: options.agent, model: metrics.model ?? options.model, readOnly: Boolean(options.readOnly), outcome });
             return metrics;
         } catch (error) {
-            endRun(run, { agent: options.agent, model: options.model, readOnly: Boolean(options.readOnly), outcome: "error", error: error instanceof Error ? error.message : String(error) });
+            endRun(run, { agent: options.agent, model: options.model, readOnly: Boolean(options.readOnly), outcome: "error" });
             throw error;
         }
     });

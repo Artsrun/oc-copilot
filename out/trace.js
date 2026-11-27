@@ -59,10 +59,18 @@ const warned = new Set();
 const tracesUrl = (endpoint) => `${endpoint.replace(/\/+$/, "")}/v1/traces`;
 exports.tracesUrl = tracesUrl;
 function endRun(run, end) {
-    const { endpoint } = (0, proc_1.otlpEndpoint)();
-    if (!endpoint) {
-        return;
+    let endpoint;
+    try {
+        endpoint = (0, proc_1.otlpEndpoint)().endpoint;
+        if (endpoint) {
+            exportSpan(endpoint, run, end);
+        }
     }
+    catch (error) {
+        warnOnce(endpoint ?? "otlpEndpoint", error instanceof Error ? error.message : String(error));
+    }
+}
+function exportSpan(endpoint, run, end) {
     const agent = end.agent ?? "build";
     const attributes = [
         str("gen_ai.operation.name", "invoke_agent"),
@@ -85,7 +93,7 @@ function endRun(run, end) {
                                 startTimeUnixNano: ns(run.startedAt),
                                 endTimeUnixNano: ns(Math.max(Date.now(), run.startedAt + 1)),
                                 attributes,
-                                status: end.outcome === "error" ? { code: 2, message: (0, core_1.truncate)(end.error ?? "", 200) } : { code: end.outcome === "done" ? 1 : 0 }
+                                status: { code: end.outcome === "error" ? 2 : end.outcome === "done" ? 1 : 0 }
                             }]
                     }]
             }]
@@ -96,6 +104,9 @@ function endRun(run, end) {
     }
     catch {
         return warnOnce(endpoint, "not a URL");
+    }
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+        return warnOnce(endpoint, `unsupported protocol ${url.protocol}`);
     }
     const send = url.protocol === "https:" ? https.request : http.request;
     const req = send(url, { method: "POST", headers: { "content-type": "application/json", "content-length": Buffer.byteLength(body) } }, (res) => {

@@ -2182,7 +2182,9 @@ const suiteWatchdog = require(path.join(__dirname, "fixtures", "suite-watchdog.j
         delete process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
         const savedOtlp = settings.otlpEndpoint;
         // A trailing slash: the signal path is appended once.
-        settings.otlpEndpoint = `http://127.0.0.1:${collector.address().port}/`;
+        const endpoint = `http://127.0.0.1:${collector.address().port}/`;
+        settings.otlpEndpoint = endpoint;
+        oc2Script("tp-error", { events: [], fail: { type: "provider", message: "PROMPT_SENTINEL" } });
         const spansAfter = async (n, ms = 3000) => {
             for (const until = Date.now() + ms; spans.length < n && Date.now() < until;) await delay(25);
             return spans.slice();
@@ -2202,12 +2204,21 @@ const suiteWatchdog = require(path.join(__dirname, "fixtures", "suite-watchdog.j
             // Both lanes ask: one socket serves both, so one lane's ask is answered from
             // events the other lane's subscription opened.
             const lanes = (memento.clear(), await tpTurn("lane alpha [[probe:bash]] | lane beta [[probe:bash]]", "parallel"));
-            const exported = await spansAfter(spanCount + 2);
+            await spansAfter(spanCount + 2);
+            memento.clear();
+            const errorTurn = await tpTurn("PROMPT_SENTINEL [[script:tp-error]]");
+            const exported = await spansAfter(spanCount + 3);
+            // An endpoint the bridge cannot post to: `localhost:4318` parses as the
+            // scheme `localhost:`, and http.request throws on it. 0.0.247 threw after the
+            // finished run, so the run read as failed and the fallback posted it again.
+            settings.otlpEndpoint = "localhost:4318";
+            memento.clear();
+            const unpostable = await tpTurn("trace me unpostable");
             settings.otlpEndpoint = "off";
             memento.clear();
             const quiet = await tpTurn("trace me with export off");
             await delay(300);
-            return { one, two, lanes, quiet, exported, afterOff: spans.length };
+            return { one, two, lanes, errorTurn, unpostable, quiet, exported, afterOff: spans.length };
         });
         collector.close();
         settings.otlpEndpoint = savedOtlp;
@@ -2245,6 +2256,8 @@ const suiteWatchdog = require(path.join(__dirname, "fixtures", "suite-watchdog.j
         const spanOf = (b) => b?.resourceSpans?.[0]?.scopeSpans?.[0]?.spans?.[0];
         const attr = (span, key) => { const v = span?.attributes?.find((a) => a.key === key)?.value; return v?.stringValue ?? v?.boolValue ?? v?.intValue; };
         const oneSpan = bodies.map(spanOf).find((sp) => sp?.traceId === oneId);
+        const errorId = traceOf(apiOf(tp.errorTurn)[0] ?? {});
+        const errorSpan = bodies.map(spanOf).find((sp) => sp?.traceId === errorId);
         const oneParent = oneTraces[0]?.match(W3C)?.[2];
         add(`TP with an endpoint, each run exports its own span to <endpoint>/v1/traces as OTLP JSON (${tp.exported.length} posts: ${[...new Set(tp.exported.map((s) => `${s.method} ${s.path}`))].join(", ")})`,
             tp.exported.length >= 4 && tp.exported.every((s) => s.method === "POST" && s.path === "/v1/traces" && /application\/json/.test(s.type ?? "")) && bodies.every((b) => spanOf(b)));
@@ -2253,9 +2266,26 @@ const suiteWatchdog = require(path.join(__dirname, "fixtures", "suite-watchdog.j
             attr(oneSpan, "gen_ai.operation.name") === "invoke_agent" && typeof attr(oneSpan, "gen_ai.agent.name") === "string" &&
             Number(oneSpan.endTimeUnixNano) > Number(oneSpan.startTimeUnixNano) &&
             bodies[0]?.resourceSpans?.[0]?.resource?.attributes?.some((a) => a.key === "service.name" && a.value?.stringValue === "opencode-copilot-bridge"));
-        add("TP no exported span carries the prompt's text", tp.exported.length > 0 && !tp.exported.some((s) => /trace me|lane alpha|lane beta|\[\[probe:/.test(s.body)));
+        add("TP no exported span carries prompt or error text", tp.exported.length > 0 && !tp.exported.some((s) => /trace me|lane alpha|lane beta|PROMPT_SENTINEL|\[\[probe:/.test(s.body)));
+        add("TP an error span keeps its error status without the raw error message",
+            Boolean(errorSpan) && errorSpan.status?.code === 2 && !Object.hasOwn(errorSpan.status, "message"));
         add(`TP "off" exports nothing, and the requests still carry a traceparent (${tp.afterOff - tp.exported.length} posts after off)`,
             tp.afterOff === tp.exported.length && apiOf(tp.quiet).length > 0 && apiOf(tp.quiet).every((r) => W3C.test(r.traceparent ?? "")));
+        const unpostablePrompts = tp.unpostable.reqs.filter((r) => r.method === "POST" && /^\/api\/session\/[^/]+\/prompt$/.test(r.path ?? ""));
+        add(`TP an endpoint the bridge cannot post to (localhost:4318) costs one log line, not the run: one prompt, its answer in chat (${unpostablePrompts.length} prompts)`,
+            unpostablePrompts.length === 1 && tp.unpostable.st.chatMarkdown.join("").includes("Hello from the scripted model.") &&
+            logLines.some((l) => /trace export to localhost:4318 failed: unsupported protocol localhost:/.test(l)));
+        const { endRun } = require(path.join(__dirname, "..", "out", "trace.js"));
+        settings.otlpEndpoint = "ftp://127.0.0.1:4318";
+        let invalidEndpointThrew = false;
+        try {
+            endRun({ traceId: "1".repeat(32), spanId: "1".repeat(16), startedAt: Date.now() }, { readOnly: false, outcome: "done" });
+        } catch {
+            invalidEndpointThrew = true;
+        }
+        settings.otlpEndpoint = savedOtlp;
+        add("TP an unsupported OTLP protocol warns without throwing from a completed run",
+            !invalidEndpointThrew && logLines.some((l) => /trace export to ftp:\/\/127\.0\.0\.1:4318 failed: unsupported protocol ftp:/.test(l)));
     }
     // 0.0.225: a running tool part before its input arrives is `{}` — the row read
     // `glob: {}` for 40 s (0.0.223 live). It names nothing yet, so no row.
